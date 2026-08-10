@@ -237,7 +237,7 @@
       fetch(ogImageUrl, { method: 'HEAD' }).then(function (r) {
         var len = r.headers.get('content-length');
         if (len && parseInt(len, 10) > 300 * 1024) {
-          addFinding({ category: 'Meta i head tagovi', severity: 'info', title: 'OG image je veća od preporučenih 300KB (' + fmtBytes(parseInt(len, 10)) + ')',
+          addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'OG image je veća od preporučenih 300KB (' + fmtBytes(parseInt(len, 10)) + ')',
             description: 'og:image: ' + ogImageUrl, why: 'Neke platforme (npr. WhatsApp) agresivno kompresuju velike slike, što može pogoršati kvalitet preview-a.',
             fix: 'Kompresuj sliku na ispod 300KB.', element: null });
           renderPanel();
@@ -305,7 +305,7 @@
     headings.forEach(function (h) {
       var level = parseInt(h.tagName.substring(1), 10);
       if (lastLevel > 0 && level - lastLevel > 1) {
-        addFinding({ category: 'Heading struktura', severity: 'info', title: 'Preskočena heading hijerarhija (H' + lastLevel + ' → H' + level + ')',
+        addFinding({ category: 'Heading struktura', severity: 'warning', title: 'Preskočena heading hijerarhija (H' + lastLevel + ' → H' + level + ')',
           description: '"' + text(h).slice(0, 80) + '"', why: 'Preskakanje nivoa (npr. H1 pa odmah H3) remeti logičku strukturu dokumenta za screen readere i crawlere.',
           fix: 'Koristi heading nivoe redom, bez preskakanja.', element: h });
       }
@@ -394,9 +394,12 @@
       if (!isVisible(img)) return;
 
       // Webflow tehnički implementira "Alt Text: Decorative" tako što ostavi alt="" (PRAZAN, ali
-      // PRISUTAN atribut) — to je namerni ARIA obrazac koji govori screen readeru da preskoči
-      // sliku. To se razlikuje od potpuno IZOSTAVLJENOG alt atributa, što je verovatno slučajna
-      // greška developera. Razdvajamo ova dva slučaja umesto da ih tretiramo isto.
+      // PRISUTAN atribut). NAPOMENA (10.08.2026, posle provere): potvrđeno je da "Decorative"
+      // opcija zaista generiše alt="" (zvaničan Webflow changelog), ALI nije potvrđeno da li
+      // Webflow radi ISTO i kad developer prosto NIKAD ne dotakne Alt Text polje (ne bira svesno
+      // "Decorative"). Znači ne možemo sa sigurnošću iz samog HTML-a da tvrdimo da je "Decorative"
+      // svesno izabrano — moglo je i slučajno ostati prazno. Poruka je zato namerno formulisana
+      // kao "možda", ne kao potvrđena činjenica.
       var hasAltAttr = img.hasAttribute('alt');
       var altText = hasAltAttr ? (img.getAttribute('alt') || '').trim() : '';
       var isDecorative = hasAltAttr && altText === '';
@@ -405,10 +408,10 @@
 
       if (isDecorative) {
         addFinding({ category: 'Slike', severity: 'info',
-          title: 'Stavljeno u Webflow da je slika dekorativna (alt="")',
+          title: 'Alt tekst je prazan (alt="") — verovatno postavljeno na "Decorative" u Webflow-u',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Prazan ali PRISUTAN alt="" je ispravan, namerni ARIA obrazac koji screen readeru govori da preskoči sliku jer ne nosi informativni sadržaj — ovo NIJE greška, za razliku od potpuno izostavljenog alt atributa.',
-          fix: 'Nema potrebne akcije ako je slika zaista čisto dekorativna. Ako ipak nosi informaciju, promeni je iz "Decorative" u opisan alt tekst u Webflow Asset Manager-u.',
+          why: 'Prazan ali PRISUTAN alt="" je ispravan ARIA obrazac kad je slika SVESNO označena kao dekorativna u Webflow-u (screen reader je onda preskače). NE možemo sa sigurnošću utvrditi iz samog HTML-a da li je ovo svesno urađeno ili je Alt Text polje prosto ostalo netaknuto/zaboravljeno — oba slučaja mogu izgledati identično u renderovanom kodu.',
+          fix: 'Proveri direktno u Webflow Designer-u (Image Settings) da li Alt Text polje zaista pokazuje "Decorative". Ako da — nema potrebne akcije. Ako je slika zapravo trebalo da ima opisan alt tekst, dodaj ga.',
           element: img });
       } else if (isMissing || isGeneric) {
         addFinding({ category: 'Slike', severity: 'error',
@@ -514,11 +517,13 @@
 
       var linkText = text(a);
       if (!linkText && !a.querySelector('img')) {
-        addFinding({ category: 'Linkovi', severity: 'info', title: 'Link bez teksta (i bez slike)',
+        addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link bez teksta (i bez slike)',
           description: href || '(nema href)', why: 'Prazan link nosi nula konteksta za korisnika i za crawler.',
           fix: 'Dodaj vidljiv tekst ili aria-label.', element: a });
       } else if (GENERIC_ANCHOR.test(linkText.trim())) {
-        addFinding({ category: 'Linkovi', severity: 'info', title: 'Negenerički anchor tekst: "' + linkText.trim() + '"',
+        // Napomena: naslov je ranije pogrešno pisao "Negenerički" (obrnuto od stvarnog značenja) —
+        // ova grana se aktivira baš kad JE tekst generički (poklapa GENERIC_ANCHOR obrazac).
+        addFinding({ category: 'Linkovi', severity: 'info', title: 'Generički anchor tekst: "' + linkText.trim() + '"',
           description: 'href: ' + href, why: 'Opisan anchor tekst pomaže korisnicima i Google-u da razumeju kuda link vodi.',
           fix: 'Zameni sa opisnim tekstom (npr. "Pogledaj cenovnik" umesto "klikni ovde").', element: a });
       }
@@ -596,7 +601,7 @@
       var word = m[1].toLowerCase();
       if (seenRepeats[word]) continue;
       seenRepeats[word] = true;
-      addFinding({ category: 'Sadržaj', severity: 'info', title: 'Ponovljena reč zaredom: "' + m[1] + ' ' + m[1] + '"',
+      addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Ponovljena reč zaredom: "' + m[1] + ' ' + m[1] + '"',
         description: '...' + bodyText.slice(Math.max(0, m.index - 30), m.index + 30) + '...',
         why: 'Najčešće copy-paste greška.', fix: 'Ukloni duplikat reči.', element: null });
     }
@@ -971,7 +976,7 @@
         var addrParts = addrStr.split(/\s+/).filter(function (p) { return p.length > 3; });
         var missingParts = addrParts.filter(function (p) { return footerText.toLowerCase().indexOf(p.toLowerCase()) === -1; });
         if (addrParts.length && missingParts.length === addrParts.length) {
-          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'info',
+          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
             title: 'Adresa iz Organization/LocalBusiness sheme se ne pojavljuje nigde u vidljivom footeru',
             description: 'Schema adresa: ' + addrStr,
             why: 'NAP neusklađenost (adresa navedena u schemi koje nema nigde vidljivo na stranici) slabi poverenje u strukturirane podatke.',
