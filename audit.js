@@ -143,6 +143,38 @@
   }
 
   function checkMetaHead() {
+    var charsetMeta = document.querySelector('meta[charset]') || document.querySelector('meta[http-equiv="Content-Type" i]');
+    if (!charsetMeta) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta charset deklaracija nedostaje',
+        description: 'Nema <meta charset="..."> u head-u.', why: 'Bez eksplicitnog charset-a, browser može pogrešno detektovati enkoding pre nego što stigne do HTTP header-a, što retko ali realno izaziva pogrešno prikazane karaktere (npr. č/ć/š/ž) pri prvom renderovanju stranice.',
+        fix: 'Webflow ovo automatski dodaje — proveri da custom kod u <head> nije slučajno obrisao ili premestio tag.', element: document.head });
+    } else {
+      var charsetVal = charsetMeta.hasAttribute('charset') ? charsetMeta.getAttribute('charset') : (charsetMeta.getAttribute('content') || '');
+      if (!/utf-8/i.test(charsetVal)) {
+        addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta charset nije UTF-8',
+          description: 'Pronađena vrednost: "' + charsetVal + '".', why: 'UTF-8 je univerzalni standard koji pokriva sve jezike i karaktere — bilo šta drugo nosi realan rizik pogrešnog prikaza karaktera.',
+          fix: 'Postavi charset na UTF-8.', element: document.head });
+      } else {
+        addSuccess({ category: 'Meta i head tagovi', title: 'Meta charset je prisutan i postavljen na UTF-8', description: '', element: document.head });
+      }
+    }
+
+    var titleTags = document.querySelectorAll('title');
+    if (titleTags.length > 1) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Više od jednog <title> taga u head-u (' + titleTags.length + ')',
+        description: Array.prototype.map.call(titleTags, function (t) { return '"' + t.textContent + '"'; }).join(', '),
+        why: 'Browseri i Google obično uzimaju samo prvi <title> tag, ali ponašanje nije univerzalno garantovano preko svih parsera/bot-ova — duplikat najčešće znači grešku u Custom Code sekciji (npr. ručno dodat <title> pored Webflow-ovog).',
+        fix: 'Ukloni sve <title> tagove osim jednog — title podesi kroz Page Settings, ne ručno u Custom Code.', element: document.head });
+    }
+
+    var descTags = document.querySelectorAll('meta[name="description" i]');
+    if (descTags.length > 1) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Više od jednog meta description taga (' + descTags.length + ')',
+        description: Array.prototype.map.call(descTags, function (m) { return '"' + (m.getAttribute('content') || '') + '"'; }).join(' | '),
+        why: 'Kad postoji više meta description tagova, ponašanje koji će Google uzeti nije garantovano — najčešće znači duplikat unet i kroz Page Settings i ručno kroz Custom Code.',
+        fix: 'Ukloni sve meta description tagove osim jednog.', element: document.head });
+    }
+
     var title = document.title || '';
     var titleLengthOk = false;
     if (!title.trim()) {
@@ -211,12 +243,22 @@
       checkOgImage(ogImage);
     }
 
+    var twitterCard = getMeta('twitter:card');
+    if (!twitterCard) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Twitter/X Card meta tag (twitter:card) nedostaje',
+        description: 'Nema <meta name="twitter:card">.', why: 'Twitter/X Card tagovi su tehnički odvojeni od Open Graph tagova — bez eksplicitnog twitter:card, X ponekad ne uspe pouzdano da povuče OG fallback, pa deljeni link može ostati bez ikakvog preview-a specifično na toj platformi.',
+        fix: 'Dodaj <meta name="twitter:card" content="summary_large_image"> (i idealno twitter:title/twitter:image) kroz Custom Code u head sekciji.', element: document.head });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Twitter/X Card meta tag je prisutan (' + twitterCard + ')', description: '', element: document.head });
+    }
+
     var canonical = document.querySelector('link[rel="canonical"]');
     if (!canonical) {
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Canonical tag nedostaje',
         description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira da li trenutno postoji duplikat. Ovo je nešto što developer treba da doda pre objave, ne "nice to have".',
         fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.',
+        crossNoteReverse: 'Relevantno i za SEO — canonical sprečava duplicate content probleme i konsoliduje ranking signale na jednu URL adresu u Google indeksu.' });
     } else {
       checkCanonicalDuplication(canonical);
     }
@@ -226,10 +268,26 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Stranica je markirana kao noindex',
         description: 'meta robots = "' + robots + '"', why: 'Ova stranica neće biti indeksirana od strane Google-a dok god ovo stoji.',
         fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
+        crossNoteReverse: 'Relevantno i za SEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.' });
     } else {
       addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
+        crossNoteReverse: 'Relevantno i za SEO — stranica je indeksibilna i može se pojaviti u Google pretrazi.' });
+    }
+
+    var blocksSnippet = robots && (/nosnippet/i.test(robots) || /max-snippet:\s*0\b/i.test(robots));
+    if (blocksSnippet) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Robots direktiva blokira prikaz isečka sadržaja (nosnippet/max-snippet:0)',
+        description: 'meta robots = "' + robots + '"',
+        why: 'Ova direktiva eksplicitno zabranjuje Google-u (i bilo kom AI answer engine-u koji se delimično oslanja na Google-ov indeks) da prikaže BILO KAKAV isečak teksta sa stranice — stranica se ne može pojaviti u AI Overviews ili featured snippet-ima, niti dobiti opis u klasičnim rezultatima pretrage. Ovo je direktan, dokumentovan i binaran blokator vidljivosti, ne heuristika.',
+        fix: 'Ukloni "nosnippet" i "max-snippet:0" iz meta robots taga, osim ako je namerno (npr. stranica sa osetljivim sadržajem).', element: document.head,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — ovo direktno sprečava AI answer engine-e da citiraju bilo koji deo sadržaja stranice.',
+        crossNoteReverse: 'Relevantno i za SEO — bez isečka, Google rezultat za ovu stranicu nema opis, što drastično smanjuje CTR čak i ako stranica dobro rangira.' });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Robots direktiva ne blokira prikaz isečka sadržaja', description: '', element: document.head,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — Google i AI answer engine-i mogu slobodno da prikažu isečak sadržaja ove stranice.',
+        crossNoteReverse: 'Relevantno i za SEO — stranica može imati normalan opis/isečak u Google rezultatima pretrage.' });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
@@ -248,6 +306,14 @@
         fix: 'Webflow ovo obično dodaje automatski — proveri da custom kod nije obrisao tag.', element: document.head });
     } else {
       addSuccess({ category: 'Meta i head tagovi', title: 'Viewport meta tag je prisutan', description: '', element: document.head });
+      var vpContent = viewport.getAttribute('content') || '';
+      if (/user-scalable\s*=\s*no/i.test(vpContent) || /maximum-scale\s*=\s*1(\.0)?\b/.test(vpContent)) {
+        addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Viewport onemogućava zumiranje korisniku',
+          description: 'viewport = "' + vpContent + '"', why: 'Google Search Console eksplicitno flaguje "user-scalable=no"/"maximum-scale=1" kao mobile usability problem — sprečava korisnike sa slabijim vidom da uvećaju sadržaj na mobilnom.',
+          fix: 'Ukloni user-scalable=no i maximum-scale=1 iz viewport taga (dozvoli zumiranje bar do maximum-scale=5).', element: document.head });
+      } else {
+        addSuccess({ category: 'Meta i head tagovi', title: 'Viewport dozvoljava korisniku da zumira stranicu', description: '', element: document.head });
+      }
     }
   }
 
@@ -288,6 +354,103 @@
     } catch (e) {}
   }
 
+  // ---------------------------------------------------------------------
+  // 5.1b Favicon
+  // ---------------------------------------------------------------------
+  // Google Search Central eksplicitno dokumentuje favicon zahteve da bi se sajt prikazao sa
+  // svojom ikonicom u mobilnim rezultatima pretrage (kvadratan, min. 48x48px, mora biti
+  // crawlable). Nije core ranking faktor (isto kao OG tagovi) — otud "warning", ne "error" za
+  // odsustvo, ali "nosnippet"-nivoa direktan blok (robots.txt Disallow) ostaje takođe warning
+  // jer pogađa samo prikaz ikonice, ne ceo sadržaj stranice.
+  function checkFavicon() {
+    var head = document.head;
+    var linkEl = document.querySelector('link[rel~="icon"]') || document.querySelector('link[rel="shortcut icon"]') || document.querySelector('link[rel="apple-touch-icon"]');
+    var faviconUrl;
+    try {
+      faviconUrl = (linkEl && linkEl.getAttribute('href')) ? new URL(linkEl.getAttribute('href'), location.href).href : (location.origin + '/favicon.ico');
+    } catch (e) {
+      faviconUrl = location.origin + '/favicon.ico';
+    }
+
+    function reportBroken() {
+      addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon nedostaje ili se ne učitava',
+        description: linkEl ? ('Pronađen <link> tag, ali resurs (' + faviconUrl + ') se ne učitava.') : ('Nema <link rel="icon"> u head-u, a ni fallback /favicon.ico ne postoji.'),
+        why: 'Google Search Central eksplicitno dokumentuje favicon zahteve da bi se sajt prikazao sa svojom ikonicom u mobilnim rezultatima pretrage i u Chrome tabovima/bookmark-ovima — bez njega se prikazuje generička ikonica, što smanjuje prepoznatljivost brenda i CTR u SERP-u.',
+        fix: 'Dodaj favicon u Webflow Site Settings > Icons (kvadratan, minimum 48x48px, .ico/.png/.svg).', element: linkEl || head });
+    }
+
+    function checkDimensionsAndFormat(url) {
+      var ext = (url.split('?')[0].split('.').pop() || '').toLowerCase();
+      if (ext && ['ico', 'png', 'svg', 'gif'].indexOf(ext) === -1) {
+        addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon je u neuobičajenom formatu (' + ext.toUpperCase() + ')',
+          description: url, why: 'Najšira podrška (browseri, Google Search) je za .ico, .png i .svg formate — ostali formati se mogu nepredvidivo ponašati u browser UI-u.',
+          fix: 'Koristi .ico, .png ili .svg format za favicon.', element: linkEl || head });
+      }
+      var img = new Image();
+      img.onload = function () {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var issues = [];
+        if (w && h && Math.abs(w - h) > 1) issues.push('nije kvadratan (' + w + 'x' + h + ')');
+        if (w && h && (w < 48 || h < 48)) issues.push('manji je od preporučenih 48x48px (' + w + 'x' + h + ')');
+        if (issues.length) {
+          addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon dimenzije nisu idealne (' + issues.join(', ') + ')',
+            description: url, why: 'Google preporučuje kvadratan favicon, minimum 48x48px (u multiplu te veličine), da bi se čisto prikazao u rezultatima pretrage i browser UI-u na svim rezolucijama.',
+            fix: 'Zameni favicon kvadratnom slikom minimum 48x48px (idealno 128x128px za retina ekrane).', element: linkEl || head });
+        } else if (w && h) {
+          addSuccess({ category: 'Favicon', title: 'Favicon je kvadratan i odgovarajuće veličine (' + w + 'x' + h + ')', description: url, element: linkEl || head });
+        }
+        renderPanel();
+      };
+      img.onerror = function () { /* HEAD fetch iznad već hvata realnu "ne postoji" grešku — ovde tiho ignorišemo. */ };
+      img.src = url;
+    }
+
+    function checkRobotsBlock(url) {
+      try {
+        fetch(location.origin + '/robots.txt').then(function (r) { return r.ok ? r.text() : null; }).then(function (txt) {
+          if (!txt) return;
+          var path;
+          try { path = new URL(url).pathname; } catch (e) { return; }
+          var applicable = false, blocked = false;
+          txt.split('\n').forEach(function (line) {
+            line = line.trim();
+            var uaMatch = /^user-agent:\s*(.+)$/i.exec(line);
+            if (uaMatch) { applicable = (uaMatch[1].trim() === '*'); return; }
+            if (!applicable) return;
+            var disallowMatch = /^disallow:\s*(.+)$/i.exec(line);
+            if (disallowMatch) {
+              var rule = disallowMatch[1].trim();
+              if (rule && path.indexOf(rule) === 0) blocked = true;
+            }
+          });
+          if (blocked) {
+            addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon je blokiran u robots.txt',
+              description: 'Putanja "' + path + '" je obuhvaćena Disallow pravilom u /robots.txt (User-agent: *).',
+              why: 'Ako Googlebot ne sme da pristupi favicon fajlu, ne može ni da ga prikaže u mobilnim rezultatima pretrage — Google Search Central eksplicitno traži da favicon URL bude crawlable.',
+              fix: 'Dodaj Allow pravilo za favicon putanju u robots.txt, ili suzi Disallow pravilo da je ne obuhvata.', element: null });
+            renderPanel();
+          }
+        }).catch(function () { /* robots.txt ne postoji ili CORS — ignoriši tiho */ });
+      } catch (e) {}
+    }
+
+    try {
+      fetch(faviconUrl, { method: 'HEAD' }).then(function (r) {
+        if (!r.ok) { reportBroken(); renderPanel(); return; }
+        var ct = r.headers.get('content-type') || '';
+        if (ct && ct.indexOf('image') === -1 && ct.indexOf('icon') === -1) { reportBroken(); renderPanel(); return; }
+        addSuccess({ category: 'Favicon', title: 'Favicon je prisutan i uspešno se učitava', description: faviconUrl, element: linkEl || head });
+        checkDimensionsAndFormat(faviconUrl);
+        checkRobotsBlock(faviconUrl);
+        renderPanel();
+      }).catch(function () {
+        // CORS na HEAD retko nastaje na istom domenu, ali za svaki slučaj ne prijavljujemo
+        // lažnu grešku — samo probamo dimenzije/format (ako se slika uopšte učita).
+        checkDimensionsAndFormat(faviconUrl);
+      });
+    } catch (e) {}
+  }
+
   function checkCanonicalDuplication(canonicalEl) {
     var href = canonicalEl.getAttribute('href');
     if (!href) return;
@@ -303,11 +466,13 @@
         description: 'Trenutna stranica: ' + curPath + ' | Canonical: ' + canPath,
         why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
         fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.',
+        crossNoteReverse: 'Relevantno i za SEO — pogrešan canonical deli ranking signale (linkove, autoritet) između više URL-ova umesto da ih konsoliduje na jednu stranicu.' });
     } else {
       addSuccess({ category: 'URL i duplikacija stranice', title: 'Canonical tag je prisutan i pokazuje na ovu stranicu',
         description: 'Canonical: ' + canPath, element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.',
+        crossNoteReverse: 'Relevantno i za SEO — ispravan canonical konsoliduje ranking signale na jednu, tačno određenu URL adresu.' });
     }
   }
 
@@ -709,10 +874,12 @@
       addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Vrlo malo vidljivog teksta na stranici (' + visibleTextLen + ' karaktera)',
         description: '', why: 'Stranice sa vrlo malo teksta teže se rangiraju za relevantne upite (thin content).',
         fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.',
+        crossNoteReverse: 'Relevantno i za SEO — Google tradicionalno slabije rangira "thin content" stranice jer ne pružaju dovoljno vrednosti korisniku u odnosu na konkurenciju.' });
     } else {
       addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.',
+        crossNoteReverse: 'Relevantno i za SEO — dovoljna količina kvalitetnog sadržaja je osnovni preduslov da Google proceni stranicu kao vrednu rangiranja.' });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -894,10 +1061,12 @@
       addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Veliki/preduboko ugnježden DOM (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ', max dece jednog elementa: ' + maxChildren + ')',
         description: '', why: 'Prevelik DOM usporava rendering i otežava crawlerima efikasno parsiranje. Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se ignorisati.',
         fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
+        crossNoteReverse: 'Relevantno i za SEO — preveliki/preduboko ugnježden DOM usporava renderovanje, što posredno pogoršava Core Web Vitals metrike koje Google koristi za rangiranje.' });
     } else {
       addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
+        crossNoteReverse: 'Relevantno i za SEO — razumna veličina DOM-a doprinosi bržem renderovanju i boljim Core Web Vitals rezultatima.' });
     }
 
     // Mixed content
@@ -907,11 +1076,13 @@
         addFinding({ category: 'Tehnički / crawlability', severity: 'error', title: 'Mixed content: HTTP resurs na HTTPS stranici',
           description: (el.src || el.href || ''), why: 'Browser može da blokira ili upozori na ovaj resurs, i to je bezbednosni signal.',
           fix: 'Promeni URL resursa na https://.', element: el,
-          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.' });
+          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.',
+          crossNoteReverse: 'Relevantno i za SEO — HTTPS je potvrđen Google ranking signal još od 2014, a mixed content upozorenja u browseru narušavaju poverenje korisnika.' });
       });
       if (!httpResources.length) {
         addSuccess({ category: 'Tehnički / crawlability', title: 'Nema mixed content-a — svi resursi se učitavaju preko HTTPS-a', description: '', element: null,
-          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.' });
+          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.',
+          crossNoteReverse: 'Relevantno i za SEO — potpun HTTPS bez mixed content upozorenja je potvrđen Google ranking signal.' });
       }
     }
 
@@ -983,6 +1154,7 @@
     } catch (e) {}
 
     var CWV_CROSS_NOTE = 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.';
+    var CWV_CROSS_NOTE_REVERSE = 'Relevantno i za SEO — Core Web Vitals (TTFB, LCP, CLS) su zvaničan Google ranking signal još od 2021. (Page Experience update).';
 
     // Dve granice po metrici (usklađeno sa Google-ovim zvaničnim "Needs Improvement" / "Poor"
     // pragovima za LCP i CLS; TTFB nije zvaničan Core Web Vital, ali 1800ms je uobičajen "loše"
@@ -991,30 +1163,30 @@
       var ttfbPoor = cwv.ttfb > 1800;
       addFinding({ category: 'Performanse (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
         description: '', why: (ttfbPoor ? 'Preko 1800ms je duboko u "loše" teritoriji. ' : 'Preko 800ms je sporo. ') + 'Server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.ttfb != null) {
       addSuccess({ category: 'Performanse (CWV)', title: 'TTFB je dobar (' + cwv.ttfb + 'ms, ispod 800ms praga)', description: '', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
       var lcpPoor = cwv.lcp > 4000;
       addFinding({ category: 'Performanse (CWV)', severity: lcpPoor ? 'error' : 'warning', title: 'Spor LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
         description: '', why: 'Google smatra dobrim LCP ispod 2500ms' + (lcpPoor ? ', a preko 4000ms svrstava u "Poor" kategoriju' : '') + '. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
         fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.lcp != null) {
       addSuccess({ category: 'Performanse (CWV)', title: 'LCP je dobar (' + cwv.lcp + 'ms, ispod 2500ms Google praga)', description: '', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
       addFinding({ category: 'Performanse (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'Visok CLS (Cumulative Layout Shift): ' + cwv.cls,
         description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja' + (clsPoor ? ' (preko 0.25 je Google-ova "Poor" granica)' : '') + ' — najčešće zbog slika/fontova bez rezervisanog prostora.',
         fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else {
       addSuccess({ category: 'Performanse (CWV)', title: 'CLS je dobar (' + cwv.cls + ', ispod 0.1 Google praga)', description: '', element: null,
-        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
 
     if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
@@ -1438,13 +1610,33 @@
     }, 350);
   }
 
+  // Bira tekst "↔" napomene za crossRelevant nalaz/uspeh u zavisnosti od toga u kom kontekstu
+  // (tabu/grupi) se trenutno prikazuje. contextGroup je 'seo' | 'aeo' | 'all' (za Success tab
+  // kad je selektovano "Sve" — u tom slučaju nema "gost" konteksta, uvek se prikazuje matična
+  // AEO-napomena, isto kao ranije). Kad se item prikaže u SVOJOJ matičnoj grupi -> crossNote
+  // (originalna, "↔ Relevantno i za AEO" formulacija). Kad se prikaže u SUPROTNOJ grupi (gost)
+  // -> crossNoteReverse ("↔ Relevantno i za SEO" formulacija, objašnjava SEO ugao za nekoga ko
+  // trenutno gleda AEO tab).
+  function getCrossText(item, contextGroup) {
+    if (!item.crossRelevant) return '';
+    var native = item.group === 'aeo' ? 'aeo' : 'seo';
+    if (contextGroup && contextGroup !== 'all' && contextGroup !== native) {
+      return item.crossNoteReverse || item.crossNote || 'Relevantno i za oba (SEO i AEO).';
+    }
+    return item.crossNote || 'Relevantno i za SEO i za AEO.';
+  }
+
   function renderPanel() {
     ensurePanel();
     var old = shadow.querySelector('.panel');
     if (old) old.remove();
 
+    // crossRelevant nalazi/uspesi (native SEO, ali sa dokumentovanim AEO uticajem) se sada
+    // prikazuju U OBA taba — jednom sa napomenom "↔ Relevantno i za AEO" (u SEO tabu, njihovom
+    // matičnom domu) i jednom sa obrnutom napomenom "↔ Relevantno i za SEO" (u AEO tabu, gde se
+    // pojavljuju kao "gost"). Vidi getCrossText() ispod za logiku biranja teksta po kontekstu.
     var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
-    var aeoFindings = findings.filter(function (f) { return f.group === 'aeo'; });
+    var aeoFindings = findings.filter(function (f) { return f.group === 'aeo' || f.crossRelevant; });
     if (activeTab !== 'seo' && activeTab !== 'aeo' && activeTab !== 'success') activeTab = 'seo';
     var current = activeTab === 'aeo' ? aeoFindings : (activeTab === 'success' ? successes : seoFindings);
 
@@ -1515,7 +1707,7 @@
       // Dosta provera je zajedničko za oba (npr. canonical, noindex, CWV, mixed content) —
       // te stavke ostaju u SEO grupi ali dobijaju "↔" napomenu, isto kao kod findings.
       var seoSuccesses = successes.filter(function (s) { return s.group !== 'aeo'; });
-      var aeoSuccesses = successes.filter(function (s) { return s.group === 'aeo'; });
+      var aeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' || s.crossRelevant; });
       if (activeSuccessGroup !== 'all' && activeSuccessGroup !== 'seo' && activeSuccessGroup !== 'aeo') activeSuccessGroup = 'all';
 
       var summary = document.createElement('div');
@@ -1609,14 +1801,18 @@
 
     if (activeTab === 'success') {
       sorted.forEach(function (s) {
-        var grp = s.group === 'aeo' ? 'aeo' : 'seo';
+        // Kad je crossRelevant stavka prikazana kao "gost" u drugom tabu (npr. SEO uspeh
+        // otvoren dok je izabran AEO filter), bedž prati TRENUTNI kontekst (AEO), a "↔" napomena
+        // objašnjava vezu ka matičnoj grupi (SEO) — vidi getCrossText().
+        var native = s.group === 'aeo' ? 'aeo' : 'seo';
+        var grp = activeSuccessGroup !== 'all' ? activeSuccessGroup : native;
         var item = document.createElement('div');
         item.className = 'item success-item';
         item.innerHTML =
           '<div class="cat">' + s.category + '</div>' +
           '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grp.toUpperCase() + '</span>' + s.title + '</div>' +
           (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '') +
-          (s.crossRelevant ? '<div class="cross">↔ ' + (s.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '');
+          (s.crossRelevant ? '<div class="cross">↔ ' + getCrossText(s, activeSuccessGroup) + '</div>' : '');
         if (s.element) {
           item.style.cursor = 'pointer';
           item.onclick = function () { highlightElement(s.element); };
@@ -1632,7 +1828,7 @@
           '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
           '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
           (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
-          (f.crossRelevant ? '<div class="cross">↔ ' + (f.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '') +
+          (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
           (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
           (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
         item.onclick = function () { highlightElement(f.element); };
@@ -1669,6 +1865,7 @@
     checkPreliminary();
     checkSlug();
     checkMetaHead();
+    checkFavicon();
     checkHeadings();
     checkImages();
     checkLinks();
