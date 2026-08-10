@@ -1434,7 +1434,9 @@
     '</svg>';
   var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
-  var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' — filter UNUTAR Success taba
+  var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' | 'shared' — filter UNUTAR Success taba
+                               // ('seo'/'aeo' = isključivo tog domena, bez crossRelevant; 'shared' =
+                               // "SEO + AEO", samo crossRelevant stavke — vidi 10.08.2026 SPEC unos)
   var activeCategory = 'all'; // naziv kategorije (npr. 'Slike', 'Linkovi'...) ili 'all' — dodatni
                                // filter UNUTAR trenutnog severity filtera (error/warning/info/Sve)
   var activeCategoryOrigin = 'all'; // 'all' | 'shared' | 'solo' — sub-filter UNUTAR izabrane kategorije,
@@ -1553,10 +1555,14 @@
       '.badge.group-all{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.3);}',
       '.badge.group-seo{background:rgba(99,102,241,.12);color:#a5b4fc;border-color:rgba(99,102,241,.3);}',
       '.badge.group-aeo{background:rgba(168,85,247,.12);color:#d8b4fe;border-color:rgba(168,85,247,.3);}',
+      // "shared" (SEO + AEO) koristi amber — ista boja kao "signal" akcenat u logotipu alata, koji
+      // upravo predstavlja da stranica "emituje" signal ka oba tipa pretraživača (10.08.2026).
+      '.badge.group-shared{background:rgba(245,158,11,.12);color:#fbbf24;border-color:rgba(245,158,11,.3);}',
       '.badge.active{border-color:#6366f1;box-shadow:0 0 0 1px rgba(99,102,241,.35);}',
       '.badge.group-all.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
       '.badge.group-seo.active{border-color:#6366f1;box-shadow:0 0 0 1px rgba(99,102,241,.35);}',
       '.badge.group-aeo.active{border-color:#a855f7;box-shadow:0 0 0 1px rgba(168,85,247,.35);}',
+      '.badge.group-shared.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.35);}',
       '.badge.success.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
       // .list je jedini skrolujući deo panela — flex:1 popunjava sav preostali prostor između
       // fiksnih delova (header/tabovi/summary) i resize ručke na dnu. overflow-x:hidden +
@@ -1618,16 +1624,18 @@
   }
 
   // Bira tekst "↔" napomene za crossRelevant nalaz/uspeh u zavisnosti od toga u kom kontekstu
-  // (tabu/grupi) se trenutno prikazuje. contextGroup je 'seo' | 'aeo' | 'all' (za Success tab
-  // kad je selektovano "Sve" — u tom slučaju nema "gost" konteksta, uvek se prikazuje matična
-  // napomena, isto kao ranije). Oba teksta (crossNote i crossNoteReverse) UVEK počinju sa
-  // "Relevantno i za SEO i za AEO" (dogovoreno 10.08.2026 — eksplicitno navesti oba, ne
-  // implicitno pretpostaviti da je tab u kom se gleda već "ta druga strana") — razlika je samo
-  // u KONKRETNOM obrazloženju posle crte: crossNote objašnjava iz SEO-ugla (prikazuje se kad je
-  // item u svojoj matičnoj SEO grupi), crossNoteReverse iz AEO-ugla (prikazuje se kao "gost" u
-  // AEO tabu/filteru).
+  // (tabu/grupi) se trenutno prikazuje. contextGroup je 'seo' | 'aeo' | 'all' | 'shared'
+  // ('all'/'shared' za Success tab — 'all' kad je selektovano "Sve" i 'shared' kad je
+  // selektovan dedikovani "SEO + AEO" filter; u oba slučaja nema "gost" konteksta, uvek se
+  // prikazuje matična napomena, isto kao ranije). Oba teksta (crossNote i crossNoteReverse)
+  // UVEK počinju sa "Relevantno i za SEO i za AEO" (dogovoreno 10.08.2026 — eksplicitno navesti
+  // oba, ne implicitno pretpostaviti da je tab u kom se gleda već "ta druga strana") — razlika
+  // je samo u KONKRETNOM obrazloženju posle crte: crossNote objašnjava iz SEO-ugla (prikazuje se
+  // kad je item u svojoj matičnoj SEO grupi, ili u dedikovanom "SEO + AEO" pogledu),
+  // crossNoteReverse iz AEO-ugla (prikazuje se kao "gost" u AEO tabu/filteru).
   function getCrossText(item, contextGroup) {
     if (!item.crossRelevant) return '';
+    if (contextGroup === 'shared') return item.crossNote || item.crossNoteReverse || 'Relevantno i za SEO i za AEO.';
     var native = item.group === 'aeo' ? 'aeo' : 'seo';
     if (contextGroup && contextGroup !== 'all' && contextGroup !== native) {
       return item.crossNoteReverse || item.crossNote || 'Relevantno i za SEO i za AEO.';
@@ -1712,12 +1720,16 @@
 
     if (activeTab === 'success') {
       // Success tab nema severity filter (uspeh nema stepen ozbiljnosti), ALI ima svoj filter
-      // po SEO/AEO grupi — isti `group` polje koje findings već koriste za SEO/AEO tabove.
-      // Dosta provera je zajedničko za oba (npr. canonical, noindex, CWV, mixed content) —
-      // te stavke ostaju u SEO grupi ali dobijaju "↔" napomenu, isto kao kod findings.
-      var seoSuccesses = successes.filter(function (s) { return s.group !== 'aeo'; });
-      var aeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' || s.crossRelevant; });
-      if (activeSuccessGroup !== 'all' && activeSuccessGroup !== 'seo' && activeSuccessGroup !== 'aeo') activeSuccessGroup = 'all';
+      // po SEO/AEO grupi. Podela je po `crossRelevant` zastavici (isti kriterijum kao kategorija
+      // dropdown u SEO/AEO tabovima — vidi 10.08.2026 SPEC unos) — NE po "native group", jer bi
+      // to mešalo deljene (canonical, noindex, CWV, mixed content...) sa čisto-domenskim
+      // stavkama: "SEO" = isključivo SEO stavke (bez crossRelevant), "AEO" = isključivo AEO
+      // stavke (bez crossRelevant), "SEO + AEO" = deljene stavke (crossRelevant:true,
+      // bez obzira na native group — trenutno su sve native SEO, ali kriterijum je generičan).
+      var soloSeoSuccesses = successes.filter(function (s) { return s.group !== 'aeo' && !s.crossRelevant; });
+      var soloAeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' && !s.crossRelevant; });
+      var sharedSuccesses = successes.filter(function (s) { return !!s.crossRelevant; });
+      if (['all', 'seo', 'aeo', 'shared'].indexOf(activeSuccessGroup) === -1) activeSuccessGroup = 'all';
 
       var summary = document.createElement('div');
       summary.className = 'summary';
@@ -1729,11 +1741,15 @@
         return span;
       }
       summary.appendChild(makeSuccessGroupBadge('all', 'Sve', successes.length));
-      summary.appendChild(makeSuccessGroupBadge('seo', 'SEO', seoSuccesses.length));
-      summary.appendChild(makeSuccessGroupBadge('aeo', 'AEO', aeoSuccesses.length));
+      summary.appendChild(makeSuccessGroupBadge('seo', 'SEO', soloSeoSuccesses.length));
+      summary.appendChild(makeSuccessGroupBadge('aeo', 'AEO', soloAeoSuccesses.length));
+      summary.appendChild(makeSuccessGroupBadge('shared', 'SEO + AEO', sharedSuccesses.length));
       panel.appendChild(summary);
 
-      sorted = activeSuccessGroup === 'all' ? successes : (activeSuccessGroup === 'aeo' ? aeoSuccesses : seoSuccesses);
+      sorted = activeSuccessGroup === 'all' ? successes
+        : activeSuccessGroup === 'seo' ? soloSeoSuccesses
+        : activeSuccessGroup === 'aeo' ? soloAeoSuccesses
+        : sharedSuccesses;
     } else {
       var summary = document.createElement('div');
       summary.className = 'summary';
@@ -1779,11 +1795,11 @@
       if (activeCategory === 'all') {
         activeCategoryOrigin = 'all';
       } else if (activeCategoryOrigin !== 'all') {
-        // "own"/"shared" pod-filter je smislen SAMO ako je kategorija stvarno mešovita — ako je
-        // severity filter promenjen tako da kategorija više nije mešovita, vrati na "Sve".
+        // "shared"/"solo" pod-filter je smislen samo ako kategorija uopšte ima bar jednu deljenu
+        // (crossRelevant) stavku — ako je severity filter promenjen tako da ih više uopšte nema,
+        // vrati na "Sve" (usklađeno sa uslovom za <optgroup> ispod).
         var sharedC = categorySharedCounts[activeCategory] || 0;
-        var soloC = categoryCounts[activeCategory] - sharedC;
-        if (!(sharedC > 0 && soloC > 0)) activeCategoryOrigin = 'all';
+        if (!(sharedC > 0)) activeCategoryOrigin = 'all';
       }
 
       if (categoryNames.length > 0) {
@@ -1800,8 +1816,12 @@
           var total = categoryCounts[cat];
           var sharedCount = categorySharedCounts[cat] || 0;
           var soloCount = total - sharedCount;
-          if (sharedCount > 0 && soloCount > 0) {
-            // Mešovita kategorija — <optgroup> sa 3 pod-opcije.
+          if (sharedCount > 0) {
+            // Kategorija sadrži bar jednu deljenu (crossRelevant) stavku — <optgroup> sa 3
+            // pod-opcije, DOSLEDNO čak i kad je kategorija 100% deljena (soloCount === 0, npr.
+            // "Tehnički / crawlability" u AEO tabu) — u tom slučaju "Samo AEO/SEO stavke"
+            // pod-opcija jednostavno pokazuje (0), umesto da se kategorija tretira drugačije u
+            // zavisnosti od taba (dogovoreno 10.08.2026, videti SPEC).
             var group = document.createElement('optgroup');
             group.label = cat;
             var optAll = document.createElement('option');
@@ -1868,16 +1888,16 @@
 
     if (activeTab === 'success') {
       sorted.forEach(function (s) {
-        // Kad je crossRelevant stavka prikazana kao "gost" u drugom tabu (npr. SEO uspeh
-        // otvoren dok je izabran AEO filter), bedž prati TRENUTNI kontekst (AEO), a "↔" napomena
-        // objašnjava vezu ka matičnoj grupi (SEO) — vidi getCrossText().
+        // Bedž prati TRENUTNI izabrani filter (SEO/AEO/SEO+AEO), a u "Sve" pogledu prati
+        // NATIVNU grupu stavke — vidi getCrossText() za logiku "↔" napomene.
         var native = s.group === 'aeo' ? 'aeo' : 'seo';
         var grp = activeSuccessGroup !== 'all' ? activeSuccessGroup : native;
+        var grpLabel = grp === 'shared' ? 'SEO+AEO' : grp.toUpperCase();
         var item = document.createElement('div');
         item.className = 'item success-item';
         item.innerHTML =
           '<div class="cat">' + s.category + '</div>' +
-          '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grp.toUpperCase() + '</span>' + s.title + '</div>' +
+          '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grpLabel + '</span>' + s.title + '</div>' +
           (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '') +
           (s.crossRelevant ? '<div class="cross">↔ ' + getCrossText(s, activeSuccessGroup) + '</div>' : '');
         if (s.element) {
