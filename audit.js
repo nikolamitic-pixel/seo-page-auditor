@@ -1000,6 +1000,33 @@
 
   var panelHost, shadow, highlightBox;
   var activeTab = 'seo'; // 'seo' | 'aeo'
+  var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
+
+  // Drag & drop stanje za panel — pamti se na modul nivou jer renderPanel() u potpunosti
+  // ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi async nalaz ili promenu taba).
+  var panelPosition = null; // { top, left } u px, popunjava se čim korisnik prevuče panel
+  var isDragging = false, dragStartX = 0, dragStartY = 0, dragStartTop = 0, dragStartLeft = 0;
+
+  function setupDragHandlers() {
+    if (setupDragHandlers._attached) return;
+    setupDragHandlers._attached = true;
+    document.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      var panelEl = shadow && shadow.querySelector('.panel');
+      if (!panelEl) return;
+      var dx = e.clientX - dragStartX;
+      var dy = e.clientY - dragStartY;
+      var newTop = Math.max(0, Math.min(window.innerHeight - 30, dragStartTop + dy));
+      var newLeft = Math.max(0, Math.min(window.innerWidth - 30, dragStartLeft + dx));
+      panelEl.style.top = newTop + 'px';
+      panelEl.style.left = newLeft + 'px';
+      panelEl.style.right = 'auto';
+      panelPosition = { top: newTop, left: newLeft };
+    });
+    document.addEventListener('mouseup', function () {
+      if (isDragging) { isDragging = false; document.body.style.userSelect = ''; }
+    });
+  }
 
   function ensurePanel() {
     if (panelHost) return;
@@ -1013,18 +1040,21 @@
     style.textContent = [
       ':host{all:initial;}',
       '.panel{position:fixed;top:12px;right:12px;width:380px;max-height:90vh;overflow:auto;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;}',
-      '.hdr{padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;}',
+      '.hdr{padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;cursor:move;user-select:none;}',
       '.hdr b{font-size:14px;}',
       '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:16px;}',
       '.tabs{display:flex;border-bottom:1px solid #374151;position:sticky;top:41px;background:#111827;z-index:1;}',
       '.tabbtn{flex:1;padding:9px 10px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;}',
       '.tabbtn:hover{color:#e5e7eb;}',
       '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
-      '.summary{padding:8px 14px;display:flex;gap:10px;border-bottom:1px solid #374151;}',
-      '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;}',
+      '.summary{padding:8px 14px;display:flex;gap:8px;border-bottom:1px solid #374151;position:sticky;top:77px;background:#111827;z-index:1;}',
+      '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;}',
+      '.badge.all{background:#374151;color:#e5e7eb;}',
       '.badge.error{background:#7f1d1d;color:#fecaca;}',
       '.badge.warning{background:#78350f;color:#fde68a;}',
       '.badge.info{background:#1e3a8a;color:#bfdbfe;}',
+      '.badge.active{border-color:#3b82f6;}',
+      '.badge.tag{cursor:default;}',
       '.item{padding:10px 14px;border-bottom:1px solid #1f2937;cursor:pointer;}',
       '.item:hover{background:#1f2937;}',
       '.item .cat{color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}',
@@ -1040,6 +1070,8 @@
     highlightBox = document.createElement('div');
     highlightBox.style.cssText = 'position:fixed;pointer-events:none;border:3px solid #ef4444;border-radius:4px;z-index:2147483646;box-shadow:0 0 0 4000px rgba(0,0,0,.35);display:none;transition:all .15s ease;';
     document.documentElement.appendChild(highlightBox);
+
+    setupDragHandlers();
   }
 
   function highlightElement(el) {
@@ -1070,6 +1102,11 @@
 
     var panel = document.createElement('div');
     panel.className = 'panel';
+    if (panelPosition) {
+      panel.style.top = panelPosition.top + 'px';
+      panel.style.left = panelPosition.left + 'px';
+      panel.style.right = 'auto';
+    }
 
     var hdr = document.createElement('div');
     hdr.className = 'hdr';
@@ -1078,6 +1115,17 @@
     closeBtn.textContent = '✕';
     closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__SeoAuditorRunning = false; };
     hdr.appendChild(closeBtn);
+    hdr.addEventListener('mousedown', function (e) {
+      if (e.target === closeBtn) return; // ne pokreći drag kad se klikne na X dugme
+      isDragging = true;
+      var rect = panel.getBoundingClientRect();
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartTop = rect.top;
+      dragStartLeft = rect.left;
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
     panel.appendChild(hdr);
 
     var tabs = document.createElement('div');
@@ -1094,21 +1142,35 @@
     tabs.appendChild(aeoTab);
     panel.appendChild(tabs);
 
+    if (activeSeverity !== 'all' && activeSeverity !== 'error' && activeSeverity !== 'warning' && activeSeverity !== 'info') activeSeverity = 'all';
+
     var summary = document.createElement('div');
     summary.className = 'summary';
-    summary.innerHTML =
-      '<span class="badge error">' + counts.error + ' error</span>' +
-      '<span class="badge warning">' + counts.warning + ' warning</span>' +
-      '<span class="badge info">' + counts.info + ' info</span>';
+    function makeSeverityBadge(sev, label, count) {
+      var span = document.createElement('span');
+      span.className = 'badge ' + sev + (activeSeverity === sev ? ' active' : '');
+      span.textContent = label + ' (' + count + ')';
+      span.onclick = function () { activeSeverity = sev; renderPanel(); };
+      return span;
+    }
+    summary.appendChild(makeSeverityBadge('all', 'Sve', current.length));
+    summary.appendChild(makeSeverityBadge('error', 'error', counts.error));
+    summary.appendChild(makeSeverityBadge('warning', 'warning', counts.warning));
+    summary.appendChild(makeSeverityBadge('info', 'info', counts.info));
     panel.appendChild(summary);
 
     var order = { error: 0, warning: 1, info: 2 };
-    var sorted = current.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+    var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
+    var sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
 
     if (!sorted.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
+      if (!current.length) {
+        empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
+      } else {
+        empty.textContent = 'Nema nalaza za izabrani filter ("' + activeSeverity + '") u ovom tabu.';
+      }
       panel.appendChild(empty);
     }
 
