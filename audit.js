@@ -228,7 +228,8 @@
         fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head });
+      addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
@@ -305,7 +306,8 @@
         crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.' });
     } else {
       addSuccess({ category: 'URL i duplikacija stranice', title: 'Canonical tag je prisutan i pokazuje na ovu stranicu',
-        description: 'Canonical: ' + canPath, element: canonicalEl });
+        description: 'Canonical: ' + canPath, element: canonicalEl,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.' });
     }
   }
 
@@ -691,7 +693,8 @@
         fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.' });
     } else {
-      addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main });
+      addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.' });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -875,7 +878,8 @@
         fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
     } else {
-      addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null });
+      addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
     }
 
     // Mixed content
@@ -971,7 +975,8 @@
         description: '', why: (ttfbPoor ? 'Preko 1800ms je duboko u "loše" teritoriji. ' : 'Preko 800ms je sporo. ') + 'Server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     } else if (cwv.ttfb != null) {
-      addSuccess({ category: 'Performanse (CWV)', title: 'TTFB je dobar (' + cwv.ttfb + 'ms, ispod 800ms praga)', description: '', element: null });
+      addSuccess({ category: 'Performanse (CWV)', title: 'TTFB je dobar (' + cwv.ttfb + 'ms, ispod 800ms praga)', description: '', element: null,
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
       var lcpPoor = cwv.lcp > 4000;
@@ -980,7 +985,8 @@
         fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     } else if (cwv.lcp != null) {
-      addSuccess({ category: 'Performanse (CWV)', title: 'LCP je dobar (' + cwv.lcp + 'ms, ispod 2500ms Google praga)', description: '', element: null });
+      addSuccess({ category: 'Performanse (CWV)', title: 'LCP je dobar (' + cwv.lcp + 'ms, ispod 2500ms Google praga)', description: '', element: null,
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
@@ -989,7 +995,8 @@
         fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     } else {
-      addSuccess({ category: 'Performanse (CWV)', title: 'CLS je dobar (' + cwv.cls + ', ispod 0.1 Google praga)', description: '', element: null });
+      addSuccess({ category: 'Performanse (CWV)', title: 'CLS je dobar (' + cwv.cls + ', ispod 0.1 Google praga)', description: '', element: null,
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
 
     if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
@@ -1219,8 +1226,9 @@
   // ---------------------------------------------------------------------
 
   var panelHost, shadow, highlightBox;
-  var activeTab = 'seo'; // 'seo' | 'aeo'
+  var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
+  var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' — filter UNUTAR Success taba
 
   // Drag (pomeranje) i resize (visina) stanje za panel — pamti se na modul nivou jer
   // renderPanel() u potpunosti ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi
@@ -1299,6 +1307,15 @@
       '.badge.warning{background:#78350f;color:#fde68a;}',
       '.badge.info{background:#1e3a8a;color:#bfdbfe;}',
       '.badge.success{background:#14532d;color:#bbf7d0;}',
+      // Grupni filter/tagovi UNUTAR Success taba (SEO/AEO klasifikacija uspešnih provera) —
+      // namerno drugačije boje od .badge.info (plava) i AEO taba da se vizuelno razlikuju kao
+      // "grupa" a ne "ozbiljnost". "Sve" koristi istu zelenu kao generički success badge.
+      '.badge.group-all{background:#14532d;color:#bbf7d0;}',
+      '.badge.group-seo{background:#1e3a8a;color:#bfdbfe;}',
+      '.badge.group-aeo{background:#581c87;color:#e9d5ff;}',
+      '.badge.group-all.active{border-color:#22c55e;}',
+      '.badge.group-seo.active{border-color:#3b82f6;}',
+      '.badge.group-aeo.active{border-color:#a855f7;}',
       '.badge.active{border-color:#3b82f6;}',
       '.badge.success.active{border-color:#22c55e;}',
       '.badge.tag{cursor:default;}',
@@ -1424,16 +1441,29 @@
     var sorted;
 
     if (activeTab === 'success') {
-      // Success tab nema severity filter (uspeh nema stepen ozbiljnosti) — prikazuje se
-      // samo ukupan broj prošlih provera u summary redu.
+      // Success tab nema severity filter (uspeh nema stepen ozbiljnosti), ALI ima svoj filter
+      // po SEO/AEO grupi — isti `group` polje koje findings već koriste za SEO/AEO tabove.
+      // Dosta provera je zajedničko za oba (npr. canonical, noindex, CWV, mixed content) —
+      // te stavke ostaju u SEO grupi ali dobijaju "↔" napomenu, isto kao kod findings.
+      var seoSuccesses = successes.filter(function (s) { return s.group !== 'aeo'; });
+      var aeoSuccesses = successes.filter(function (s) { return s.group === 'aeo'; });
+      if (activeSuccessGroup !== 'all' && activeSuccessGroup !== 'seo' && activeSuccessGroup !== 'aeo') activeSuccessGroup = 'all';
+
       var summary = document.createElement('div');
       summary.className = 'summary';
-      var totalBadge = document.createElement('span');
-      totalBadge.className = 'badge success active';
-      totalBadge.textContent = 'Prošlo provera: ' + successes.length;
-      summary.appendChild(totalBadge);
+      function makeSuccessGroupBadge(grp, label, count) {
+        var span = document.createElement('span');
+        span.className = 'badge group-' + grp + (activeSuccessGroup === grp ? ' active' : '');
+        span.textContent = label + ' (' + count + ')';
+        span.onclick = function () { activeSuccessGroup = grp; renderPanel(); };
+        return span;
+      }
+      summary.appendChild(makeSuccessGroupBadge('all', 'Sve', successes.length));
+      summary.appendChild(makeSuccessGroupBadge('seo', 'SEO', seoSuccesses.length));
+      summary.appendChild(makeSuccessGroupBadge('aeo', 'AEO', aeoSuccesses.length));
       panel.appendChild(summary);
-      sorted = successes;
+
+      sorted = activeSuccessGroup === 'all' ? successes : (activeSuccessGroup === 'aeo' ? aeoSuccesses : seoSuccesses);
     } else {
       var summary = document.createElement('div');
       summary.className = 'summary';
@@ -1463,7 +1493,9 @@
       var empty = document.createElement('div');
       empty.className = 'empty';
       if (activeTab === 'success') {
-        empty.textContent = 'Još nema evidentiranih uspešnih provera (ili se stranica još analizira).';
+        empty.textContent = successes.length
+          ? 'Nema uspešnih provera za izabranu grupu ("' + activeSuccessGroup + '") u ovom tabu.'
+          : 'Još nema evidentiranih uspešnih provera (ili se stranica još analizira).';
       } else if (!current.length) {
         empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
       } else {
@@ -1474,12 +1506,14 @@
 
     if (activeTab === 'success') {
       sorted.forEach(function (s) {
+        var grp = s.group === 'aeo' ? 'aeo' : 'seo';
         var item = document.createElement('div');
         item.className = 'item success-item';
         item.innerHTML =
           '<div class="cat">' + s.category + '</div>' +
-          '<div class="title"><span class="badge success tag">✓</span>' + s.title + '</div>' +
-          (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '');
+          '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grp.toUpperCase() + '</span>' + s.title + '</div>' +
+          (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '') +
+          (s.crossRelevant ? '<div class="cross">↔ ' + (s.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '');
         if (s.element) {
           item.style.cursor = 'pointer';
           item.onclick = function () { highlightElement(s.element); };
