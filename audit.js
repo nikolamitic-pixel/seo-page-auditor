@@ -337,26 +337,91 @@
 
   var GENERIC_ALT_PATTERNS = /^(image|img|photo|picture|untitled|dsc\d*|screenshot.*|asset.*)$/i;
 
+  // Best-effort: pronalazi da li je width/height za element eksplicitno fiksiran preko CSS-a
+  // (klase, inline style) — ne samo preko HTML width/height atributa. Ne uzima u obzir
+  // specifičnost/!important niti da li je @media blok trenutno aktivan (best-effort heuristika,
+  // isto kao i ostale CSS-parsing provere u ovom fajlu).
+  function getDeclaredCssSize(el) {
+    var declared = { width: null, height: null };
+
+    function applyDecl(styleDecl) {
+      if (!styleDecl || !styleDecl.getPropertyValue) return;
+      var w = styleDecl.getPropertyValue('width');
+      var h = styleDecl.getPropertyValue('height');
+      if (w) declared.width = w.trim();
+      if (h) declared.height = h.trim();
+    }
+
+    function scanRules(rules) {
+      if (!rules) return;
+      for (var i = 0; i < rules.length; i++) {
+        var rule = rules[i];
+        // Napomena: neki browseri/implementacije izlažu prazan (ali "truthy") .cssRules i na
+        // običnim CSSStyleRule objektima, pa NE prekidamo obradu na osnovu samog postojanja
+        // .cssRules — prvo proveravamo selector/style match, pa TEK ONDA (dodatno) rekurzija
+        // u eventualne ugnježdene pravila (@media, @supports...).
+        if (rule.selectorText && rule.style) {
+          var matches = false;
+          try { matches = el.matches(rule.selectorText); } catch (e) { matches = false; }
+          if (matches) applyDecl(rule.style);
+        }
+        if (rule.cssRules && rule.cssRules.length) {
+          scanRules(rule.cssRules);
+        }
+      }
+    }
+
+    var sheets = document.styleSheets;
+    for (var i = 0; i < sheets.length; i++) {
+      try { scanRules(sheets[i].cssRules || sheets[i].rules); } catch (e) { /* cross-origin stylesheet */ }
+    }
+
+    applyDecl(el.style); // inline style ima najveći prioritet, primenjuje se poslednji
+
+    return declared;
+  }
+
+  function isCssSizeSafe(declared) {
+    var ok = function (v) { return !!v && v !== 'auto' && v !== 'initial' && v !== 'inherit' && v !== 'unset'; };
+    return ok(declared.width) && ok(declared.height);
+  }
+
   function checkImages() {
     var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+    var safeCssDimsCount = 0;
+
     imgs.forEach(function (img) {
       if (!isVisible(img)) return;
       var alt = img.getAttribute('alt');
-      var hasDims = img.hasAttribute('width') && img.hasAttribute('height');
       var altProblem = alt == null || alt.trim() === '' || GENERIC_ALT_PATTERNS.test(alt.trim()) || GENERIC_ALT_PATTERNS.test((img.currentSrc || img.src || '').split('/').pop());
 
-      if (altProblem || !hasDims) {
-        var parts = [];
-        if (altProblem) parts.push('nedostaje/generički alt tekst');
-        if (!hasDims) parts.push('nedostaju width/height atributi');
-        addFinding({ category: 'Slike', severity: altProblem ? 'error' : 'warning',
-          title: 'Slika: ' + parts.join(' + '),
+      if (altProblem) {
+        addFinding({ category: 'Slike', severity: 'error',
+          title: 'Slika: nedostaje/generički alt tekst',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: altProblem
-            ? 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez njega slika je "nevidljiva" za SEO i pristupačnost.'
-            : 'Bez width/height, browser ne može da rezerviše prostor za sliku pre učitavanja, što izaziva layout shift (CLS).',
-          fix: altProblem ? 'Dodaj opisan alt tekst u Webflow Asset Manager-u.' : 'Podesi eksplicitne dimenzije slike u Webflow Style panelu.',
+          why: 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez njega slika je "nevidljiva" za SEO i pristupačnost (izuzetak: namerno prazan alt="" na čisto dekorativnoj slici je ispravan pristup).',
+          fix: 'Dodaj opisan alt tekst u Webflow Asset Manager-u (ili svesno ostavi alt="" samo ako je slika zaista dekorativna).',
           element: img });
+      }
+
+      var hasDims = img.hasAttribute('width') && img.hasAttribute('height');
+      if (!hasDims) {
+        var declared = getDeclaredCssSize(img);
+        if (isCssSizeSafe(declared)) {
+          // CSS već eksplicitno fiksira i širinu i visinu (nijedna nije "auto") — browser rezerviše
+          // prostor bez obzira na HTML atribute, pa je realan CLS rizik nizak. Ne prijavljujemo
+          // pojedinačno po slici, samo brojimo za jedan zbirni info nalaz ispod petlje.
+          safeCssDimsCount++;
+        } else {
+          addFinding({ category: 'Slike', severity: 'warning',
+            title: 'Slika nema width/height atribute, a CSS ne fiksira obe dimenzije',
+            description: (img.currentSrc || img.src || '').slice(0, 120) +
+              '\nCSS width: ' + (declared.width || 'nije pronađeno/definisano') +
+              ' | CSS height: ' + (declared.height || 'nije pronađeno/definisano'),
+            why: 'Ni HTML width/height atributi ni CSS ne fiksiraju obe dimenzije (jedna je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše prostor za sliku, što realno izaziva layout shift (CLS) dok se slika ne učita.',
+            fix: 'Dodaj eksplicitan width i height (u pikselima) direktno na <img> tag, ili u CSS-u/Style panelu fiksiraj obe dimenzije (izbegavaj "auto" za onu koja trenutno nije eksplicitno postavljena).',
+            element: img });
+        }
       }
 
       var src = img.currentSrc || img.src || '';
@@ -388,6 +453,15 @@
         } catch (e) {}
       }
     });
+
+    if (safeCssDimsCount > 0) {
+      addFinding({ category: 'Slike', severity: 'info',
+        title: safeCssDimsCount + ' slika nema HTML width/height atribute (ali CSS već fiksira obe dimenzije)',
+        description: '',
+        why: 'CSS (klasa ili inline style) već eksplicitno definiše i širinu i visinu za ove slike (nijedna nije "auto"), pa browser rezerviše tačan prostor bez obzira na to kad/da li se slika učita — realan CLS rizik je nizak. HTML atributi bi ipak bili korisna dodatna robusnost (npr. za botove/crawlere koji ne izvršavaju CSS), ali ovo nije hitno.',
+        fix: 'Opciono: dodaj width/height HTML atribute i direktno na te <img> tagove radi potpune usklađenosti sa best practice — nije neophodno ako uvek eksplicitno fiksirate obe dimenzije u CSS-u kao sada.',
+        element: null });
+    }
   }
 
   // ---------------------------------------------------------------------
