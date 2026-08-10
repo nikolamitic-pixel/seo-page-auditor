@@ -392,15 +392,30 @@
 
     imgs.forEach(function (img) {
       if (!isVisible(img)) return;
-      var alt = img.getAttribute('alt');
-      var altProblem = alt == null || alt.trim() === '' || GENERIC_ALT_PATTERNS.test(alt.trim()) || GENERIC_ALT_PATTERNS.test((img.currentSrc || img.src || '').split('/').pop());
 
-      if (altProblem) {
-        addFinding({ category: 'Slike', severity: 'error',
-          title: 'Slika: nedostaje/generički alt tekst',
+      // Webflow tehnički implementira "Alt Text: Decorative" tako što ostavi alt="" (PRAZAN, ali
+      // PRISUTAN atribut) — to je namerni ARIA obrazac koji govori screen readeru da preskoči
+      // sliku. To se razlikuje od potpuno IZOSTAVLJENOG alt atributa, što je verovatno slučajna
+      // greška developera. Razdvajamo ova dva slučaja umesto da ih tretiramo isto.
+      var hasAltAttr = img.hasAttribute('alt');
+      var altText = hasAltAttr ? (img.getAttribute('alt') || '').trim() : '';
+      var isDecorative = hasAltAttr && altText === '';
+      var isMissing = !hasAltAttr;
+      var isGeneric = hasAltAttr && altText !== '' && GENERIC_ALT_PATTERNS.test(altText);
+
+      if (isDecorative) {
+        addFinding({ category: 'Slike', severity: 'info',
+          title: 'Stavljeno u Webflow da je slika dekorativna (alt="")',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez njega slika je "nevidljiva" za SEO i pristupačnost (izuzetak: namerno prazan alt="" na čisto dekorativnoj slici je ispravan pristup).',
-          fix: 'Dodaj opisan alt tekst u Webflow Asset Manager-u (ili svesno ostavi alt="" samo ako je slika zaista dekorativna).',
+          why: 'Prazan ali PRISUTAN alt="" je ispravan, namerni ARIA obrazac koji screen readeru govori da preskoči sliku jer ne nosi informativni sadržaj — ovo NIJE greška, za razliku od potpuno izostavljenog alt atributa.',
+          fix: 'Nema potrebne akcije ako je slika zaista čisto dekorativna. Ako ipak nosi informaciju, promeni je iz "Decorative" u opisan alt tekst u Webflow Asset Manager-u.',
+          element: img });
+      } else if (isMissing || isGeneric) {
+        addFinding({ category: 'Slike', severity: 'error',
+          title: isMissing ? 'Slika: nedostaje alt atribut' : 'Slika: generički alt tekst ("' + altText + '")',
+          description: (img.currentSrc || img.src || '').slice(0, 120),
+          why: 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez opisnog alt teksta slika je "nevidljiva" za SEO i pristupačnost.',
+          fix: 'Dodaj opisan alt tekst u Webflow Asset Manager-u (ili svesno postavi na "Decorative" ako je slika zaista čisto dekorativna).',
           element: img });
       }
 
@@ -1002,29 +1017,42 @@
   var activeTab = 'seo'; // 'seo' | 'aeo'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
 
-  // Drag & drop stanje za panel — pamti se na modul nivou jer renderPanel() u potpunosti
-  // ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi async nalaz ili promenu taba).
+  // Drag (pomeranje) i resize (visina) stanje za panel — pamti se na modul nivou jer
+  // renderPanel() u potpunosti ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi
+  // async nalaz, promenu taba ili filtera) — bez ovog pamćenja panel bi "skakao" nazad na
+  // podrazumevanu poziciju/visinu pri svakom re-renderu.
   var panelPosition = null; // { top, left } u px, popunjava se čim korisnik prevuče panel
+  var panelHeight = null; // px, popunjava se čim korisnik promeni visinu preko resize ručke
   var isDragging = false, dragStartX = 0, dragStartY = 0, dragStartTop = 0, dragStartLeft = 0;
+  var isResizing = false, resizeStartY = 0, resizeStartHeight = 0;
+  var MIN_PANEL_HEIGHT = 160;
 
   function setupDragHandlers() {
     if (setupDragHandlers._attached) return;
     setupDragHandlers._attached = true;
     document.addEventListener('mousemove', function (e) {
-      if (!isDragging) return;
       var panelEl = shadow && shadow.querySelector('.panel');
       if (!panelEl) return;
-      var dx = e.clientX - dragStartX;
-      var dy = e.clientY - dragStartY;
-      var newTop = Math.max(0, Math.min(window.innerHeight - 30, dragStartTop + dy));
-      var newLeft = Math.max(0, Math.min(window.innerWidth - 30, dragStartLeft + dx));
-      panelEl.style.top = newTop + 'px';
-      panelEl.style.left = newLeft + 'px';
-      panelEl.style.right = 'auto';
-      panelPosition = { top: newTop, left: newLeft };
+      if (isDragging) {
+        var dx = e.clientX - dragStartX;
+        var dy = e.clientY - dragStartY;
+        var newTop = Math.max(0, Math.min(window.innerHeight - 30, dragStartTop + dy));
+        var newLeft = Math.max(0, Math.min(window.innerWidth - 30, dragStartLeft + dx));
+        panelEl.style.top = newTop + 'px';
+        panelEl.style.left = newLeft + 'px';
+        panelEl.style.right = 'auto';
+        panelPosition = { top: newTop, left: newLeft };
+      }
+      if (isResizing) {
+        var dyResize = e.clientY - resizeStartY;
+        var newHeight = Math.max(MIN_PANEL_HEIGHT, resizeStartHeight + dyResize);
+        panelEl.style.height = newHeight + 'px';
+        panelHeight = newHeight;
+      }
     });
     document.addEventListener('mouseup', function () {
       if (isDragging) { isDragging = false; document.body.style.userSelect = ''; }
+      if (isResizing) { isResizing = false; document.body.style.userSelect = ''; }
     });
   }
 
@@ -1039,15 +1067,19 @@
     var style = document.createElement('style');
     style.textContent = [
       ':host{all:initial;}',
-      '.panel{position:fixed;top:12px;right:12px;width:380px;max-height:90vh;overflow:auto;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;}',
-      '.hdr{padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;cursor:move;user-select:none;}',
+      // .panel je fleksibilan kolonski kontejner (header/tabovi/summary imaju fiksnu visinu,
+      // .list je jedini deo koji se skroluje i popunjava preostali prostor) — ovo zamenjuje
+      // raniji pristup sa position:sticky + ručno nagađanim "top" offsetima, koji se lako
+      // razjednači kad se doda/izmeni bilo koji red iznad liste.
+      '.panel{position:fixed;top:12px;right:12px;width:380px;max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;overflow:hidden;}',
+      '.hdr{flex:0 0 auto;padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;}',
       '.hdr b{font-size:14px;}',
       '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:16px;}',
-      '.tabs{display:flex;border-bottom:1px solid #374151;position:sticky;top:41px;background:#111827;z-index:1;}',
+      '.tabs{flex:0 0 auto;display:flex;border-bottom:1px solid #374151;background:#111827;}',
       '.tabbtn{flex:1;padding:9px 10px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;}',
       '.tabbtn:hover{color:#e5e7eb;}',
       '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
-      '.summary{padding:8px 14px;display:flex;gap:8px;border-bottom:1px solid #374151;position:sticky;top:77px;background:#111827;z-index:1;}',
+      '.summary{flex:0 0 auto;padding:8px 14px;display:flex;gap:8px;border-bottom:1px solid #374151;background:#111827;}',
       '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;}',
       '.badge.all{background:#374151;color:#e5e7eb;}',
       '.badge.error{background:#7f1d1d;color:#fecaca;}',
@@ -1055,15 +1087,24 @@
       '.badge.info{background:#1e3a8a;color:#bfdbfe;}',
       '.badge.active{border-color:#3b82f6;}',
       '.badge.tag{cursor:default;}',
+      // .list je jedini skrolujući deo panela — flex:1 popunjava sav preostali prostor između
+      // fiksnih delova (header/tabovi/summary) i resize ručke na dnu.
+      '.list{flex:1 1 auto;min-height:0;overflow:auto;}',
       '.item{padding:10px 14px;border-bottom:1px solid #1f2937;cursor:pointer;}',
       '.item:hover{background:#1f2937;}',
       '.item .cat{color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}',
       '.item .title{font-weight:600;margin:2px 0;}',
-      '.item .desc{color:#d1d5db;white-space:pre-wrap;font-size:12px;margin-top:4px;max-height:60px;overflow:hidden;}',
+      // NAMERNO bez max-height/overflow:hidden ovde — ranija verzija je sekla duži tekst
+      // (npr. "Trenutno/Predloženo" kod skript primera, ili duže "why" objašnjenje) na 60px
+      // bez ikakvog načina da se pročita ostatak. Tekst se sad uvek prikazuje u punoj visini;
+      // spoljni .list kontejner se brine o skrolovanju cele liste.
+      '.item .desc{color:#d1d5db;white-space:pre-wrap;font-size:12px;margin-top:4px;}',
       '.item .global{margin-top:4px;color:#fbbf24;font-size:11px;}',
       '.item .cross{margin-top:4px;color:#c4b5fd;font-size:11px;}',
       '.empty{padding:20px 14px;color:#9ca3af;font-size:13px;text-align:center;}',
-      '.tag{display:inline-block;margin-right:4px;}'
+      '.tag{display:inline-block;margin-right:4px;}',
+      '.resize-handle{flex:0 0 auto;height:14px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:#1f2937;border-radius:0 0 10px 10px;color:#6b7280;font-size:10px;letter-spacing:2px;user-select:none;}',
+      '.resize-handle:hover{color:#9ca3af;}'
     ].join('');
     shadow.appendChild(style);
 
@@ -1106,6 +1147,9 @@
       panel.style.top = panelPosition.top + 'px';
       panel.style.left = panelPosition.left + 'px';
       panel.style.right = 'auto';
+    }
+    if (panelHeight) {
+      panel.style.height = panelHeight + 'px';
     }
 
     var hdr = document.createElement('div');
@@ -1163,6 +1207,11 @@
     var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
     var sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
 
+    // .list je jedini skrolujući deo — sprečava da hdr/tabs/summary "skaču" i zamenjuje raniji
+    // pristup sa position:sticky offsetima koje je trebalo ručno pogađati.
+    var list = document.createElement('div');
+    list.className = 'list';
+
     if (!sorted.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
@@ -1171,7 +1220,7 @@
       } else {
         empty.textContent = 'Nema nalaza za izabrani filter ("' + activeSeverity + '") u ovom tabu.';
       }
-      panel.appendChild(empty);
+      list.appendChild(empty);
     }
 
     sorted.forEach(function (f) {
@@ -1186,8 +1235,25 @@
         (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
         (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
       item.onclick = function () { highlightElement(f.element); };
-      panel.appendChild(item);
+      list.appendChild(item);
     });
+
+    panel.appendChild(list);
+
+    var resizeHandle = document.createElement('div');
+    resizeHandle.className = 'resize-handle';
+    resizeHandle.textContent = '•••';
+    resizeHandle.title = 'Prevuci da promeniš visinu panela';
+    resizeHandle.addEventListener('mousedown', function (e) {
+      isResizing = true;
+      var rect = panel.getBoundingClientRect();
+      resizeStartY = e.clientY;
+      resizeStartHeight = rect.height;
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    panel.appendChild(resizeHandle);
 
     shadow.appendChild(panel);
   }
