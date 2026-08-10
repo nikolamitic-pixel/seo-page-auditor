@@ -6,11 +6,11 @@
 (function () {
   'use strict';
 
-  if (window.__FNSeoAuditorRunning) {
-    console.warn('[FNSeoAuditor] Already running.');
+  if (window.__SeoAuditorRunning) {
+    console.warn('[SeoAuditor] Already running.');
     return;
   }
-  window.__FNSeoAuditorRunning = true;
+  window.__SeoAuditorRunning = true;
 
   // ---------------------------------------------------------------------
   // Utilities
@@ -23,6 +23,7 @@
     f.id = 'f' + (++findingId);
     f.severity = f.severity || 'warning'; // 'error' | 'warning' | 'info'
     f.category = f.category || 'Ostalo';
+    f.group = f.group || 'seo'; // 'seo' | 'aeo' — koji tab u panelu prikazuje ovaj nalaz
     findings.push(f);
     return f;
   }
@@ -179,7 +180,8 @@
     if (!canonical) {
       addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Canonical tag nedostaje',
         description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom.',
-        fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head });
+        fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.' });
     } else {
       checkCanonicalDuplication(canonical);
     }
@@ -188,7 +190,8 @@
     if (robots && /noindex/i.test(robots)) {
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Stranica je markirana kao noindex',
         description: 'meta robots = "' + robots + '"', why: 'Ova stranica neće biti indeksirana od strane Google-a dok god ovo stoji.',
-        fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head });
+        fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
@@ -257,7 +260,8 @@
         title: 'Canonical pokazuje na drugu putanju na istom sajtu',
         description: 'Trenutna stranica: ' + curPath + ' | Canonical: ' + canPath,
         why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
-        fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl });
+        fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.' });
     }
   }
 
@@ -473,7 +477,8 @@
     if (visibleTextLen < 200) {
       addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Vrlo malo vidljivog teksta na stranici (' + visibleTextLen + ' karaktera)',
         description: '', why: 'Stranice sa vrlo malo teksta teže se rangiraju za relevantne upite (thin content).',
-        fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main });
+        fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.' });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -631,7 +636,8 @@
     if (totalNodes > 1500 || maxDepth > 32 || maxChildren > 60) {
       addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Veliki/preduboko ugnježden DOM (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ', max dece jednog elementa: ' + maxChildren + ')',
         description: '', why: 'Prevelik DOM usporava rendering i otežava crawlerima efikasno parsiranje. Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se ignorisati.',
-        fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null });
+        fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
     }
 
     // Mixed content
@@ -640,7 +646,8 @@
       httpResources.forEach(function (el) {
         addFinding({ category: 'Tehnički / crawlability', severity: 'error', title: 'Mixed content: HTTP resurs na HTTPS stranici',
           description: (el.src || el.href || ''), why: 'Browser može da blokira ili upozori na ovaj resurs, i to je bezbednosni signal.',
-          fix: 'Promeni URL resursa na https://.', element: el });
+          fix: 'Promeni URL resursa na https://.', element: el,
+          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.' });
       });
     }
 
@@ -704,20 +711,213 @@
 
     if (cwv.ttfb != null && cwv.ttfb > 800) {
       addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
-        description: '', why: 'Preko 800ms je sporo — server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null });
+        description: '', why: 'Preko 800ms je sporo — server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
       addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Spor LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
         description: '', why: 'Google smatra dobrim LCP ispod 2500ms. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
-        fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null });
+        fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
     }
     if (cwv.cls > 0.1) {
       addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Visok CLS (Cumulative Layout Shift): ' + cwv.cls,
         description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja — najčešće zbog slika/fontova bez rezervisanog prostora.',
-        fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null });
+        fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
+        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
     }
 
     if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
+  }
+
+  // ---------------------------------------------------------------------
+  // 5.11 AEO (Answer Engine Optimization) provere
+  // ---------------------------------------------------------------------
+
+  function getJsonLdBlocks() {
+    var scripts = Array.prototype.slice.call(document.querySelectorAll('script[type="application/ld+json"]'));
+    var blocks = [];
+    scripts.forEach(function (s) {
+      try {
+        var parsed = JSON.parse(s.textContent);
+        var items = Array.isArray(parsed) ? parsed : (parsed && parsed['@graph'] ? parsed['@graph'] : [parsed]);
+        items.forEach(function (item) { if (item) blocks.push({ raw: item, el: s }); });
+      } catch (e) {
+        addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
+          title: 'JSON-LD schema blok sadrži nevalidan JSON',
+          description: (s.textContent || '').slice(0, 150),
+          why: 'Nevalidan JSON u <script type="application/ld+json"> se u potpunosti ignoriše od strane Google-a i AI crawlera — cela schema oznaka je beskorisna dok se ne ispravi sintaksa.',
+          fix: 'Proveri JSON sintaksu (nedostajući/suvišni zarezi, navodnici) npr. na validator.schema.org.', element: s });
+      }
+    });
+    return blocks;
+  }
+
+  function schemaTypesOf(block) {
+    var t = block.raw['@type'];
+    if (!t) return [];
+    return Array.isArray(t) ? t : [t];
+  }
+
+  function findSchemaByType(blocks, type) {
+    return blocks.filter(function (b) { return schemaTypesOf(b).indexOf(type) !== -1; });
+  }
+
+  function looksLikeFAQ() {
+    var candidates = document.querySelectorAll('[class*="faq" i], [id*="faq" i]');
+    if (candidates.length > 0) return true;
+    var headings = Array.prototype.slice.call(document.querySelectorAll('h2,h3,h4')).filter(isVisible);
+    var questionCount = 0;
+    headings.forEach(function (h) { if (/\?\s*$/.test(text(h))) questionCount++; });
+    return questionCount >= 3;
+  }
+
+  function looksLikeArticle() {
+    if (document.querySelector('article')) return true;
+    var main = document.querySelector('main') || document.body;
+    var wordCount = text(main).split(/\s+/).filter(Boolean).length;
+    return wordCount > 600 && document.querySelectorAll('h2,h3').length >= 2;
+  }
+
+  function looksLikeBreadcrumbUI() {
+    return !!document.querySelector('[class*="breadcrumb" i], [aria-label*="breadcrumb" i], nav[aria-label*="breadcrumb" i]');
+  }
+
+  function checkAEO() {
+    var blocks = getJsonLdBlocks();
+
+    // FAQPage
+    var faqSchemas = findSchemaByType(blocks, 'FAQPage');
+    if (looksLikeFAQ() && faqSchemas.length === 0) {
+      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
+        title: 'Stranica izgleda kao FAQ sekcija ali nema FAQPage schema markup',
+        description: 'Pronađeni FAQ-oslični elementi (klase/ID sa "faq" ili 3+ heading-a u obliku pitanja) bez odgovarajuće JSON-LD FAQPage sheme.',
+        why: 'Prema dosadašnjim AEO istraživanjima, FAQPage schema je najjači pojedinačni prediktor da će AI answer engine (ChatGPT, Perplexity, Google AI Overviews) citirati stranicu kao izvor odgovora.',
+        fix: 'Dodaj JSON-LD FAQPage schema blok (mainEntity niz Question/acceptedAnswer objekata) koji odgovara vidljivim pitanjima i odgovorima na stranici.', element: null });
+    } else if (faqSchemas.length) {
+      faqSchemas.forEach(function (b) {
+        var entities = b.raw.mainEntity;
+        var arr = Array.isArray(entities) ? entities : (entities ? [entities] : []);
+        if (!arr.length) {
+          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
+            title: 'FAQPage schema nema mainEntity (pitanja)',
+            description: '', why: 'FAQPage bez mainEntity niza Question objekata je nepotpuna i neće se koristiti za FAQ rich rezultate ili AI citiranje.',
+            fix: 'Dodaj mainEntity niz sa Question/acceptedAnswer objektima za svako pitanje sa stranice.', element: b.el });
+        } else {
+          var badItems = arr.filter(function (q) { return !q.acceptedAnswer || !q.acceptedAnswer.text; });
+          if (badItems.length) {
+            addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+              title: badItems.length + ' pitanje/a u FAQPage schemi nema popunjen acceptedAnswer.text',
+              description: '', why: 'Nepotpuna pitanja se neće koristiti za FAQ rich rezultate/AI citiranje.',
+              fix: 'Popuni acceptedAnswer.text za svako Question u schemi.', element: b.el });
+          }
+        }
+      });
+    }
+
+    // Article / BlogPosting / NewsArticle
+    var articleSchemas = findSchemaByType(blocks, 'Article').concat(findSchemaByType(blocks, 'BlogPosting'), findSchemaByType(blocks, 'NewsArticle'));
+    if (looksLikeArticle() && articleSchemas.length === 0) {
+      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+        title: 'Stranica izgleda kao članak/blog post ali nema Article schema markup',
+        description: 'Pronađen <article> element ili dugačak tekst (600+ reči) sa više podnaslova, bez JSON-LD Article/BlogPosting sheme.',
+        why: 'Article schema pomaže AI answer engine-ima i Google-u da razumeju autora, datum objave/izmene i temu stranice — svi Tier-1 tehnički AEO signali.',
+        fix: 'Dodaj JSON-LD Article schema sa headline, author, datePublished, dateModified.', element: null });
+    } else {
+      articleSchemas.forEach(function (b) {
+        if (!b.raw.dateModified && !b.raw.datePublished) {
+          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+            title: 'Article schema nema ni dateModified ni datePublished',
+            description: '', why: 'AI answer engine-i preferiraju sveže/nedavno ažurirane izvore — bez datuma nema signala svežine sadržaja.',
+            fix: 'Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolje: poveži polje automatski sa CMS "poslednja izmena" vrednošću umesto da bude ručno/hardkodovano, da se ne zaboravi ažurirati.', element: b.el });
+        }
+        var author = b.raw.author;
+        var authorObj = Array.isArray(author) ? author[0] : author;
+        var authorUrl = authorObj && authorObj.url;
+        if (authorUrl) {
+          try {
+            fetch(authorUrl, { method: 'HEAD' }).then(function (r) {
+              if (r.status === 404) {
+                addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+                  title: 'Author link u Article schemi vodi na 404',
+                  description: 'author.url: ' + authorUrl,
+                  why: 'Neispravan author link slabi E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal koji AI answer engine-i i Google koriste za procenu verodostojnosti izvora.',
+                  fix: 'Ispravi author.url da vodi na validnu autorsku stranicu/profil.', element: b.el });
+                renderPanel();
+              }
+            }).catch(function () {});
+          } catch (e) {}
+        } else if (!authorObj) {
+          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
+            title: 'Article schema nema author polje',
+            description: '', why: 'Autor je jedan od E-E-A-T signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti sadržaja.',
+            fix: 'Dodaj author (Person ili Organization) sa name i url.', element: b.el });
+        }
+      });
+    }
+
+    // Organization / LocalBusiness — NAP (Name-Address-Phone) konzistentnost
+    var orgSchemas = findSchemaByType(blocks, 'Organization').concat(findSchemaByType(blocks, 'LocalBusiness'));
+    orgSchemas.forEach(function (b) {
+      var footer = document.querySelector('footer');
+      var footerText = footer ? text(footer) : '';
+      if (!footerText) return;
+
+      var schemaPhone = (b.raw.telephone || '').replace(/[^\d]/g, '');
+      if (schemaPhone) {
+        var footerDigits = footerText.replace(/[^\d]/g, '');
+        if (footerDigits.indexOf(schemaPhone) === -1) {
+          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
+            title: 'Telefon u Organization/LocalBusiness schemi se ne poklapa sa brojem u footeru',
+            description: 'Schema telephone: ' + b.raw.telephone,
+            why: 'NAP (Name-Address-Phone) neusklađenost između schema markup-a i vidljivog sadržaja je signal koji AI answer engine-i i Google mogu tumačiti kao nepouzdan/neažuran izvor podataka.',
+            fix: 'Uskladi telefon u schema markup-u sa onim koji je vidljivo prikazan u footeru.', element: b.el });
+        }
+      }
+
+      var schemaAddr = b.raw.address;
+      var addrStr = !schemaAddr ? '' : (typeof schemaAddr === 'string' ? schemaAddr :
+        [schemaAddr.streetAddress, schemaAddr.addressLocality, schemaAddr.postalCode].filter(Boolean).join(' '));
+      if (addrStr) {
+        var addrParts = addrStr.split(/\s+/).filter(function (p) { return p.length > 3; });
+        var missingParts = addrParts.filter(function (p) { return footerText.toLowerCase().indexOf(p.toLowerCase()) === -1; });
+        if (addrParts.length && missingParts.length === addrParts.length) {
+          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'info',
+            title: 'Adresa iz Organization/LocalBusiness sheme se ne pojavljuje nigde u vidljivom footeru',
+            description: 'Schema adresa: ' + addrStr,
+            why: 'NAP neusklađenost (adresa navedena u schemi koje nema nigde vidljivo na stranici) slabi poverenje u strukturirane podatke.',
+            fix: 'Prikaži istu adresu vidljivo (npr. u footeru) ili ukloni je iz scheme ako više nije tačna.', element: b.el });
+        }
+      }
+    });
+
+    // BreadcrumbList
+    var breadcrumbSchemas = findSchemaByType(blocks, 'BreadcrumbList');
+    if (looksLikeBreadcrumbUI() && breadcrumbSchemas.length === 0) {
+      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
+        title: 'Vidljiv breadcrumb UI postoji, ali nema BreadcrumbList schema markup',
+        description: '', why: 'BreadcrumbList schema pomaže AI answer engine-ima i Google-u da razumeju hijerarhiju/kontekst stranice unutar sajta.',
+        fix: 'Dodaj JSON-LD BreadcrumbList schema koja odgovara vidljivoj breadcrumb navigaciji.', element: null });
+    }
+
+    // JS-render zavisnost (best-effort heuristika)
+    try {
+      fetch(location.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = rawHtml; // ne izvršava <script> tagove kad se seče ovako
+        Array.prototype.forEach.call(tmp.querySelectorAll('script,style,noscript'), function (n) { n.remove(); });
+        var rawText = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+        var renderedText = text(document.body).replace(/\s+/g, ' ').trim();
+        if (renderedText.length > 300 && rawText.length < renderedText.length * 0.3) {
+          addFinding({ category: 'AEO - JS rendering zavisnost', group: 'aeo', severity: 'warning',
+            title: 'Veći deo sadržaja se pojavljuje tek posle izvršavanja JavaScript-a (sirov HTML: ~' + rawText.length + ' kar., renderovano: ~' + renderedText.length + ' kar.)',
+            description: '',
+            why: 'Napomena: ovo je heuristika i može davati lažne rezultate (npr. cookie banner blokira fetch). Neki AI crawleri i jednostavniji botovi ne izvršavaju JavaScript pouzdano — ako je ključni sadržaj vidljiv tek posle JS renderovanja, rizikuje se da ti botovi "vide" praznu ili skoro praznu stranicu. Webflow stranice su obično server-renderovane pa je ovo retko, ali custom kod/embed-ovi mogu naknadno ubacivati sadržaj.',
+            fix: 'Proveri "View Page Source" (Ctrl/Cmd+U) i uporedi sa onim što se vidi na ekranu — ako ključni tekst nedostaje u sirovom HTML-u, razmotri da taj sadržaj bude deo početnog HTML odgovora servera.', element: null });
+          renderPanel();
+        }
+      }).catch(function () { /* CORS ili mrežna greška — preskoči */ });
+    } catch (e) {}
   }
 
   // ---------------------------------------------------------------------
@@ -725,11 +925,12 @@
   // ---------------------------------------------------------------------
 
   var panelHost, shadow, highlightBox;
+  var activeTab = 'seo'; // 'seo' | 'aeo'
 
   function ensurePanel() {
     if (panelHost) return;
     panelHost = document.createElement('div');
-    panelHost.id = 'fn-seo-audit-host';
+    panelHost.id = 'seo-audit-host';
     panelHost.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
     document.documentElement.appendChild(panelHost);
     shadow = panelHost.attachShadow({ mode: 'open' });
@@ -741,6 +942,10 @@
       '.hdr{padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;}',
       '.hdr b{font-size:14px;}',
       '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:16px;}',
+      '.tabs{display:flex;border-bottom:1px solid #374151;position:sticky;top:41px;background:#111827;z-index:1;}',
+      '.tabbtn{flex:1;padding:9px 10px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;}',
+      '.tabbtn:hover{color:#e5e7eb;}',
+      '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
       '.summary{padding:8px 14px;display:flex;gap:10px;border-bottom:1px solid #374151;}',
       '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;}',
       '.badge.error{background:#7f1d1d;color:#fecaca;}',
@@ -752,6 +957,8 @@
       '.item .title{font-weight:600;margin:2px 0;}',
       '.item .desc{color:#d1d5db;white-space:pre-wrap;font-size:12px;margin-top:4px;max-height:60px;overflow:hidden;}',
       '.item .global{margin-top:4px;color:#fbbf24;font-size:11px;}',
+      '.item .cross{margin-top:4px;color:#c4b5fd;font-size:11px;}',
+      '.empty{padding:20px 14px;color:#9ca3af;font-size:13px;text-align:center;}',
       '.tag{display:inline-block;margin-right:4px;}'
     ].join('');
     shadow.appendChild(style);
@@ -779,8 +986,13 @@
     var old = shadow.querySelector('.panel');
     if (old) old.remove();
 
+    var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
+    var aeoFindings = findings.filter(function (f) { return f.group === 'aeo'; });
+    if (activeTab !== 'seo' && activeTab !== 'aeo') activeTab = 'seo';
+    var current = activeTab === 'aeo' ? aeoFindings : seoFindings;
+
     var counts = { error: 0, warning: 0, info: 0 };
-    findings.forEach(function (f) { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+    current.forEach(function (f) { counts[f.severity] = (counts[f.severity] || 0) + 1; });
 
     var panel = document.createElement('div');
     panel.className = 'panel';
@@ -790,9 +1002,23 @@
     hdr.innerHTML = '<b>SEO Page Auditor</b>';
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
-    closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__FNSeoAuditorRunning = false; };
+    closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__SeoAuditorRunning = false; };
     hdr.appendChild(closeBtn);
     panel.appendChild(hdr);
+
+    var tabs = document.createElement('div');
+    tabs.className = 'tabs';
+    var seoTab = document.createElement('button');
+    seoTab.className = 'tabbtn' + (activeTab === 'seo' ? ' active' : '');
+    seoTab.textContent = 'SEO (' + seoFindings.length + ')';
+    seoTab.onclick = function () { activeTab = 'seo'; renderPanel(); };
+    var aeoTab = document.createElement('button');
+    aeoTab.className = 'tabbtn' + (activeTab === 'aeo' ? ' active' : '');
+    aeoTab.textContent = 'AEO (' + aeoFindings.length + ')';
+    aeoTab.onclick = function () { activeTab = 'aeo'; renderPanel(); };
+    tabs.appendChild(seoTab);
+    tabs.appendChild(aeoTab);
+    panel.appendChild(tabs);
 
     var summary = document.createElement('div');
     summary.className = 'summary';
@@ -803,7 +1029,14 @@
     panel.appendChild(summary);
 
     var order = { error: 0, warning: 1, info: 2 };
-    var sorted = findings.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+    var sorted = current.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+
+    if (!sorted.length) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
+      panel.appendChild(empty);
+    }
 
     sorted.forEach(function (f) {
       var item = document.createElement('div');
@@ -813,6 +1046,7 @@
         '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
         '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
         (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
+        (f.crossRelevant ? '<div class="cross">↔ ' + (f.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '') +
         (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
         (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
       item.onclick = function () { highlightElement(f.element); };
@@ -836,6 +1070,7 @@
     checkContent();
     checkFonts();
     checkTechnical();
+    checkAEO();
     tagGlobalFindings();
     renderPanel();
 
@@ -847,5 +1082,5 @@
 
   run();
 
-  window.__FNSeoAuditorResults = findings;
+  window.__SeoAuditorResults = findings;
 })();
