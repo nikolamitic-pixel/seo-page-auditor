@@ -256,7 +256,7 @@
     var canPath = canonicalUrl.pathname.replace(/\/$/, '');
 
     if (canonicalUrl.hostname === location.hostname && canPath !== curPath) {
-      addFinding({ category: 'URL i duplikacija stranice', severity: 'warning',
+      addFinding({ category: 'URL i duplikacija stranice', severity: 'error',
         title: 'Canonical pokazuje na drugu putanju na istom sajtu',
         description: 'Trenutna stranica: ' + curPath + ' | Canonical: ' + canPath,
         why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
@@ -509,7 +509,7 @@
       if (href && href.charAt(0) === '#' && href.length > 1) {
         var targetId = href.slice(1);
         if (!document.getElementById(targetId) && !document.getElementsByName(targetId).length) {
-          addFinding({ category: 'Linkovi', severity: 'warning', title: 'Anchor link vodi ka ID-ju koji ne postoji (#' + targetId + ')',
+          addFinding({ category: 'Linkovi', severity: 'error', title: 'Anchor link vodi ka ID-ju koji ne postoji (#' + targetId + ')',
             description: '"' + text(a).slice(0, 60) + '"', why: 'Klik na ovaj link neće uraditi ništa jer element sa tim ID-jem ne postoji na stranici.',
             fix: 'Proveri da li je ciljni element preimenovan ili obrisan, i ispravi href ili ID.', element: a });
         }
@@ -803,22 +803,30 @@
       cwv.cls = Math.round(sum * 1000) / 1000;
     } catch (e) {}
 
+    var CWV_CROSS_NOTE = 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.';
+
+    // Dve granice po metrici (usklađeno sa Google-ovim zvaničnim "Needs Improvement" / "Poor"
+    // pragovima za LCP i CLS; TTFB nije zvaničan Core Web Vital, ali 1800ms je uobičajen "loše"
+    // prag u web.dev preporukama) — plitko "warning", duboko u "Poor" teritoriji "error".
     if (cwv.ttfb != null && cwv.ttfb > 800) {
-      addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
-        description: '', why: 'Preko 800ms je sporo — server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
+      var ttfbPoor = cwv.ttfb > 1800;
+      addFinding({ category: 'Performanse (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
+        description: '', why: (ttfbPoor ? 'Preko 1800ms je duboko u "loše" teritoriji. ' : 'Preko 800ms je sporo. ') + 'Server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
-      addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Spor LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
-        description: '', why: 'Google smatra dobrim LCP ispod 2500ms. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
+      var lcpPoor = cwv.lcp > 4000;
+      addFinding({ category: 'Performanse (CWV)', severity: lcpPoor ? 'error' : 'warning', title: 'Spor LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
+        description: '', why: 'Google smatra dobrim LCP ispod 2500ms' + (lcpPoor ? ', a preko 4000ms svrstava u "Poor" kategoriju' : '') + '. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
         fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
     if (cwv.cls > 0.1) {
-      addFinding({ category: 'Performanse (CWV)', severity: 'warning', title: 'Visok CLS (Cumulative Layout Shift): ' + cwv.cls,
-        description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja — najčešće zbog slika/fontova bez rezervisanog prostora.',
+      var clsPoor = cwv.cls > 0.25;
+      addFinding({ category: 'Performanse (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'Visok CLS (Cumulative Layout Shift): ' + cwv.cls,
+        description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja' + (clsPoor ? ' (preko 0.25 je Google-ova "Poor" granica)' : '') + ' — najčešće zbog slika/fontova bez rezervisanog prostora.',
         fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.' });
+        crossRelevant: true, crossNote: CWV_CROSS_NOTE });
     }
 
     if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
@@ -883,7 +891,7 @@
     // FAQPage
     var faqSchemas = findSchemaByType(blocks, 'FAQPage');
     if (looksLikeFAQ() && faqSchemas.length === 0) {
-      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
+      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
         title: 'Stranica izgleda kao FAQ sekcija ali nema FAQPage schema markup',
         description: 'Pronađeni FAQ-oslični elementi (klase/ID sa "faq" ili 3+ heading-a u obliku pitanja) bez odgovarajuće JSON-LD FAQPage sheme.',
         why: 'Prema dosadašnjim AEO istraživanjima, FAQPage schema je najjači pojedinačni prediktor da će AI answer engine (ChatGPT, Perplexity, Google AI Overviews) citirati stranicu kao izvor odgovora.',
@@ -932,7 +940,7 @@
           try {
             fetch(authorUrl, { method: 'HEAD' }).then(function (r) {
               if (r.status === 404) {
-                addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+                addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
                   title: 'Author link u Article schemi vodi na 404',
                   description: 'author.url: ' + authorUrl,
                   why: 'Neispravan author link slabi E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal koji AI answer engine-i i Google koriste za procenu verodostojnosti izvora.',
