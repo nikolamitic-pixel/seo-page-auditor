@@ -257,8 +257,8 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Canonical tag nedostaje',
         description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira da li trenutno postoji duplikat. Ovo je nešto što developer treba da doda pre objave, ne "nice to have".',
         fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.',
-        crossNoteReverse: 'Relevantno i za SEO — canonical sprečava duplicate content probleme i konsoliduje ranking signale na jednu URL adresu u Google indeksu.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — canonical sprečava duplicate content probleme i konsoliduje ranking signale na jednu URL adresu u Google indeksu.' });
     } else {
       checkCanonicalDuplication(canonical);
     }
@@ -268,12 +268,12 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Stranica je markirana kao noindex',
         description: 'meta robots = "' + robots + '"', why: 'Ova stranica neće biti indeksirana od strane Google-a dok god ovo stoji.',
         fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
-        crossNoteReverse: 'Relevantno i za SEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.' });
     } else {
       addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
-        crossNoteReverse: 'Relevantno i za SEO — stranica je indeksibilna i može se pojaviti u Google pretrazi.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — stranica je indeksibilna i može se pojaviti u Google pretrazi.' });
     }
 
     var blocksSnippet = robots && (/nosnippet/i.test(robots) || /max-snippet:\s*0\b/i.test(robots));
@@ -282,12 +282,12 @@
         description: 'meta robots = "' + robots + '"',
         why: 'Ova direktiva eksplicitno zabranjuje Google-u (i bilo kom AI answer engine-u koji se delimično oslanja na Google-ov indeks) da prikaže BILO KAKAV isečak teksta sa stranice — stranica se ne može pojaviti u AI Overviews ili featured snippet-ima, niti dobiti opis u klasičnim rezultatima pretrage. Ovo je direktan, dokumentovan i binaran blokator vidljivosti, ne heuristika.',
         fix: 'Ukloni "nosnippet" i "max-snippet:0" iz meta robots taga, osim ako je namerno (npr. stranica sa osetljivim sadržajem).', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — ovo direktno sprečava AI answer engine-e da citiraju bilo koji deo sadržaja stranice.',
-        crossNoteReverse: 'Relevantno i za SEO — bez isečka, Google rezultat za ovu stranicu nema opis, što drastično smanjuje CTR čak i ako stranica dobro rangira.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — ovo direktno sprečava AI answer engine-e da citiraju bilo koji deo sadržaja stranice.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — bez isečka, Google rezultat za ovu stranicu nema opis, što drastično smanjuje CTR čak i ako stranica dobro rangira.' });
     } else {
       addSuccess({ category: 'Meta i head tagovi', title: 'Robots direktiva ne blokira prikaz isečka sadržaja', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — Google i AI answer engine-i mogu slobodno da prikažu isečak sadržaja ove stranice.',
-        crossNoteReverse: 'Relevantno i za SEO — stranica može imati normalan opis/isečak u Google rezultatima pretrage.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — Google i AI answer engine-i mogu slobodno da prikažu isečak sadržaja ove stranice.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — stranica može imati normalan opis/isečak u Google rezultatima pretrage.' });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
@@ -466,13 +466,13 @@
         description: 'Trenutna stranica: ' + curPath + ' | Canonical: ' + canPath,
         why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
         fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.',
-        crossNoteReverse: 'Relevantno i za SEO — pogrešan canonical deli ranking signale (linkove, autoritet) između više URL-ova umesto da ih konsoliduje na jednu stranicu.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — pogrešan canonical deli ranking signale (linkove, autoritet) između više URL-ova umesto da ih konsoliduje na jednu stranicu.' });
     } else {
       addSuccess({ category: 'URL i duplikacija stranice', title: 'Canonical tag je prisutan i pokazuje na ovu stranicu',
         description: 'Canonical: ' + canPath, element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.',
-        crossNoteReverse: 'Relevantno i za SEO — ispravan canonical konsoliduje ranking signale na jednu, tačno određenu URL adresu.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — ispravan canonical konsoliduje ranking signale na jednu, tačno određenu URL adresu.' });
     }
   }
 
@@ -874,12 +874,12 @@
       addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Vrlo malo vidljivog teksta na stranici (' + visibleTextLen + ' karaktera)',
         description: '', why: 'Stranice sa vrlo malo teksta teže se rangiraju za relevantne upite (thin content).',
         fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.',
-        crossNoteReverse: 'Relevantno i za SEO — Google tradicionalno slabije rangira "thin content" stranice jer ne pružaju dovoljno vrednosti korisniku u odnosu na konkurenciju.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — Google tradicionalno slabije rangira "thin content" stranice jer ne pružaju dovoljno vrednosti korisniku u odnosu na konkurenciju.' });
     } else {
       addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.',
-        crossNoteReverse: 'Relevantno i za SEO — dovoljna količina kvalitetnog sadržaja je osnovni preduslov da Google proceni stranicu kao vrednu rangiranja.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — dovoljna količina kvalitetnog sadržaja je osnovni preduslov da Google proceni stranicu kao vrednu rangiranja.' });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -1061,12 +1061,12 @@
       addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Veliki/preduboko ugnježden DOM (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ', max dece jednog elementa: ' + maxChildren + ')',
         description: '', why: 'Prevelik DOM usporava rendering i otežava crawlerima efikasno parsiranje. Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se ignorisati.',
         fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
-        crossNoteReverse: 'Relevantno i za SEO — preveliki/preduboko ugnježden DOM usporava renderovanje, što posredno pogoršava Core Web Vitals metrike koje Google koristi za rangiranje.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — preveliki/preduboko ugnježden DOM usporava renderovanje, što posredno pogoršava Core Web Vitals metrike koje Google koristi za rangiranje.' });
     } else {
       addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
-        crossNoteReverse: 'Relevantno i za SEO — razumna veličina DOM-a doprinosi bržem renderovanju i boljim Core Web Vitals rezultatima.' });
+        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
+        crossNoteReverse: 'Relevantno i za SEO i za AEO — razumna veličina DOM-a doprinosi bržem renderovanju i boljim Core Web Vitals rezultatima.' });
     }
 
     // Mixed content
@@ -1076,13 +1076,13 @@
         addFinding({ category: 'Tehnički / crawlability', severity: 'error', title: 'Mixed content: HTTP resurs na HTTPS stranici',
           description: (el.src || el.href || ''), why: 'Browser može da blokira ili upozori na ovaj resurs, i to je bezbednosni signal.',
           fix: 'Promeni URL resursa na https://.', element: el,
-          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.',
-          crossNoteReverse: 'Relevantno i za SEO — HTTPS je potvrđen Google ranking signal još od 2014, a mixed content upozorenja u browseru narušavaju poverenje korisnika.' });
+          crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.',
+          crossNoteReverse: 'Relevantno i za SEO i za AEO — HTTPS je potvrđen Google ranking signal još od 2014, a mixed content upozorenja u browseru narušavaju poverenje korisnika.' });
       });
       if (!httpResources.length) {
         addSuccess({ category: 'Tehnički / crawlability', title: 'Nema mixed content-a — svi resursi se učitavaju preko HTTPS-a', description: '', element: null,
-          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.',
-          crossNoteReverse: 'Relevantno i za SEO — potpun HTTPS bez mixed content upozorenja je potvrđen Google ranking signal.' });
+          crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.',
+          crossNoteReverse: 'Relevantno i za SEO i za AEO — potpun HTTPS bez mixed content upozorenja je potvrđen Google ranking signal.' });
       }
     }
 
@@ -1153,8 +1153,8 @@
       cwv.cls = Math.round(sum * 1000) / 1000;
     } catch (e) {}
 
-    var CWV_CROSS_NOTE = 'Relevantno i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.';
-    var CWV_CROSS_NOTE_REVERSE = 'Relevantno i za SEO — Core Web Vitals (TTFB, LCP, CLS) su zvaničan Google ranking signal još od 2021. (Page Experience update).';
+    var CWV_CROSS_NOTE = 'Relevantno i za SEO i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.';
+    var CWV_CROSS_NOTE_REVERSE = 'Relevantno i za SEO i za AEO — Core Web Vitals (TTFB, LCP, CLS) su zvaničan Google ranking signal još od 2021. (Page Experience update).';
 
     // Dve granice po metrici (usklađeno sa Google-ovim zvaničnim "Needs Improvement" / "Poor"
     // pragovima za LCP i CLS; TTFB nije zvaničan Core Web Vital, ali 1800ms je uobičajen "loše"
@@ -1613,15 +1613,17 @@
   // Bira tekst "↔" napomene za crossRelevant nalaz/uspeh u zavisnosti od toga u kom kontekstu
   // (tabu/grupi) se trenutno prikazuje. contextGroup je 'seo' | 'aeo' | 'all' (za Success tab
   // kad je selektovano "Sve" — u tom slučaju nema "gost" konteksta, uvek se prikazuje matična
-  // AEO-napomena, isto kao ranije). Kad se item prikaže u SVOJOJ matičnoj grupi -> crossNote
-  // (originalna, "↔ Relevantno i za AEO" formulacija). Kad se prikaže u SUPROTNOJ grupi (gost)
-  // -> crossNoteReverse ("↔ Relevantno i za SEO" formulacija, objašnjava SEO ugao za nekoga ko
-  // trenutno gleda AEO tab).
+  // napomena, isto kao ranije). Oba teksta (crossNote i crossNoteReverse) UVEK počinju sa
+  // "Relevantno i za SEO i za AEO" (dogovoreno 10.08.2026 — eksplicitno navesti oba, ne
+  // implicitno pretpostaviti da je tab u kom se gleda već "ta druga strana") — razlika je samo
+  // u KONKRETNOM obrazloženju posle crte: crossNote objašnjava iz SEO-ugla (prikazuje se kad je
+  // item u svojoj matičnoj SEO grupi), crossNoteReverse iz AEO-ugla (prikazuje se kao "gost" u
+  // AEO tabu/filteru).
   function getCrossText(item, contextGroup) {
     if (!item.crossRelevant) return '';
     var native = item.group === 'aeo' ? 'aeo' : 'seo';
     if (contextGroup && contextGroup !== 'all' && contextGroup !== native) {
-      return item.crossNoteReverse || item.crossNote || 'Relevantno i za oba (SEO i AEO).';
+      return item.crossNoteReverse || item.crossNote || 'Relevantno i za SEO i za AEO.';
     }
     return item.crossNote || 'Relevantno i za SEO i za AEO.';
   }
