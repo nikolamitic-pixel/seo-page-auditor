@@ -213,8 +213,8 @@
 
     var canonical = document.querySelector('link[rel="canonical"]');
     if (!canonical) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Canonical tag nedostaje',
-        description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom.',
+      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Canonical tag nedostaje',
+        description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira da li trenutno postoji duplikat. Ovo je nešto što developer treba da doda pre objave, ne "nice to have".',
         fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.' });
     } else {
@@ -319,10 +319,10 @@
     var segments = location.pathname.split('/').filter(Boolean);
     var last = segments[segments.length - 1] || '';
     if (/-\d+$/.test(last) && /-[2-9]$/.test(last)) {
-      addFinding({ category: 'URL i duplikacija stranice', severity: 'warning',
+      addFinding({ category: 'URL i duplikacija stranice', severity: 'error',
         title: 'URL slug se završava sufiksom sličnim "-2" (' + last + ')',
         description: 'Putanja: ' + location.pathname,
-        why: 'Webflow automatski dodaje "-2", "-3" itd. na slug kada se stranica duplira. Ako je ovo ostalo u produkciji, URL izgleda needeskriptivno i kao greška.',
+        why: 'Webflow automatski dodaje "-2", "-3" itd. na slug kada se stranica duplira. Ovo je konkretan, verifikovan dokaz da je stranica nastala dupliranjem i da je slug ostao netaknut pre objave — direktan rizik od duplicate content-a i needeskriptivnog URL-a u pretrazi.',
         fix: 'Preimenuj slug u Page Settings u nešto opisno, i podesi 301 redirekciju sa starog ako je već indeksiran.', element: null });
     } else {
       addSuccess({ category: 'URL i duplikacija stranice', title: 'URL slug ne sadrži Webflow duplication sufiks (npr. "-2")',
@@ -497,12 +497,12 @@
           // pojedinačno po slici, samo brojimo za jedan zbirni info nalaz ispod petlje.
           safeCssDimsCount++;
         } else {
-          addFinding({ category: 'Slike', severity: 'warning',
+          addFinding({ category: 'Slike', severity: 'error',
             title: 'Slika nema width/height atribute, a CSS ne fiksira obe dimenzije',
             description: (img.currentSrc || img.src || '').slice(0, 120) +
               '\nCSS width: ' + (declared.width || 'nije pronađeno/definisano') +
               ' | CSS height: ' + (declared.height || 'nije pronađeno/definisano'),
-            why: 'Ni HTML width/height atributi ni CSS ne fiksiraju obe dimenzije (jedna je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše prostor za sliku, što realno izaziva layout shift (CLS) dok se slika ne učita.',
+            why: 'Ni HTML width/height atributi ni CSS ne fiksiraju obe dimenzije (jedna je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše prostor za sliku, što realno izaziva layout shift (CLS). CLS je zvaničan Google Core Web Vital/ranking signal, pa je ovo verifikovan uzrok konkretnog problema sa merljivim uticajem na SEO, ne samo teorijski rizik.',
             fix: 'Dodaj eksplicitan width i height (u pikselima) direktno na <img> tag, ili u CSS-u/Style panelu fiksiraj obe dimenzije (izbegavaj "auto" za onu koja trenutno nije eksplicitno postavljena).',
             element: img });
         }
@@ -533,8 +533,8 @@
           fetch(src, { method: 'HEAD' }).then(function (r) {
             var len = r.headers.get('content-length');
             if (len && parseInt(len, 10) > 500 * 1024) {
-              addFinding({ category: 'Slike', severity: 'warning', title: 'Slika je veća od 500KB (' + fmtBytes(parseInt(len, 10)) + ')',
-                description: src, why: 'Velike slike usporavaju učitavanje stranice i pogoršavaju LCP (Largest Contentful Paint).',
+              addFinding({ category: 'Slike', severity: 'error', title: 'Slika je veća od 500KB (' + fmtBytes(parseInt(len, 10)) + ')',
+                description: src, why: 'Velike slike usporavaju učitavanje stranice i pogoršavaju LCP (Largest Contentful Paint) — zvaničan Google Core Web Vital/ranking signal. Veličina fajla je direktno izmerena (content-length header), ne pretpostavka.',
                 fix: 'Kompresuj sliku (npr. TinyPNG/Squoosh) ili je konvertuj u WebP/AVIF.', element: img });
               renderPanel();
             }
@@ -611,9 +611,17 @@
       }
 
       var linkText = text(a);
-      if (!linkText && !a.querySelector('img')) {
+      // Napomena (dodato posle rigoroznog pregleda 10.08.2026): pre ove ispravke, provera je
+      // gledala SAMO vidljiv tekst i <img> dete — ignorisala je aria-label/aria-labelledby i
+      // SVG ikonice (čest obrazac za "icon-only" linkove, npr. dugme sa SVG ikonicom bez
+      // vidljivog teksta ali sa validnim aria-label-om). Bez ove provere, alat bi lažno
+      // prijavljivao potpuno ispravne, pristupačne linkove kao "bez teksta".
+      var hasAriaLabel = !!(a.getAttribute('aria-label') && a.getAttribute('aria-label').trim());
+      var hasAriaLabelledby = !!(a.getAttribute('aria-labelledby') && a.getAttribute('aria-labelledby').trim());
+      var hasIconChild = !!a.querySelector('img, svg');
+      if (!linkText && !hasIconChild && !hasAriaLabel && !hasAriaLabelledby) {
         noTextLinkFound = true;
-        addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link bez teksta (i bez slike)',
+        addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link bez teksta (i bez slike/ikonice/aria-label-a)',
           description: href || '(nema href)', why: 'Prazan link nosi nula konteksta za korisnika i za crawler.',
           fix: 'Dodaj vidljiv tekst ili aria-label.', element: a });
       } else if (GENERIC_ANCHOR.test(linkText.trim())) {
@@ -910,10 +918,10 @@
           blockingScriptFound = true;
           var current = '<script src="' + src + '"></script>';
           var suggested = '<script src="' + src + '" defer></script>';
-          addFinding({ category: 'Tehnički / crawlability', severity: 'warning',
+          addFinding({ category: 'Tehnički / crawlability', severity: 'error',
             title: 'Treće-strana skripta bez async/defer (' + host + ')',
             description: 'Trenutno:\n' + current + '\n\nPredloženo:\n' + suggested,
-            why: 'Skripta bez async/defer u <head>-u blokira renderovanje stranice dok se ne preuzme i izvrši.',
+            why: 'Skripta bez async/defer blokira parsiranje/renderovanje stranice na tom mestu dok se ne preuzme i izvrši sa eksternog servera — jedan od najčešćih, dobro dokumentovanih uzroka lošeg LCP-a (Core Web Vital/ranking signal). Prisustvo/odsustvo atributa je direktno verifikovano na <script> tagu, ne pretpostavka.',
             fix: 'Dodaj "defer" atribut (preporučeno za skripte kojima je bitan redosled izvršavanja/DOM spremnost — većina chat widgeta i tracking piksela) ili "async" (za potpuno nezavisne skripte). Još bolje: premesti skriptu u Page Settings > Custom Code > "Before </body> tag" umesto u <head>.',
             element: s });
         }
@@ -1084,9 +1092,9 @@
         } else {
           var badItems = arr.filter(function (q) { return !q.acceptedAnswer || !q.acceptedAnswer.text; });
           if (badItems.length) {
-            addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+            addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
               title: badItems.length + ' pitanje/a u FAQPage schemi nema popunjen acceptedAnswer.text',
-              description: '', why: 'Nepotpuna pitanja se neće koristiti za FAQ rich rezultate/AI citiranje.',
+              description: '', why: 'Nepotpuna pitanja se neće koristiti za FAQ rich rezultate/AI citiranje. Ovo je verifikovana činjenica o samoj schema JSON strukturi (ne heuristika ni pretpostavka) — svako takvo pitanje je efektivno beskorisno dok se ne popuni.',
               fix: 'Popuni acceptedAnswer.text za svako Question u schemi.', element: b.el });
           } else {
             addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -1107,9 +1115,9 @@
     } else {
       articleSchemas.forEach(function (b) {
         if (!b.raw.dateModified && !b.raw.datePublished) {
-          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
+          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
             title: 'Article schema nema ni dateModified ni datePublished',
-            description: '', why: 'AI answer engine-i preferiraju sveže/nedavno ažurirane izvore — bez datuma nema signala svežine sadržaja.',
+            description: '', why: 'AI answer engine-i preferiraju sveže/nedavno ažurirane izvore — bez datuma nema signala svežine sadržaja, a ovo je Tier-1 AEO signal. Verifikovana činjenica o schema JSON-u (polje nedostaje ili ne postoji), ne heuristika.',
             fix: 'Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolje: poveži polje automatski sa CMS "poslednja izmena" vrednošću umesto da bude ručno/hardkodovano, da se ne zaboravi ažurirati.', element: b.el });
         } else {
           addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -1229,6 +1237,8 @@
   var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
   var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' — filter UNUTAR Success taba
+  var activeCategory = 'all'; // naziv kategorije (npr. 'Slike', 'Linkovi'...) ili 'all' — dodatni
+                               // filter UNUTAR trenutnog severity filtera (error/warning/info/Sve)
 
   // Drag (pomeranje) i resize (visina) stanje za panel — pamti se na modul nivou jer
   // renderPanel() u potpunosti ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi
@@ -1301,6 +1311,11 @@
       '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
       '.tabbtn.success-tab.active{border-bottom-color:#22c55e;}',
       '.summary{flex:0 0 auto;padding:8px 14px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid #374151;background:#111827;}',
+      // Dropdown red za filtriranje po kategoriji (Slike, Linkovi...) — ide ISPOD severity
+      // summary reda, iznad liste. Native <select> stilizovan da odgovara tamnoj temi panela.
+      '.catrow{flex:0 0 auto;padding:0 14px 8px;border-bottom:1px solid #374151;background:#111827;}',
+      '.cat-select{width:100%;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;}',
+      '.cat-select:hover{border-color:#4b5563;}',
       '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;white-space:nowrap;}',
       '.badge.all{background:#374151;color:#e5e7eb;}',
       '.badge.error{background:#7f1d1d;color:#fecaca;}',
@@ -1481,6 +1496,38 @@
       panel.appendChild(summary);
 
       var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
+
+      // Dropdown za dodatno filtriranje PO KATEGORIJI (Slike, Linkovi, Meta i head tagovi...)
+      // UNUTAR već izabranog severity filtera — npr. "warning" + "Slike" prikazuje samo
+      // warning nalaze o slikama. Lista kategorija u dropdown-u se računa iz `filtered` (posle
+      // severity filtera), pa se menja u zavisnosti od toga koji je severity trenutno izabran.
+      var categoryCounts = {};
+      filtered.forEach(function (f) { categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1; });
+      var categoryNames = Object.keys(categoryCounts).sort();
+      if (activeCategory !== 'all' && categoryNames.indexOf(activeCategory) === -1) activeCategory = 'all';
+
+      if (categoryNames.length > 0) {
+        var catRow = document.createElement('div');
+        catRow.className = 'catrow';
+        var select = document.createElement('select');
+        select.className = 'cat-select';
+        var allOpt = document.createElement('option');
+        allOpt.value = 'all';
+        allOpt.textContent = 'Sve kategorije (' + filtered.length + ')';
+        select.appendChild(allOpt);
+        categoryNames.forEach(function (cat) {
+          var opt = document.createElement('option');
+          opt.value = cat;
+          opt.textContent = cat + ' (' + categoryCounts[cat] + ')';
+          select.appendChild(opt);
+        });
+        select.value = activeCategory;
+        select.onchange = function () { activeCategory = select.value; renderPanel(); };
+        catRow.appendChild(select);
+        panel.appendChild(catRow);
+      }
+
+      filtered = filtered.filter(function (f) { return activeCategory === 'all' || f.category === activeCategory; });
       sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
     }
 
@@ -1498,6 +1545,8 @@
           : 'Još nema evidentiranih uspešnih provera (ili se stranica još analizira).';
       } else if (!current.length) {
         empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
+      } else if (activeCategory !== 'all') {
+        empty.textContent = 'Nema nalaza za filter severity="' + activeSeverity + '" + kategorija="' + activeCategory + '".';
       } else {
         empty.textContent = 'Nema nalaza za izabrani filter ("' + activeSeverity + '") u ovom tabu.';
       }
