@@ -439,16 +439,19 @@
     return declared;
   }
 
-  function isCssSizeSafe(declared) {
-    var ok = function (v) { return !!v && v !== 'auto' && v !== 'initial' && v !== 'inherit' && v !== 'unset'; };
-    return ok(declared.width) && ok(declared.height);
+  // Da li je jedna CSS/HTML vrednost dužine "fiksirana" (ima stvaran efekat), bez obzira na
+  // jedinicu (px, rem, vw, %, ...) — jedino što je "nefiksirano" su auto/initial/inherit/unset
+  // ili odsustvo vrednosti. Namerno ne proverava jedinicu: 10rem je isto toliko validno fiksiranje
+  // kao 160px, dokle god nije "auto" (dogovoreno sa korisnikom 10.08.2026).
+  function isLengthFixed(v) {
+    return !!v && v !== 'auto' && v !== 'initial' && v !== 'inherit' && v !== 'unset';
   }
 
   function checkImages() {
     var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
-    var safeCssDimsCount = 0;
+    var bothDimsFixedCount = 0;
+    var heightOnlyFixedCount = 0;
     var goodAltCount = 0;
-    var htmlDimsCount = 0;
     var internalHostCount = 0;
     var modernFormatCount = 0;
     var checkedImgCount = 0;
@@ -488,26 +491,34 @@
         goodAltCount++;
       }
 
-      var hasDims = img.hasAttribute('width') && img.hasAttribute('height');
-      if (!hasDims) {
-        var declared = getDeclaredCssSize(img);
-        if (isCssSizeSafe(declared)) {
-          // CSS već eksplicitno fiksira i širinu i visinu (nijedna nije "auto") — browser rezerviše
-          // prostor bez obzira na HTML atribute, pa je realan CLS rizik nizak. Ne prijavljujemo
-          // pojedinačno po slici, samo brojimo za jedan zbirni info nalaz ispod petlje.
-          safeCssDimsCount++;
+      // CLS (Cumulative Layout Shift) u tipičnom block-flow layoutu (najčešći slučaj na
+      // Webflow stranicama) je pre svega posledica NEPOZNATE VISINE u trenutku učitavanja —
+      // čim je visina fiksirana (HTML atribut ILI CSS, bilo koja jedinica: px, rem, vw...),
+      // browser odmah rezerviše taj vertikalni prostor i ostatak stranice se ne pomera kad se
+      // slika učita, BEZ OBZIRA na to da li je širina "auto" ili takođe fiksirana. Širina koja
+      // se sama računa (auto, na osnovu aspect-ratio-a slike) ne remeti već rezervisan vertikalni
+      // prostor. Zato (dogovoreno sa korisnikom 10.08.2026) se ovde gleda ISKLJUČIVO da li je
+      // VISINA fiksirana — širina više nije uslov za "bezbedno", i ovakve slike se ne prijavljuju
+      // ni kao warning/error NI kao info napomena, već idu direktno u Success tab.
+      var declared = getDeclaredCssSize(img);
+      var heightFixed = img.hasAttribute('height') || isLengthFixed(declared.height);
+      var widthFixed = img.hasAttribute('width') || isLengthFixed(declared.width);
+
+      if (heightFixed) {
+        if (widthFixed) {
+          bothDimsFixedCount++;
         } else {
-          addFinding({ category: 'Slike', severity: 'error',
-            title: 'Slika nema width/height atribute, a CSS ne fiksira obe dimenzije',
-            description: (img.currentSrc || img.src || '').slice(0, 120) +
-              '\nCSS width: ' + (declared.width || 'nije pronađeno/definisano') +
-              ' | CSS height: ' + (declared.height || 'nije pronađeno/definisano'),
-            why: 'Ni HTML width/height atributi ni CSS ne fiksiraju obe dimenzije (jedna je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše prostor za sliku, što realno izaziva layout shift (CLS). CLS je zvaničan Google Core Web Vital/ranking signal, pa je ovo verifikovan uzrok konkretnog problema sa merljivim uticajem na SEO, ne samo teorijski rizik.',
-            fix: 'Dodaj eksplicitan width i height (u pikselima) direktno na <img> tag, ili u CSS-u/Style panelu fiksiraj obe dimenzije (izbegavaj "auto" za onu koja trenutno nije eksplicitno postavljena).',
-            element: img });
+          heightOnlyFixedCount++;
         }
       } else {
-        htmlDimsCount++;
+        addFinding({ category: 'Slike', severity: 'error',
+          title: 'Slika nema fiksiranu visinu (ni HTML atribut ni CSS)',
+          description: (img.currentSrc || img.src || '').slice(0, 120) +
+            '\nCSS width: ' + (declared.width || 'nije pronađeno/definisano') +
+            ' | CSS height: ' + (declared.height || 'nije pronađeno/definisano'),
+          why: 'Ni HTML height atribut ni CSS ne fiksiraju visinu (vrednost je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše vertikalni prostor za sliku, što realno izaziva layout shift (CLS) dok se slika ne učita. CLS je zvaničan Google Core Web Vital/ranking signal, pa je ovo verifikovan uzrok konkretnog problema sa merljivim uticajem na SEO, ne samo teorijski rizik. Širina nije uslov ovde — fiksirana širina sama po sebi ne rezerviše vertikalni prostor.',
+          fix: 'Dodaj eksplicitnu visinu (HTML height atribut, ili CSS height u bilo kojoj jedinici — px, rem, vw...) direktno na <img> tag ili u Style panelu. Širina može ostati auto.',
+          element: img });
       }
 
       var src = img.currentSrc || img.src || '';
@@ -543,22 +554,21 @@
       }
     });
 
-    if (safeCssDimsCount > 0) {
-      addFinding({ category: 'Slike', severity: 'info',
-        title: safeCssDimsCount + ' slika nema HTML width/height atribute (ali CSS već fiksira obe dimenzije)',
-        description: '',
-        why: 'CSS (klasa ili inline style) već eksplicitno definiše i širinu i visinu za ove slike (nijedna nije "auto"), pa browser rezerviše tačan prostor bez obzira na to kad/da li se slika učita — realan CLS rizik je nizak. HTML atributi bi ipak bili korisna dodatna robusnost (npr. za botove/crawlere koji ne izvršavaju CSS), ali ovo nije hitno.',
-        fix: 'Opciono: dodaj width/height HTML atribute i direktno na te <img> tagove radi potpune usklađenosti sa best practice — nije neophodno ako uvek eksplicitno fiksirate obe dimenzije u CSS-u kao sada.',
-        element: null });
-    }
-
     if (checkedImgCount > 0 && goodAltCount > 0) {
       addSuccess({ category: 'Slike', title: goodAltCount + ' od ' + checkedImgCount + ' vidljivih slika ima opisan (ili svesno dekorativan) alt tekst',
         description: '', element: null });
     }
-    if (htmlDimsCount > 0) {
-      addSuccess({ category: 'Slike', title: htmlDimsCount + ' slika ima eksplicitne HTML width/height atribute (nizak CLS rizik)',
+    // Namerno NEMA nikakvog finding-a (ni warning ni info) za slike gde je visina fiksirana —
+    // dogovoreno sa korisnikom 10.08.2026 da je ovo u potpunosti prihvatljivo (slika će svakako
+    // biti vidljiva, širina se sama izračuna na osnovu aspect-ratio-a). Ide direktno u Success,
+    // razdvojeno po tipu radi transparentnosti (obe dimenzije fiksirane vs. samo visina).
+    if (bothDimsFixedCount > 0) {
+      addSuccess({ category: 'Slike', title: bothDimsFixedCount + ' slika ima fiksirane obe dimenzije (HTML atribut ili CSS, bilo koja jedinica)',
         description: '', element: null });
+    }
+    if (heightOnlyFixedCount > 0) {
+      addSuccess({ category: 'Slike', title: heightOnlyFixedCount + ' slika ima fiksiranu visinu (širina je auto — bezbedno, ne izaziva CLS)',
+        description: '', why: 'Fiksirana visina sama rezerviše vertikalni prostor bez obzira na širinu, pa je ovo dovoljno da spreči layout shift.', element: null });
     }
     if (checkedImgCount > 0 && internalHostCount === checkedImgCount) {
       addSuccess({ category: 'Slike', title: 'Sve slike su hostovane na istom domenu/Webflow Assets (nema eksternih hostova)',
@@ -1234,6 +1244,22 @@
   // ---------------------------------------------------------------------
 
   var panelHost, shadow, highlightBox;
+
+  // Ikonica alata (10.08.2026, deo vizuelnog redizajna): reticle/highlight-box uglovi (direktna
+  // referenca na sopstveni highlight box koji alat crta oko problema na strani) + checkmark
+  // ("prošlo proveru") + signal/broadcast akcenat (stranica emituje signal koji čitaju i
+  // pretraživači I AI answer engine-i — SEO+AEO u jednoj slici, bez klišeiziranog "AI sparkle").
+  // Namerno originalna kombinacija, ne generički magnifying-glass/shield/bug ikonica koje se
+  // koriste u većini SEO/audit alata.
+  var HEADER_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M20 34 V20 H34" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M66 20 H80 V34" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M80 66 V80 H66" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M34 80 H20 V66" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M31 52 L45 65 L71 35" fill="none" stroke="#4ade80" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<circle cx="80" cy="20" r="4" fill="#fbbf24"/>' +
+    '<path d="M87 12 A11 11 0 0 1 87 28" fill="none" stroke="#fbbf24" stroke-width="4" stroke-linecap="round"/>' +
+    '</svg>';
   var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
   var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' — filter UNUTAR Success taba
@@ -1294,52 +1320,77 @@
       // .item ili .desc mogu gurnuti sadržaj šire od deklarisane širine panela i izazvati
       // horizontalni scroll čak i kad je word-break ispravno podešen.
       '.panel *{box-sizing:border-box;}',
-      // .panel je fleksibilan kolonski kontejner (header/tabovi/summary imaju fiksnu visinu,
-      // .list je jedini deo koji se skroluje i popunjava preostali prostor) — ovo zamenjuje
-      // raniji pristup sa position:sticky + ručno nagađanim "top" offsetima, koji se lako
-      // razjednači kad se doda/izmeni bilo koji red iznad liste.
-      // overflow-x:hidden sprečava horizontalni scroll na nivou celog panela (npr. ako neki
-      // dete-element ipak proceni širinu pogrešno) — vertikalni scroll i dalje radi normalno
-      // jer se on kontroliše na .list nivou, ne ovde.
-      '.panel{position:fixed;top:12px;right:12px;width:380px;max-width:calc(100vw - 24px);max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;overflow-x:hidden;overflow-y:hidden;}',
-      '.hdr{flex:0 0 auto;padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;}',
-      '.hdr b{font-size:14px;}',
-      '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:16px;}',
-      '.tabs{flex:0 0 auto;display:flex;border-bottom:1px solid #374151;background:#111827;}',
-      '.tabbtn{flex:1;padding:9px 6px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
-      '.tabbtn:hover{color:#e5e7eb;}',
-      '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
-      '.tabbtn.success-tab.active{border-bottom-color:#22c55e;}',
-      '.summary{flex:0 0 auto;padding:8px 14px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid #374151;background:#111827;}',
+      // --- Vizuelni redizajn (10.08.2026) — korisnik je tražio "moderniji" izgled, dosadašnji
+      // je delovao "old school"/neozbiljno. Glavni krivci su bili: pljosnate jednobojne pozadine,
+      // pune zasićene boje na severity badge-ovima (klasičan "Windows alert box" izgled), oštra
+      // 2px linija za aktivan tab, generički system font, i podrazumevani (nestilizovani)
+      // scrollbar/select. Ispravke ispod, redom.
+      //
+      // 1) Font: Inter (ako je dostupan na sistemu ili preko fallback lanca) umesto generičkog
+      // system-ui stacka, plus font-smoothing za čistiji render teksta na svim OS-ima.
+      // 2) Panel pozadina: blaga vertikalna gradijent (umesto pljosnatog #111827) + suptilan
+      // 1px "inset" obrub + mekša, dublja senka — daje "floating card" osećaj.
+      // 3) Gornja akcentna traka (gradijent indigo→amber, isti akcent kao nova SVG ikonica) —
+      // sitan detalj koji odmah signalizira da je ovo dizajnirani proizvod, ne brzi prototip.
+      '.panel{position:fixed;top:12px;right:12px;width:380px;max-width:calc(100vw - 24px);max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;font-size:13px;border-radius:16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow-x:hidden;overflow-y:hidden;}',
+      '.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 16px 0 0;}',
+      '.hdr{position:relative;flex:0 0 auto;padding:13px 10px 13px 14px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;}',
+      '.hdr-title{display:flex;align-items:center;gap:8px;}',
+      '.hdr-title svg{flex:0 0 auto;display:block;}',
+      '.hdr b{font-size:13.5px;font-weight:700;letter-spacing:.01em;}',
+      '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:15px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background-color .15s ease,color .15s ease;}',
+      '.hdr button:hover{background:rgba(255,255,255,.08);color:#f3f4f6;}',
+      '.tabs{flex:0 0 auto;display:flex;gap:2px;padding:6px 8px 0;background:transparent;}',
+      '.tabbtn{flex:1;padding:8px 6px;background:transparent;border:none;color:#8b93a7;font-size:12px;font-weight:600;cursor:pointer;border-radius:8px 8px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background-color .15s ease,color .15s ease;position:relative;}',
+      '.tabbtn:hover{color:#e5e7eb;background:rgba(255,255,255,.04);}',
+      '.tabbtn.active{color:#f3f4f6;background:rgba(255,255,255,.07);}',
+      '.tabbtn.active::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:#6366f1;}',
+      '.tabbtn.success-tab.active::after{background:#22c55e;}',
+      '.summary{flex:0 0 auto;padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid rgba(255,255,255,.06);}',
       // Dropdown red za filtriranje po kategoriji (Slike, Linkovi...) — ide ISPOD severity
-      // summary reda, iznad liste. Native <select> stilizovan da odgovara tamnoj temi panela.
-      '.catrow{flex:0 0 auto;padding:0 14px 8px;border-bottom:1px solid #374151;background:#111827;}',
-      '.cat-select{width:100%;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;}',
-      '.cat-select:hover{border-color:#4b5563;}',
-      '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;white-space:nowrap;}',
-      '.badge.all{background:#374151;color:#e5e7eb;}',
-      '.badge.error{background:#7f1d1d;color:#fecaca;}',
-      '.badge.warning{background:#78350f;color:#fde68a;}',
-      '.badge.info{background:#1e3a8a;color:#bfdbfe;}',
-      '.badge.success{background:#14532d;color:#bbf7d0;}',
+      // summary reda, iznad liste. Native <select> stilizovan da odgovara tamnoj temi panela,
+      // sa custom strelicom (SVG data-uri) umesto podrazumevane (koja izgleda zastarelo).
+      '.catrow{flex:0 0 auto;padding:0 14px 10px;border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.cat-select{appearance:none;-webkit-appearance:none;width:100%;background:rgba(255,255,255,.05) url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6"><path d="M1 1L5 5L9 1" stroke="%239ca3af" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>\') no-repeat right 10px center;color:#e5e7eb;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 28px 7px 10px;font-size:12px;font-family:inherit;cursor:pointer;transition:border-color .15s ease,background-color .15s ease;}',
+      '.cat-select:hover{border-color:rgba(255,255,255,.22);background-color:rgba(255,255,255,.08);}',
+      // 4) Badge-ovi: prelaz sa punih zasićenih pozadina (klasičan "alert box" izgled) na
+      // suptilne, providne "tinted pill" boje sa tankim obrubom i malom tačkom iste boje ispred
+      // teksta (dodaje se preko ::before, bez izmene JS/DOM strukture) — ovo je najveća pojedinačna
+      // izmena koja "smanjuje" old-school utisak, jer su pune zasićene pozadine bile glavni krivac.
+      '.badge{border-radius:20px;padding:3px 10px;font-weight:600;font-size:11.5px;cursor:pointer;user-select:none;border:1px solid transparent;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;transition:border-color .15s ease,background-color .15s ease,transform .1s ease;}',
+      '.badge:hover{transform:translateY(-1px);}',
+      '.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}',
+      '.badge.tag{cursor:default;}',
+      '.badge.tag:hover{transform:none;}',
+      '.badge.tag::before{display:none;}',
+      '.badge.all{background:rgba(148,163,184,.12);color:#cbd5e1;border-color:rgba(148,163,184,.25);}',
+      '.badge.error{background:rgba(239,68,68,.12);color:#fca5a5;border-color:rgba(239,68,68,.3);}',
+      '.badge.warning{background:rgba(245,158,11,.12);color:#fcd34d;border-color:rgba(245,158,11,.3);}',
+      '.badge.info{background:rgba(59,130,246,.12);color:#93c5fd;border-color:rgba(59,130,246,.3);}',
+      '.badge.success{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.3);}',
       // Grupni filter/tagovi UNUTAR Success taba (SEO/AEO klasifikacija uspešnih provera) —
       // namerno drugačije boje od .badge.info (plava) i AEO taba da se vizuelno razlikuju kao
       // "grupa" a ne "ozbiljnost". "Sve" koristi istu zelenu kao generički success badge.
-      '.badge.group-all{background:#14532d;color:#bbf7d0;}',
-      '.badge.group-seo{background:#1e3a8a;color:#bfdbfe;}',
-      '.badge.group-aeo{background:#581c87;color:#e9d5ff;}',
-      '.badge.group-all.active{border-color:#22c55e;}',
-      '.badge.group-seo.active{border-color:#3b82f6;}',
-      '.badge.group-aeo.active{border-color:#a855f7;}',
-      '.badge.active{border-color:#3b82f6;}',
-      '.badge.success.active{border-color:#22c55e;}',
-      '.badge.tag{cursor:default;}',
+      '.badge.group-all{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.3);}',
+      '.badge.group-seo{background:rgba(99,102,241,.12);color:#a5b4fc;border-color:rgba(99,102,241,.3);}',
+      '.badge.group-aeo{background:rgba(168,85,247,.12);color:#d8b4fe;border-color:rgba(168,85,247,.3);}',
+      '.badge.active{border-color:#6366f1;box-shadow:0 0 0 1px rgba(99,102,241,.35);}',
+      '.badge.group-all.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
+      '.badge.group-seo.active{border-color:#6366f1;box-shadow:0 0 0 1px rgba(99,102,241,.35);}',
+      '.badge.group-aeo.active{border-color:#a855f7;box-shadow:0 0 0 1px rgba(168,85,247,.35);}',
+      '.badge.success.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
       // .list je jedini skrolujući deo panela — flex:1 popunjava sav preostali prostor između
       // fiksnih delova (header/tabovi/summary) i resize ručke na dnu. overflow-x:hidden +
       // overflow-y:auto — dozvoljava vertikalni scroll, ali NIKAD horizontalni.
       '.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;}',
-      '.item{padding:10px 14px;border-bottom:1px solid #1f2937;cursor:pointer;max-width:100%;}',
-      '.item:hover{background:#1f2937;}',
+      // 5) Custom (tanak, zaobljen) scrollbar umesto podrazumevanog — podrazumevani debeli sivi
+      // scrollbar je jedan od najupadljivijih "ovo je neko brzo sklopio" signala u tamnim panelima.
+      '.list::-webkit-scrollbar{width:8px;}',
+      '.list::-webkit-scrollbar-track{background:transparent;}',
+      '.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;}',
+      '.list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2);}',
+      '.item{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;max-width:100%;transition:background-color .15s ease;}',
+      '.item:hover{background:rgba(255,255,255,.035);}',
       '.item.success-item{cursor:default;}',
       '.item.success-item:hover{background:transparent;}',
       // word-break/overflow-wrap na SVE tekstualne delove stavke — ovo je ono što realno
@@ -1348,19 +1399,22 @@
       // ostaje pre-wrap na .desc (čuva namerne nove redove iz koda), ali overflow-wrap:anywhere
       // i dalje sme da prelomi PREDUGAČKU pojedinačnu "reč" (npr. URL) usred nje ako mora.
       '.item .cat, .item .title, .item .desc{overflow-wrap:anywhere;word-break:break-word;}',
-      '.item .cat{color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}',
-      '.item .title{font-weight:600;margin:2px 0;}',
+      '.item .cat{color:#8b93a7;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}',
+      '.item .title{font-weight:600;margin:4px 0;line-height:1.4;}',
       // NAMERNO bez max-height/overflow:hidden ovde — ranija verzija je sekla duži tekst
       // (npr. "Trenutno/Predloženo" kod skript primera, ili duže "why" objašnjenje) na 60px
       // bez ikakvog načina da se pročita ostatak. Tekst se sad uvek prikazuje u punoj visini;
       // spoljni .list kontejner se brine o skrolovanju cele liste.
-      '.item .desc{color:#d1d5db;white-space:pre-wrap;font-size:12px;margin-top:4px;}',
-      '.item .global{margin-top:4px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
-      '.item .cross{margin-top:4px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
-      '.empty{padding:20px 14px;color:#9ca3af;font-size:13px;text-align:center;}',
+      '.item .desc{color:#c3c9d6;white-space:pre-wrap;font-size:12px;line-height:1.5;margin-top:4px;}',
+      '.item .global{margin-top:6px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
+      '.item .cross{margin-top:6px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
+      '.empty{padding:32px 20px;color:#8b93a7;font-size:13px;text-align:center;line-height:1.5;}',
       '.tag{display:inline-block;margin-right:4px;}',
-      '.resize-handle{flex:0 0 auto;height:14px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:#1f2937;border-radius:0 0 10px 10px;color:#6b7280;font-size:10px;letter-spacing:2px;user-select:none;}',
-      '.resize-handle:hover{color:#9ca3af;}'
+      // 6) Resize ručka: fina zaobljena "grip" pilula (::after) umesto teksta "•••", isto
+      // interakciono ponašanje (prevlačenje menja visinu), samo suptilniji vizuelni jezik.
+      '.resize-handle{flex:0 0 auto;height:16px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:transparent;border-top:1px solid rgba(255,255,255,.05);user-select:none;}',
+      '.resize-handle::after{content:"";width:32px;height:4px;border-radius:4px;background:rgba(255,255,255,.14);transition:background-color .15s ease;}',
+      '.resize-handle:hover::after{background:rgba(255,255,255,.28);}'
     ].join('');
     shadow.appendChild(style);
 
@@ -1412,7 +1466,7 @@
 
     var hdr = document.createElement('div');
     hdr.className = 'hdr';
-    hdr.innerHTML = '<b>SEO Page Auditor</b>';
+    hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b></div>';
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
     closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__SeoAuditorRunning = false; };
@@ -1590,7 +1644,8 @@
 
     var resizeHandle = document.createElement('div');
     resizeHandle.className = 'resize-handle';
-    resizeHandle.textContent = '•••';
+    // Vizuelna "grip" pilula se sad crta preko CSS-a (.resize-handle::after), ne teksta —
+    // deo redizajna (10.08.2026), textContent namerno prazan.
     resizeHandle.title = 'Prevuci da promeniš visinu panela';
     resizeHandle.addEventListener('mousedown', function (e) {
       isResizing = true;
