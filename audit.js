@@ -28,6 +28,21 @@
     return f;
   }
 
+  // Paralelna lista sa addFinding() — beleži provere koje su PROŠLE (nema problema), da bi
+  // korisnik u "Uspešno" tabu video i šta je ispravno urađeno na stranici, ne samo šta je
+  // pokvareno. Namerno odvojena od `findings` (ne meša se sa error/warning/info severity
+  // logikom) jer "uspeh" nema stepen ozbiljnosti — ili je provera prošla, ili nije.
+  var successes = [];
+  var successId = 0;
+
+  function addSuccess(f) {
+    f.id = 's' + (++successId);
+    f.category = f.category || 'Ostalo';
+    f.group = f.group || 'seo'; // 'seo' | 'aeo' — informativno, trenutno se ne koristi za filtriranje u Success tabu
+    successes.push(f);
+    return f;
+  }
+
   function text(el) {
     return (el && (el.innerText || el.textContent) || '').trim();
   }
@@ -129,6 +144,7 @@
 
   function checkMetaHead() {
     var title = document.title || '';
+    var titleLengthOk = false;
     if (!title.trim()) {
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Title tag nedostaje ili je prazan',
         description: '<title> je prazan.', why: 'Title je jedan od najjačih on-page SEO signala i tekst koji korisnik vidi u rezultatima pretrage.',
@@ -141,11 +157,18 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Title je vrlo kratak (' + title.length + ' karaktera)',
         description: 'Title: "' + title + '"', why: 'Prekratak title često znači da nije dovoljno opisan.',
         fix: 'Dopuni title da bolje opiše sadržaj stranice.', element: document.head });
+    } else {
+      titleLengthOk = true;
     }
-    if (/^(untitled|home|page \d+|lorem ipsum)$/i.test(title.trim())) {
+    var isPlaceholderTitle = /^(untitled|home|page \d+|lorem ipsum)$/i.test(title.trim());
+    if (isPlaceholderTitle) {
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Title izgleda kao placeholder',
         description: 'Title: "' + title + '"', why: 'Ovo liči na Webflow default vrednost koja nije zamenjena.',
         fix: 'Postavi pravi, opisan title.', element: document.head });
+    }
+    if (titleLengthOk && !isPlaceholderTitle) {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Title tag je prisutan i optimalne dužine (' + title.length + ' karaktera)',
+        description: 'Title: "' + title + '"', element: document.head });
     }
 
     var desc = getMeta('description');
@@ -156,23 +179,35 @@
     } else if (desc.length > 160) {
       addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta description je predugačak (' + desc.length + ' karaktera)',
         description: desc, why: 'Google seče opis posle ~155-160 karaktera.', fix: 'Skrati na 120-160 karaktera.', element: document.head });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Meta description je prisutan i odgovarajuće dužine (' + desc.length + ' karaktera)',
+        description: desc, element: document.head });
     }
 
     var ogTitle = getMeta('og:title', 'property');
     var ogDesc = getMeta('og:description', 'property');
     var ogImage = getMeta('og:image', 'property');
-    if (!ogTitle) addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:title nedostaje',
-      description: 'Nema Open Graph title taga.', why: 'Bez njega, deljenje linka na društvenim mrežama koristi fallback (često loš) naslov.',
-      fix: 'Dodaj og:title u Page Settings > Open Graph.', element: document.head });
-    if (!ogDesc) addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:description nedostaje',
-      description: 'Nema Open Graph description taga.', why: 'Bez njega, pregled linka na društvenim mrežama nema opis.',
-      fix: 'Dodaj og:description u Page Settings.', element: document.head });
+    if (!ogTitle) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:title nedostaje',
+        description: 'Nema Open Graph title taga.', why: 'Bez njega, deljenje linka na društvenim mrežama koristi fallback (često loš) naslov.',
+        fix: 'Dodaj og:title u Page Settings > Open Graph.', element: document.head });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'og:title je prisutan', description: ogTitle, element: document.head });
+    }
+    if (!ogDesc) {
+      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:description nedostaje',
+        description: 'Nema Open Graph description taga.', why: 'Bez njega, pregled linka na društvenim mrežama nema opis.',
+        fix: 'Dodaj og:description u Page Settings.', element: document.head });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'og:description je prisutan', description: ogDesc, element: document.head });
+    }
 
     if (!ogImage) {
       addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:image nedostaje',
         description: 'Nema Open Graph slike.', why: 'Linkovi bez OG slike izgledaju golo kad se dele na društvenim mrežama.',
         fix: 'Dodaj og:image (1200x630px, JPG/PNG) u Page Settings.', element: document.head });
     } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'og:image je prisutan', description: ogImage, element: document.head });
       checkOgImage(ogImage);
     }
 
@@ -192,6 +227,8 @@
         description: 'meta robots = "' + robots + '"', why: 'Ova stranica neće biti indeksirana od strane Google-a dok god ovo stoji.',
         fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.' });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
@@ -199,6 +236,8 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'lang atribut nedostaje na <html>',
         description: '<html> nema lang atribut.', why: 'Pomaže i pretraživačima i screen readerima da znaju na kom je jeziku sadržaj.',
         fix: 'Podesi jezik sajta u Webflow Site Settings.', element: document.documentElement });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'lang atribut je prisutan na <html> (' + htmlLang + ')', description: '', element: document.documentElement });
     }
 
     var viewport = document.querySelector('meta[name="viewport"]');
@@ -206,6 +245,8 @@
       addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Viewport meta tag nedostaje',
         description: 'Nema <meta name="viewport">.', why: 'Bez ovoga stranica nije mobile-friendly, što direktno utiče na mobile-first indexing.',
         fix: 'Webflow ovo obično dodaje automatski — proveri da custom kod nije obrisao tag.', element: document.head });
+    } else {
+      addSuccess({ category: 'Meta i head tagovi', title: 'Viewport meta tag je prisutan', description: '', element: document.head });
     }
   }
 
@@ -262,6 +303,9 @@
         why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
         fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.' });
+    } else {
+      addSuccess({ category: 'URL i duplikacija stranice', title: 'Canonical tag je prisutan i pokazuje na ovu stranicu',
+        description: 'Canonical: ' + canPath, element: canonicalEl });
     }
   }
 
@@ -278,6 +322,9 @@
         description: 'Putanja: ' + location.pathname,
         why: 'Webflow automatski dodaje "-2", "-3" itd. na slug kada se stranica duplira. Ako je ovo ostalo u produkciji, URL izgleda needeskriptivno i kao greška.',
         fix: 'Preimenuj slug u Page Settings u nešto opisno, i podesi 301 redirekciju sa starog ako je već indeksiran.', element: null });
+    } else {
+      addSuccess({ category: 'URL i duplikacija stranice', title: 'URL slug ne sadrži Webflow duplication sufiks (npr. "-2")',
+        description: 'Putanja: ' + location.pathname, element: null });
     }
   }
 
@@ -299,18 +346,27 @@
           description: 'Dodatni H1: "' + text(h).slice(0, 80) + '"', why: 'Više H1 tagova razvodnjava signal o glavnoj temi stranice.',
           fix: 'Ostavi samo jedan H1, ostale promeni u H2/H3 po potrebi.', element: h });
       });
+    } else {
+      addSuccess({ category: 'Heading struktura', title: 'Tačno jedan H1 pronađen na stranici',
+        description: '"' + text(h1s[0]).slice(0, 80) + '"', element: h1s[0] });
     }
 
     var lastLevel = 0;
+    var hierarchySkipFound = false;
     headings.forEach(function (h) {
       var level = parseInt(h.tagName.substring(1), 10);
       if (lastLevel > 0 && level - lastLevel > 1) {
+        hierarchySkipFound = true;
         addFinding({ category: 'Heading struktura', severity: 'warning', title: 'Preskočena heading hijerarhija (H' + lastLevel + ' → H' + level + ')',
           description: '"' + text(h).slice(0, 80) + '"', why: 'Preskakanje nivoa (npr. H1 pa odmah H3) remeti logičku strukturu dokumenta za screen readere i crawlere.',
           fix: 'Koristi heading nivoe redom, bez preskakanja.', element: h });
       }
       lastLevel = level;
     });
+    if (!hierarchySkipFound && headings.length > 1) {
+      addSuccess({ category: 'Heading struktura', title: 'Heading hijerarhija je bez preskočenih nivoa',
+        description: headings.length + ' heading elemenata na stranici.', element: null });
+    }
 
     // Vizuelno-semantička neusklađenost (heuristika)
     var candidates = Array.prototype.slice.call(document.querySelectorAll('div, span, p')).filter(isVisible);
@@ -389,9 +445,15 @@
   function checkImages() {
     var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
     var safeCssDimsCount = 0;
+    var goodAltCount = 0;
+    var htmlDimsCount = 0;
+    var internalHostCount = 0;
+    var modernFormatCount = 0;
+    var checkedImgCount = 0;
 
     imgs.forEach(function (img) {
       if (!isVisible(img)) return;
+      checkedImgCount++;
 
       // Webflow tehnički implementira "Alt Text: Decorative" tako što ostavi alt="" (PRAZAN, ali
       // PRISUTAN atribut). NAPOMENA (10.08.2026, posle provere): potvrđeno je da "Decorative"
@@ -420,6 +482,8 @@
           why: 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez opisnog alt teksta slika je "nevidljiva" za SEO i pristupačnost.',
           fix: 'Dodaj opisan alt tekst u Webflow Asset Manager-u (ili svesno postavi na "Decorative" ako je slika zaista čisto dekorativna).',
           element: img });
+      } else {
+        goodAltCount++;
       }
 
       var hasDims = img.hasAttribute('width') && img.hasAttribute('height');
@@ -440,6 +504,8 @@
             fix: 'Dodaj eksplicitan width i height (u pikselima) direktno na <img> tag, ili u CSS-u/Style panelu fiksiraj obe dimenzije (izbegavaj "auto" za onu koja trenutno nije eksplicitno postavljena).',
             element: img });
         }
+      } else {
+        htmlDimsCount++;
       }
 
       var src = img.currentSrc || img.src || '';
@@ -451,11 +517,14 @@
           description: src, why: 'Ako se taj eksterni server/projekat ugasi (čest slučaj kod ostataka sa WordPress ili druge migracije), slika nestaje sa stranice. Veličina fajla se ne meri jer je server van naše kontrole.',
           fix: 'Preuzmi sliku i uploaduj je direktno u Webflow Assets.', element: img });
       } else {
+        internalHostCount++;
         var ext = (src.split('?')[0].split('.').pop() || '').toLowerCase();
         if (['jpg', 'jpeg', 'png', 'gif'].indexOf(ext) !== -1) {
           addFinding({ category: 'Slike', severity: 'info', title: 'Slika nije u modernom formatu (trenutno: ' + ext.toUpperCase() + ')',
             description: src, why: 'AVIF/WebP daju znatno manju veličinu fajla pri istom kvalitetu, što ubrzava učitavanje stranice.',
             fix: 'Konvertuj u WebP ili AVIF (Webflow ima opciju automatske optimizacije slika u Asset Manager-u).', element: img });
+        } else if (['webp', 'avif'].indexOf(ext) !== -1) {
+          modernFormatCount++;
         }
 
         try {
@@ -480,6 +549,23 @@
         fix: 'Opciono: dodaj width/height HTML atribute i direktno na te <img> tagove radi potpune usklađenosti sa best practice — nije neophodno ako uvek eksplicitno fiksirate obe dimenzije u CSS-u kao sada.',
         element: null });
     }
+
+    if (checkedImgCount > 0 && goodAltCount > 0) {
+      addSuccess({ category: 'Slike', title: goodAltCount + ' od ' + checkedImgCount + ' vidljivih slika ima opisan (ili svesno dekorativan) alt tekst',
+        description: '', element: null });
+    }
+    if (htmlDimsCount > 0) {
+      addSuccess({ category: 'Slike', title: htmlDimsCount + ' slika ima eksplicitne HTML width/height atribute (nizak CLS rizik)',
+        description: '', element: null });
+    }
+    if (checkedImgCount > 0 && internalHostCount === checkedImgCount) {
+      addSuccess({ category: 'Slike', title: 'Sve slike su hostovane na istom domenu/Webflow Assets (nema eksternih hostova)',
+        description: '', element: null });
+    }
+    if (modernFormatCount > 0) {
+      addSuccess({ category: 'Slike', title: modernFormatCount + ' slika je već u modernom formatu (WebP/AVIF)',
+        description: '', element: null });
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -491,14 +577,20 @@
   function checkLinks() {
     var links = Array.prototype.slice.call(document.querySelectorAll('a'));
     var internalToCheck = [];
+    var checkedLinkCount = 0;
+    var emptyHrefFound = false;
+    var brokenAnchorFound = false;
+    var noTextLinkFound = false;
 
     links.forEach(function (a) {
       if (!isVisible(a)) return;
+      checkedLinkCount++;
       var href = a.getAttribute('href');
       var isEmpty = !href || href.trim() === '' || href.trim() === '#' || /^javascript:/i.test(href.trim());
       var hasCompensatingRole = a.getAttribute('role') === 'tab' || a.getAttribute('role') === 'button';
 
       if (isEmpty && !hasCompensatingRole) {
+        emptyHrefFound = true;
         addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link ne vodi nigde (href="' + (href || '') + '")',
           description: '"' + text(a).slice(0, 60) + '"',
           why: 'Ako ovo predstavlja tab/akordeon koji samo menja prikaz na istoj stranici, ispravan pristup po WAI-ARIA Tabs obrascu je <button> sa role="tab", ne <a> link — link semantički implicira navigaciju.',
@@ -509,6 +601,7 @@
       if (href && href.charAt(0) === '#' && href.length > 1) {
         var targetId = href.slice(1);
         if (!document.getElementById(targetId) && !document.getElementsByName(targetId).length) {
+          brokenAnchorFound = true;
           addFinding({ category: 'Linkovi', severity: 'error', title: 'Anchor link vodi ka ID-ju koji ne postoji (#' + targetId + ')',
             description: '"' + text(a).slice(0, 60) + '"', why: 'Klik na ovaj link neće uraditi ništa jer element sa tim ID-jem ne postoji na stranici.',
             fix: 'Proveri da li je ciljni element preimenovan ili obrisan, i ispravi href ili ID.', element: a });
@@ -517,6 +610,7 @@
 
       var linkText = text(a);
       if (!linkText && !a.querySelector('img')) {
+        noTextLinkFound = true;
         addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link bez teksta (i bez slike)',
           description: href || '(nema href)', why: 'Prazan link nosi nula konteksta za korisnika i za crawler.',
           fix: 'Dodaj vidljiv tekst ili aria-label.', element: a });
@@ -533,24 +627,47 @@
       }
     });
 
+    if (checkedLinkCount > 0 && !emptyHrefFound) {
+      addSuccess({ category: 'Linkovi', title: 'Nema linkova koji ne vode nigde (svi href atributi su validni)', description: '', element: null });
+    }
+    if (checkedLinkCount > 0 && !brokenAnchorFound) {
+      addSuccess({ category: 'Linkovi', title: 'Svi in-page anchor linkovi (#id) vode ka postojećim elementima', description: '', element: null });
+    }
+    if (checkedLinkCount > 0 && !noTextLinkFound) {
+      addSuccess({ category: 'Linkovi', title: 'Svi linkovi imaju vidljiv tekst ili sliku', description: '', element: null });
+    }
+
     // 404 / redirect chain check for internal links (best-effort, limited count)
     var toCheck = internalToCheck.slice(0, 25);
+    var linkCheckSettled = 0;
+    var linkCheckProblemFound = false;
+    function maybeReportLinkCheckSuccess() {
+      linkCheckSettled++;
+      if (linkCheckSettled === toCheck.length && !linkCheckProblemFound) {
+        addSuccess({ category: 'Linkovi', title: 'Svi provereni interni linkovi (' + toCheck.length + ') vraćaju uspešan odgovor bez 404/redirekcije',
+          description: '', element: null });
+        renderPanel();
+      }
+    }
     toCheck.forEach(function (item) {
       try {
         fetch(item.href, { method: 'GET', redirect: 'manual' }).then(function (r) {
           if (r.status === 404) {
+            linkCheckProblemFound = true;
             addFinding({ category: 'Linkovi', severity: 'error', title: 'Interni link vodi na 404 stranicu',
               description: item.href, why: 'Slomljen interni link šteti i korisničkom iskustvu i crawl efikasnosti.',
               fix: 'Ispravi link ili vrati/preimenuj ciljnu stranicu.', element: item.el });
             renderPanel();
           } else if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) {
+            linkCheckProblemFound = true;
             addFinding({ category: 'Linkovi', severity: 'info', title: 'Interni link prolazi kroz redirekciju',
               description: item.href, why: 'Nije slomljeno, ali redirekcija usporava i razvodnjava link signal.',
               fix: 'Ako je moguće, ažuriraj link da vodi direktno na finalni URL.', element: item.el });
             renderPanel();
           }
-        }).catch(function () { /* CORS / network - ignore */ });
-      } catch (e) {}
+          maybeReportLinkCheckSuccess();
+        }).catch(function () { /* CORS / network - ignore */ maybeReportLinkCheckSuccess(); });
+      } catch (e) { maybeReportLinkCheckSuccess(); }
     });
   }
 
@@ -573,6 +690,8 @@
         description: '', why: 'Stranice sa vrlo malo teksta teže se rangiraju za relevantne upite (thin content).',
         fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.' });
+    } else {
+      addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -597,25 +716,35 @@
     var repeatRegex = /\b(\w{2,})\s+\1\b/gi;
     var seenRepeats = {};
     var m;
+    var repeatedWordFound = false;
     while ((m = repeatRegex.exec(bodyText)) !== null) {
       var word = m[1].toLowerCase();
       if (seenRepeats[word]) continue;
       seenRepeats[word] = true;
+      repeatedWordFound = true;
       addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Ponovljena reč zaredom: "' + m[1] + ' ' + m[1] + '"',
         description: '...' + bodyText.slice(Math.max(0, m.index - 30), m.index + 30) + '...',
         why: 'Najčešće copy-paste greška.', fix: 'Ukloni duplikat reči.', element: null });
     }
+    if (!repeatedWordFound) {
+      addSuccess({ category: 'Sadržaj', title: 'Nema ponovljenih reči zaredom (copy-paste greška)', description: '', element: null });
+    }
 
     // Placeholder text
+    var placeholderFound = false;
     PLACEHOLDER_PATTERNS.forEach(function (re) {
       var mm = bodyText.match(re);
       if (mm) {
+        placeholderFound = true;
         addFinding({ category: 'Sadržaj', severity: 'error', title: 'Placeholder/Lorem ipsum tekst pronađen na stranici',
           description: '"...' + bodyText.slice(Math.max(0, bodyText.indexOf(mm[0]) - 20), bodyText.indexOf(mm[0]) + 60) + '..."',
           why: 'Čest slučaj kad CMS Rich Text element nije pravilno povezan sa pravim podatkom, pa ostane default vrednost.',
           fix: 'Zameni placeholder tekst pravim sadržajem pre objave.', element: null });
       }
     });
+    if (!placeholderFound) {
+      addSuccess({ category: 'Sadržaj', title: 'Nema placeholder/Lorem ipsum teksta na stranici', description: '', element: null });
+    }
 
     // Manual <br> line breaks inside headings/paragraphs
     var brCandidates = Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p'));
@@ -655,6 +784,8 @@
       addFinding({ category: 'Fontovi', severity: 'info', title: 'Stranica koristi ' + distinct.length + ' fonta: ' + distinct.join(', '),
         description: '', why: 'Informativno — ne utiče na SEO score, ali vredi biti svestan.',
         fix: '', element: null });
+    } else if (distinct.length === 1) {
+      addSuccess({ category: 'Fontovi', title: 'Stranica koristi samo 1 font (' + distinct[0] + ') — minimalan rizik za FOUT/FOIT', description: '', element: null });
     }
 
     // Google Fonts vs self-hosted
@@ -668,6 +799,8 @@
       addFinding({ category: 'Fontovi', severity: 'warning', title: 'Stranica dinamički učitava Google Fonts sa Google servera',
         description: '', why: 'Nemački sud (LG München I, 01/2022) presudio je da dinamičko učitavanje Google Fonts-a bez pristanka šalje IP adresu posetioca Google-u bez pravnog osnova po GDPR-u, što je pokrenulo talas opomena (uglavnom u Nemačkoj, ali GDPR važi u celoj EU). Nismo pravni savetnici — proveri sa pravnikom ako je relevantno za klijenta.',
         fix: 'Preuzmi font fajlove i uploaduj ih direktno u Webflow Assets (self-hosting) umesto dinamičkog Google Fonts linka.', element: null });
+    } else {
+      addSuccess({ category: 'Fontovi', title: 'Nema dinamičkog učitavanja Google Fonts sa Google servera (GDPR rizik izbegnut)', description: '', element: null });
     }
 
     // Font format check
@@ -677,12 +810,14 @@
       });
     } catch (e) {}
     var oldFormatFound = false;
+    var fontFaceRuleFound = false;
     var sheets = document.styleSheets;
     for (var i = 0; i < sheets.length; i++) {
       try {
         var rules = sheets[i].cssRules || [];
         for (var j = 0; j < rules.length; j++) {
           if (rules[j].constructor.name === 'CSSFontFaceRule' || (rules[j].cssText && /@font-face/.test(rules[j].cssText))) {
+            fontFaceRuleFound = true;
             if (/\.(ttf|otf|eot)(\?|"|'|\))/i.test(rules[j].cssText) && !/\.woff2/i.test(rules[j].cssText)) {
               oldFormatFound = true;
             }
@@ -694,6 +829,8 @@
       addFinding({ category: 'Fontovi', severity: 'info', title: 'Font fajl u starijem formatu (nije .woff2)',
         description: '', why: '.woff2 ima znatno bolju kompresiju od .ttf/.otf/.eot, manji fajl = brže učitavanje.',
         fix: 'Konvertuj font fajlove u .woff2 pre uploada u Webflow.', element: null });
+    } else if (fontFaceRuleFound) {
+      addSuccess({ category: 'Fontovi', title: 'Svi @font-face fajlovi su u modernom .woff2 formatu', description: '', element: null });
     }
   }
 
@@ -704,6 +841,7 @@
   function checkTechnical() {
     // Duplicate IDs - informational only
     var idMap = {};
+    var dupIdFound = false;
     Array.prototype.forEach.call(document.querySelectorAll('[id]'), function (el) {
       var id = el.id;
       if (!id) return;
@@ -711,11 +849,15 @@
     });
     Object.keys(idMap).forEach(function (id) {
       if (idMap[id].length > 1) {
+        dupIdFound = true;
         addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Duplikatan ID atribut: "' + id + '" (' + idMap[id].length + ' puta)',
           description: '', why: 'Duplikatni ID-jevi lome in-page anchor linkove i ARIA reference (aria-controls, aria-labelledby) koje se oslanjaju na jedinstven ID. Čest rezultat kopiranja cele sekcije bez izmene ID-ja.',
           fix: 'Preimenuj duplikate u jedinstvene ID-jeve.', element: idMap[id][1] });
       }
     });
+    if (!dupIdFound && Object.keys(idMap).length > 0) {
+      addSuccess({ category: 'Tehnički / crawlability', title: 'Nema duplikatnih ID atributa na stranici', description: '', element: null });
+    }
 
     // DOM size / depth (Lighthouse-style thresholds, recommendation only)
     var totalNodes = document.querySelectorAll('*').length;
@@ -732,6 +874,8 @@
         description: '', why: 'Prevelik DOM usporava rendering i otežava crawlerima efikasno parsiranje. Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se ignorisati.',
         fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
         crossRelevant: true, crossNote: 'Relevantno i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.' });
+    } else {
+      addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null });
     }
 
     // Mixed content
@@ -743,24 +887,37 @@
           fix: 'Promeni URL resursa na https://.', element: el,
           crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.' });
       });
+      if (!httpResources.length) {
+        addSuccess({ category: 'Tehnički / crawlability', title: 'Nema mixed content-a — svi resursi se učitavaju preko HTTPS-a', description: '', element: null,
+          crossRelevant: true, crossNote: 'Relevantno i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.' });
+      }
     }
 
     // Third-party scripts without async/defer
     var scripts = Array.prototype.slice.call(document.querySelectorAll('head script[src], body script[src]'));
+    var thirdPartyScriptCount = 0;
+    var blockingScriptFound = false;
     scripts.forEach(function (s) {
       var src = s.getAttribute('src');
       var host = hostnameOf(src);
-      if (host && host !== location.hostname && !s.async && !s.defer) {
-        var current = '<script src="' + src + '"></script>';
-        var suggested = '<script src="' + src + '" defer></script>';
-        addFinding({ category: 'Tehnički / crawlability', severity: 'warning',
-          title: 'Treće-strana skripta bez async/defer (' + host + ')',
-          description: 'Trenutno:\n' + current + '\n\nPredloženo:\n' + suggested,
-          why: 'Skripta bez async/defer u <head>-u blokira renderovanje stranice dok se ne preuzme i izvrši.',
-          fix: 'Dodaj "defer" atribut (preporučeno za skripte kojima je bitan redosled izvršavanja/DOM spremnost — većina chat widgeta i tracking piksela) ili "async" (za potpuno nezavisne skripte). Još bolje: premesti skriptu u Page Settings > Custom Code > "Before </body> tag" umesto u <head>.',
-          element: s });
+      if (host && host !== location.hostname) {
+        thirdPartyScriptCount++;
+        if (!s.async && !s.defer) {
+          blockingScriptFound = true;
+          var current = '<script src="' + src + '"></script>';
+          var suggested = '<script src="' + src + '" defer></script>';
+          addFinding({ category: 'Tehnički / crawlability', severity: 'warning',
+            title: 'Treće-strana skripta bez async/defer (' + host + ')',
+            description: 'Trenutno:\n' + current + '\n\nPredloženo:\n' + suggested,
+            why: 'Skripta bez async/defer u <head>-u blokira renderovanje stranice dok se ne preuzme i izvrši.',
+            fix: 'Dodaj "defer" atribut (preporučeno za skripte kojima je bitan redosled izvršavanja/DOM spremnost — većina chat widgeta i tracking piksela) ili "async" (za potpuno nezavisne skripte). Još bolje: premesti skriptu u Page Settings > Custom Code > "Before </body> tag" umesto u <head>.',
+            element: s });
+        }
       }
     });
+    if (thirdPartyScriptCount > 0 && !blockingScriptFound) {
+      addSuccess({ category: 'Tehnički / crawlability', title: 'Sve treće-strana skripte (' + thirdPartyScriptCount + ') imaju async/defer', description: '', element: null });
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -813,6 +970,8 @@
       addFinding({ category: 'Performanse (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
         description: '', why: (ttfbPoor ? 'Preko 1800ms je duboko u "loše" teritoriji. ' : 'Preko 800ms je sporo. ') + 'Server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+    } else if (cwv.ttfb != null) {
+      addSuccess({ category: 'Performanse (CWV)', title: 'TTFB je dobar (' + cwv.ttfb + 'ms, ispod 800ms praga)', description: '', element: null });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
       var lcpPoor = cwv.lcp > 4000;
@@ -820,6 +979,8 @@
         description: '', why: 'Google smatra dobrim LCP ispod 2500ms' + (lcpPoor ? ', a preko 4000ms svrstava u "Poor" kategoriju' : '') + '. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
         fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+    } else if (cwv.lcp != null) {
+      addSuccess({ category: 'Performanse (CWV)', title: 'LCP je dobar (' + cwv.lcp + 'ms, ispod 2500ms Google praga)', description: '', element: null });
     }
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
@@ -827,6 +988,8 @@
         description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja' + (clsPoor ? ' (preko 0.25 je Google-ova "Poor" granica)' : '') + ' — najčešće zbog slika/fontova bez rezervisanog prostora.',
         fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE });
+    } else {
+      addSuccess({ category: 'Performanse (CWV)', title: 'CLS je dobar (' + cwv.cls + ', ispod 0.1 Google praga)', description: '', element: null });
     }
 
     if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
@@ -839,12 +1002,14 @@
   function getJsonLdBlocks() {
     var scripts = Array.prototype.slice.call(document.querySelectorAll('script[type="application/ld+json"]'));
     var blocks = [];
+    var invalidFound = false;
     scripts.forEach(function (s) {
       try {
         var parsed = JSON.parse(s.textContent);
         var items = Array.isArray(parsed) ? parsed : (parsed && parsed['@graph'] ? parsed['@graph'] : [parsed]);
         items.forEach(function (item) { if (item) blocks.push({ raw: item, el: s }); });
       } catch (e) {
+        invalidFound = true;
         addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
           title: 'JSON-LD schema blok sadrži nevalidan JSON',
           description: (s.textContent || '').slice(0, 150),
@@ -852,6 +1017,10 @@
           fix: 'Proveri JSON sintaksu (nedostajući/suvišni zarezi, navodnici) npr. na validator.schema.org.', element: s });
       }
     });
+    if (scripts.length > 0 && !invalidFound) {
+      addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+        title: 'Svi JSON-LD schema blokovi (' + scripts.length + ') sadrže validan JSON', description: '', element: null });
+    }
     return blocks;
   }
 
@@ -912,6 +1081,9 @@
               title: badItems.length + ' pitanje/a u FAQPage schemi nema popunjen acceptedAnswer.text',
               description: '', why: 'Nepotpuna pitanja se neće koristiti za FAQ rich rezultate/AI citiranje.',
               fix: 'Popuni acceptedAnswer.text za svako Question u schemi.', element: b.el });
+          } else {
+            addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+              title: 'FAQPage schema je prisutna i kompletna (' + arr.length + ' pitanja sa odgovorima)', description: '', element: b.el });
           }
         }
       });
@@ -932,6 +1104,9 @@
             title: 'Article schema nema ni dateModified ni datePublished',
             description: '', why: 'AI answer engine-i preferiraju sveže/nedavno ažurirane izvore — bez datuma nema signala svežine sadržaja.',
             fix: 'Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolje: poveži polje automatski sa CMS "poslednja izmena" vrednošću umesto da bude ručno/hardkodovano, da se ne zaboravi ažurirati.', element: b.el });
+        } else {
+          addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+            title: 'Article schema ima datePublished/dateModified', description: '', element: b.el });
         }
         var author = b.raw.author;
         var authorObj = Array.isArray(author) ? author[0] : author;
@@ -945,8 +1120,11 @@
                   description: 'author.url: ' + authorUrl,
                   why: 'Neispravan author link slabi E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal koji AI answer engine-i i Google koriste za procenu verodostojnosti izvora.',
                   fix: 'Ispravi author.url da vodi na validnu autorsku stranicu/profil.', element: b.el });
-                renderPanel();
+              } else {
+                addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+                  title: 'Author link u Article schemi je validan (ne vraća 404)', description: 'author.url: ' + authorUrl, element: b.el });
               }
+              renderPanel();
             }).catch(function () {});
           } catch (e) {}
         } else if (!authorObj) {
@@ -954,6 +1132,9 @@
             title: 'Article schema nema author polje',
             description: '', why: 'Autor je jedan od E-E-A-T signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti sadržaja.',
             fix: 'Dodaj author (Person ili Organization) sa name i url.', element: b.el });
+        } else {
+          addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+            title: 'Article schema ima author polje', description: '', element: b.el });
         }
       });
     }
@@ -965,10 +1146,12 @@
       var footerText = footer ? text(footer) : '';
       if (!footerText) return;
 
+      var napIssueFound = false;
       var schemaPhone = (b.raw.telephone || '').replace(/[^\d]/g, '');
       if (schemaPhone) {
         var footerDigits = footerText.replace(/[^\d]/g, '');
         if (footerDigits.indexOf(schemaPhone) === -1) {
+          napIssueFound = true;
           addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
             title: 'Telefon u Organization/LocalBusiness schemi se ne poklapa sa brojem u footeru',
             description: 'Schema telephone: ' + b.raw.telephone,
@@ -984,12 +1167,18 @@
         var addrParts = addrStr.split(/\s+/).filter(function (p) { return p.length > 3; });
         var missingParts = addrParts.filter(function (p) { return footerText.toLowerCase().indexOf(p.toLowerCase()) === -1; });
         if (addrParts.length && missingParts.length === addrParts.length) {
+          napIssueFound = true;
           addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
             title: 'Adresa iz Organization/LocalBusiness sheme se ne pojavljuje nigde u vidljivom footeru',
             description: 'Schema adresa: ' + addrStr,
             why: 'NAP neusklađenost (adresa navedena u schemi koje nema nigde vidljivo na stranici) slabi poverenje u strukturirane podatke.',
             fix: 'Prikaži istu adresu vidljivo (npr. u footeru) ili ukloni je iz scheme ako više nije tačna.', element: b.el });
         }
+      }
+
+      if (!napIssueFound && (schemaPhone || addrStr)) {
+        addSuccess({ category: 'AEO - NAP konzistentnost', group: 'aeo',
+          title: 'NAP podaci (telefon/adresa) iz schema markup-a su konzistentni sa footerom', description: '', element: b.el });
       }
     });
 
@@ -1000,6 +1189,9 @@
         title: 'Vidljiv breadcrumb UI postoji, ali nema BreadcrumbList schema markup',
         description: '', why: 'BreadcrumbList schema pomaže AI answer engine-ima i Google-u da razumeju hijerarhiju/kontekst stranice unutar sajta.',
         fix: 'Dodaj JSON-LD BreadcrumbList schema koja odgovara vidljivoj breadcrumb navigaciji.', element: null });
+    } else if (breadcrumbSchemas.length) {
+      addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+        title: 'BreadcrumbList schema je prisutna', description: '', element: breadcrumbSchemas[0].el });
     }
 
     // JS-render zavisnost (best-effort heuristika)
@@ -1080,31 +1272,50 @@
     var style = document.createElement('style');
     style.textContent = [
       ':host{all:initial;}',
+      // box-sizing:border-box na SVE elemente unutar panela — bez ovoga padding/border na
+      // .item ili .desc mogu gurnuti sadržaj šire od deklarisane širine panela i izazvati
+      // horizontalni scroll čak i kad je word-break ispravno podešen.
+      '.panel *{box-sizing:border-box;}',
       // .panel je fleksibilan kolonski kontejner (header/tabovi/summary imaju fiksnu visinu,
       // .list je jedini deo koji se skroluje i popunjava preostali prostor) — ovo zamenjuje
       // raniji pristup sa position:sticky + ručno nagađanim "top" offsetima, koji se lako
       // razjednači kad se doda/izmeni bilo koji red iznad liste.
-      '.panel{position:fixed;top:12px;right:12px;width:380px;max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;overflow:hidden;}',
+      // overflow-x:hidden sprečava horizontalni scroll na nivou celog panela (npr. ako neki
+      // dete-element ipak proceni širinu pogrešno) — vertikalni scroll i dalje radi normalno
+      // jer se on kontroliše na .list nivou, ne ovde.
+      '.panel{position:fixed;top:12px;right:12px;width:380px;max-width:calc(100vw - 24px);max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:#111827;color:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:2147483647;overflow-x:hidden;overflow-y:hidden;}',
       '.hdr{flex:0 0 auto;padding:12px 14px;background:#1f2937;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;}',
       '.hdr b{font-size:14px;}',
       '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:16px;}',
       '.tabs{flex:0 0 auto;display:flex;border-bottom:1px solid #374151;background:#111827;}',
-      '.tabbtn{flex:1;padding:9px 10px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;}',
+      '.tabbtn{flex:1;padding:9px 6px;background:transparent;border:none;color:#9ca3af;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.tabbtn:hover{color:#e5e7eb;}',
       '.tabbtn.active{color:#f3f4f6;border-bottom-color:#3b82f6;}',
-      '.summary{flex:0 0 auto;padding:8px 14px;display:flex;gap:8px;border-bottom:1px solid #374151;background:#111827;}',
-      '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;}',
+      '.tabbtn.success-tab.active{border-bottom-color:#22c55e;}',
+      '.summary{flex:0 0 auto;padding:8px 14px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid #374151;background:#111827;}',
+      '.badge{border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px;cursor:pointer;user-select:none;border:2px solid transparent;white-space:nowrap;}',
       '.badge.all{background:#374151;color:#e5e7eb;}',
       '.badge.error{background:#7f1d1d;color:#fecaca;}',
       '.badge.warning{background:#78350f;color:#fde68a;}',
       '.badge.info{background:#1e3a8a;color:#bfdbfe;}',
+      '.badge.success{background:#14532d;color:#bbf7d0;}',
       '.badge.active{border-color:#3b82f6;}',
+      '.badge.success.active{border-color:#22c55e;}',
       '.badge.tag{cursor:default;}',
       // .list je jedini skrolujući deo panela — flex:1 popunjava sav preostali prostor između
-      // fiksnih delova (header/tabovi/summary) i resize ručke na dnu.
-      '.list{flex:1 1 auto;min-height:0;overflow:auto;}',
-      '.item{padding:10px 14px;border-bottom:1px solid #1f2937;cursor:pointer;}',
+      // fiksnih delova (header/tabovi/summary) i resize ručke na dnu. overflow-x:hidden +
+      // overflow-y:auto — dozvoljava vertikalni scroll, ali NIKAD horizontalni.
+      '.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;}',
+      '.item{padding:10px 14px;border-bottom:1px solid #1f2937;cursor:pointer;max-width:100%;}',
       '.item:hover{background:#1f2937;}',
+      '.item.success-item{cursor:default;}',
+      '.item.success-item:hover{background:transparent;}',
+      // word-break/overflow-wrap na SVE tekstualne delove stavke — ovo je ono što realno
+      // sprečava horizontalni scroll kad tekst sadrži dugačke URL-ove, kod bez razmaka
+      // (npr. <script src="...">) ili duge reči bez prirodnog mesta za prelom. white-space
+      // ostaje pre-wrap na .desc (čuva namerne nove redove iz koda), ali overflow-wrap:anywhere
+      // i dalje sme da prelomi PREDUGAČKU pojedinačnu "reč" (npr. URL) usred nje ako mora.
+      '.item .cat, .item .title, .item .desc{overflow-wrap:anywhere;word-break:break-word;}',
       '.item .cat{color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}',
       '.item .title{font-weight:600;margin:2px 0;}',
       // NAMERNO bez max-height/overflow:hidden ovde — ranija verzija je sekla duži tekst
@@ -1112,8 +1323,8 @@
       // bez ikakvog načina da se pročita ostatak. Tekst se sad uvek prikazuje u punoj visini;
       // spoljni .list kontejner se brine o skrolovanju cele liste.
       '.item .desc{color:#d1d5db;white-space:pre-wrap;font-size:12px;margin-top:4px;}',
-      '.item .global{margin-top:4px;color:#fbbf24;font-size:11px;}',
-      '.item .cross{margin-top:4px;color:#c4b5fd;font-size:11px;}',
+      '.item .global{margin-top:4px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
+      '.item .cross{margin-top:4px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.empty{padding:20px 14px;color:#9ca3af;font-size:13px;text-align:center;}',
       '.tag{display:inline-block;margin-right:4px;}',
       '.resize-handle{flex:0 0 auto;height:14px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:#1f2937;border-radius:0 0 10px 10px;color:#6b7280;font-size:10px;letter-spacing:2px;user-select:none;}',
@@ -1148,11 +1359,13 @@
 
     var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
     var aeoFindings = findings.filter(function (f) { return f.group === 'aeo'; });
-    if (activeTab !== 'seo' && activeTab !== 'aeo') activeTab = 'seo';
-    var current = activeTab === 'aeo' ? aeoFindings : seoFindings;
+    if (activeTab !== 'seo' && activeTab !== 'aeo' && activeTab !== 'success') activeTab = 'seo';
+    var current = activeTab === 'aeo' ? aeoFindings : (activeTab === 'success' ? successes : seoFindings);
 
     var counts = { error: 0, warning: 0, info: 0 };
-    current.forEach(function (f) { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+    if (activeTab !== 'success') {
+      current.forEach(function (f) { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+    }
 
     var panel = document.createElement('div');
     panel.className = 'panel';
@@ -1195,30 +1408,51 @@
     aeoTab.className = 'tabbtn' + (activeTab === 'aeo' ? ' active' : '');
     aeoTab.textContent = 'AEO (' + aeoFindings.length + ')';
     aeoTab.onclick = function () { activeTab = 'aeo'; renderPanel(); };
+    var successTab = document.createElement('button');
+    successTab.className = 'tabbtn success-tab' + (activeTab === 'success' ? ' active' : '');
+    successTab.style.color = activeTab === 'success' ? '#4ade80' : '#166534';
+    successTab.textContent = '✓ Uspešno (' + successes.length + ')';
+    successTab.onclick = function () { activeTab = 'success'; renderPanel(); };
     tabs.appendChild(seoTab);
     tabs.appendChild(aeoTab);
+    tabs.appendChild(successTab);
     panel.appendChild(tabs);
 
     if (activeSeverity !== 'all' && activeSeverity !== 'error' && activeSeverity !== 'warning' && activeSeverity !== 'info') activeSeverity = 'all';
 
-    var summary = document.createElement('div');
-    summary.className = 'summary';
-    function makeSeverityBadge(sev, label, count) {
-      var span = document.createElement('span');
-      span.className = 'badge ' + sev + (activeSeverity === sev ? ' active' : '');
-      span.textContent = label + ' (' + count + ')';
-      span.onclick = function () { activeSeverity = sev; renderPanel(); };
-      return span;
-    }
-    summary.appendChild(makeSeverityBadge('all', 'Sve', current.length));
-    summary.appendChild(makeSeverityBadge('error', 'error', counts.error));
-    summary.appendChild(makeSeverityBadge('warning', 'warning', counts.warning));
-    summary.appendChild(makeSeverityBadge('info', 'info', counts.info));
-    panel.appendChild(summary);
-
     var order = { error: 0, warning: 1, info: 2 };
-    var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
-    var sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+    var sorted;
+
+    if (activeTab === 'success') {
+      // Success tab nema severity filter (uspeh nema stepen ozbiljnosti) — prikazuje se
+      // samo ukupan broj prošlih provera u summary redu.
+      var summary = document.createElement('div');
+      summary.className = 'summary';
+      var totalBadge = document.createElement('span');
+      totalBadge.className = 'badge success active';
+      totalBadge.textContent = 'Prošlo provera: ' + successes.length;
+      summary.appendChild(totalBadge);
+      panel.appendChild(summary);
+      sorted = successes;
+    } else {
+      var summary = document.createElement('div');
+      summary.className = 'summary';
+      function makeSeverityBadge(sev, label, count) {
+        var span = document.createElement('span');
+        span.className = 'badge ' + sev + (activeSeverity === sev ? ' active' : '');
+        span.textContent = label + ' (' + count + ')';
+        span.onclick = function () { activeSeverity = sev; renderPanel(); };
+        return span;
+      }
+      summary.appendChild(makeSeverityBadge('all', 'Sve', current.length));
+      summary.appendChild(makeSeverityBadge('error', 'error', counts.error));
+      summary.appendChild(makeSeverityBadge('warning', 'warning', counts.warning));
+      summary.appendChild(makeSeverityBadge('info', 'info', counts.info));
+      panel.appendChild(summary);
+
+      var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
+      sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+    }
 
     // .list je jedini skrolujući deo — sprečava da hdr/tabs/summary "skaču" i zamenjuje raniji
     // pristup sa position:sticky offsetima koje je trebalo ručno pogađati.
@@ -1228,7 +1462,9 @@
     if (!sorted.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      if (!current.length) {
+      if (activeTab === 'success') {
+        empty.textContent = 'Još nema evidentiranih uspešnih provera (ili se stranica još analizira).';
+      } else if (!current.length) {
         empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
       } else {
         empty.textContent = 'Nema nalaza za izabrani filter ("' + activeSeverity + '") u ovom tabu.';
@@ -1236,20 +1472,36 @@
       list.appendChild(empty);
     }
 
-    sorted.forEach(function (f) {
-      var item = document.createElement('div');
-      item.className = 'item';
-      item.innerHTML =
-        '<div class="cat">' + f.category + '</div>' +
-        '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
-        '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
-        (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
-        (f.crossRelevant ? '<div class="cross">↔ ' + (f.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '') +
-        (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
-        (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
-      item.onclick = function () { highlightElement(f.element); };
-      list.appendChild(item);
-    });
+    if (activeTab === 'success') {
+      sorted.forEach(function (s) {
+        var item = document.createElement('div');
+        item.className = 'item success-item';
+        item.innerHTML =
+          '<div class="cat">' + s.category + '</div>' +
+          '<div class="title"><span class="badge success tag">✓</span>' + s.title + '</div>' +
+          (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '');
+        if (s.element) {
+          item.style.cursor = 'pointer';
+          item.onclick = function () { highlightElement(s.element); };
+        }
+        list.appendChild(item);
+      });
+    } else {
+      sorted.forEach(function (f) {
+        var item = document.createElement('div');
+        item.className = 'item';
+        item.innerHTML =
+          '<div class="cat">' + f.category + '</div>' +
+          '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
+          '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
+          (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
+          (f.crossRelevant ? '<div class="cross">↔ ' + (f.crossNote || 'Relevantno i za SEO i za AEO.') + '</div>' : '') +
+          (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
+          (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
+        item.onclick = function () { highlightElement(f.element); };
+        list.appendChild(item);
+      });
+    }
 
     panel.appendChild(list);
 
