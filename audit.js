@@ -1437,6 +1437,13 @@
   var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' — filter UNUTAR Success taba
   var activeCategory = 'all'; // naziv kategorije (npr. 'Slike', 'Linkovi'...) ili 'all' — dodatni
                                // filter UNUTAR trenutnog severity filtera (error/warning/info/Sve)
+  var activeCategoryOrigin = 'all'; // 'all' | 'shared' | 'solo' — sub-filter UNUTAR izabrane kategorije,
+                               // relevantan samo kad ta kategorija sadrži i stavke sa crossRelevant:true
+                               // ("AEO + SEO stavke", dele se sa "↔" napomenom u oba taba) i stavke bez
+                               // te zastavice ("Samo SEO/AEO stavke", relevantne isključivo za tab u kom
+                               // se trenutno gledaju) — npr. "Meta i head tagovi" u SEO tabu meša title/
+                               // OG/Twitter (solo) sa canonical/noindex/nosnippet (shared). Vidi
+                               // 10.08.2026 SPEC unos.
 
   // Drag (pomeranje) i resize (visina) stanje za panel — pamti se na modul nivou jer
   // renderPanel() u potpunosti ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi
@@ -1749,10 +1756,35 @@
       // UNUTAR već izabranog severity filtera — npr. "warning" + "Slike" prikazuje samo
       // warning nalaze o slikama. Lista kategorija u dropdown-u se računa iz `filtered` (posle
       // severity filtera), pa se menja u zavisnosti od toga koji je severity trenutno izabran.
+      //
+      // Neke kategorije sadrže MEŠAVINU: stavke koje su relevantne SAMO za trenutni tab
+      // (`crossRelevant` nije postavljen) i stavke koje su relevantne i za SEO i za AEO
+      // (`crossRelevant: true` — iste one koje nose "↔" napomenu). Npr. "Meta i head tagovi" u
+      // SEO tabu ima i čisto-SEO stavke (title dužina, OG tagovi, Twitter Card...) i deljene
+      // stavke (canonical, noindex, nosnippet). Za takve mešovite kategorije, dropdown dobija
+      // <optgroup> sa 3 pod-opcije: "Sve (SEO+AEO)", "AEO + SEO stavke" (deljene) i "Samo
+      // SEO/AEO stavke" (samo ovaj tab) — kriterijum podele je `crossRelevant` zastavica, NE
+      // "native tab vs gost tab" (ta podela bi retko bila mešovita, jer gostujuće kategorije već
+      // po imenu skoro nikad ne dele naziv sa native AEO kategorijama, koje su uvek prefiksovane
+      // sa "AEO - "). Za kategorije koje NISU mešovite (sve stavke su ili sve deljene ili sve
+      // isključivo ovog taba), ostaje jedna flat opcija kao i pre.
       var categoryCounts = {};
-      filtered.forEach(function (f) { categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1; });
+      var categorySharedCounts = {};
+      filtered.forEach(function (f) {
+        categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1;
+        if (f.crossRelevant) categorySharedCounts[f.category] = (categorySharedCounts[f.category] || 0) + 1;
+      });
       var categoryNames = Object.keys(categoryCounts).sort();
-      if (activeCategory !== 'all' && categoryNames.indexOf(activeCategory) === -1) activeCategory = 'all';
+      if (activeCategory !== 'all' && categoryNames.indexOf(activeCategory) === -1) { activeCategory = 'all'; activeCategoryOrigin = 'all'; }
+      if (activeCategory === 'all') {
+        activeCategoryOrigin = 'all';
+      } else if (activeCategoryOrigin !== 'all') {
+        // "own"/"shared" pod-filter je smislen SAMO ako je kategorija stvarno mešovita — ako je
+        // severity filter promenjen tako da kategorija više nije mešovita, vrati na "Sve".
+        var sharedC = categorySharedCounts[activeCategory] || 0;
+        var soloC = categoryCounts[activeCategory] - sharedC;
+        if (!(sharedC > 0 && soloC > 0)) activeCategoryOrigin = 'all';
+      }
 
       if (categoryNames.length > 0) {
         var catRow = document.createElement('div');
@@ -1760,22 +1792,55 @@
         var select = document.createElement('select');
         select.className = 'cat-select';
         var allOpt = document.createElement('option');
-        allOpt.value = 'all';
+        allOpt.value = 'all::all';
         allOpt.textContent = 'Sve kategorije (' + filtered.length + ')';
         select.appendChild(allOpt);
+        var soloLabel = activeTab === 'aeo' ? 'AEO' : 'SEO';
         categoryNames.forEach(function (cat) {
-          var opt = document.createElement('option');
-          opt.value = cat;
-          opt.textContent = cat + ' (' + categoryCounts[cat] + ')';
-          select.appendChild(opt);
+          var total = categoryCounts[cat];
+          var sharedCount = categorySharedCounts[cat] || 0;
+          var soloCount = total - sharedCount;
+          if (sharedCount > 0 && soloCount > 0) {
+            // Mešovita kategorija — <optgroup> sa 3 pod-opcije.
+            var group = document.createElement('optgroup');
+            group.label = cat;
+            var optAll = document.createElement('option');
+            optAll.value = cat + '::all';
+            optAll.textContent = 'Sve (SEO+AEO) (' + total + ')';
+            group.appendChild(optAll);
+            var optShared = document.createElement('option');
+            optShared.value = cat + '::shared';
+            optShared.textContent = 'AEO + SEO stavke (' + sharedCount + ')';
+            group.appendChild(optShared);
+            var optSolo = document.createElement('option');
+            optSolo.value = cat + '::solo';
+            optSolo.textContent = 'Samo ' + soloLabel + ' stavke (' + soloCount + ')';
+            group.appendChild(optSolo);
+            select.appendChild(group);
+          } else {
+            var opt = document.createElement('option');
+            opt.value = cat + '::all';
+            opt.textContent = cat + ' (' + total + ')';
+            select.appendChild(opt);
+          }
         });
-        select.value = activeCategory;
-        select.onchange = function () { activeCategory = select.value; renderPanel(); };
+        select.value = activeCategory + '::' + activeCategoryOrigin;
+        select.onchange = function () {
+          var parts = select.value.split('::');
+          activeCategory = parts[0];
+          activeCategoryOrigin = parts[1] || 'all';
+          renderPanel();
+        };
         catRow.appendChild(select);
         panel.appendChild(catRow);
       }
 
-      filtered = filtered.filter(function (f) { return activeCategory === 'all' || f.category === activeCategory; });
+      filtered = filtered.filter(function (f) {
+        if (activeCategory === 'all') return true;
+        if (f.category !== activeCategory) return false;
+        if (activeCategoryOrigin === 'all') return true;
+        return activeCategoryOrigin === 'shared' ? !!f.crossRelevant : !f.crossRelevant;
+      });
       sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
     }
 
