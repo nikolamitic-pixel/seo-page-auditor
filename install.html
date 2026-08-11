@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEO Page Auditor — Install</title>
+<style>
+  :root {
+    --indigo: #6366f1;
+    --green: #22c55e;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(180deg, #171a2e, #0d0f1a);
+    color: #e5e7eb;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    max-width: 620px;
+    width: 100%;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 20px;
+    padding: 40px 36px;
+    box-shadow: 0 24px 60px -12px rgba(0,0,0,.6);
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--indigo), #a855f7, var(--amber));
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .header svg { width: 34px; height: 34px; flex-shrink: 0; }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+    color: #f9fafb;
+  }
+  .subtitle {
+    color: #9ca3af;
+    font-size: 14.5px;
+    line-height: 1.6;
+    margin: 0 0 28px;
+  }
+  .drag-zone {
+    background: rgba(99,102,241,.08);
+    border: 1.5px dashed rgba(99,102,241,.4);
+    border-radius: 14px;
+    padding: 28px 24px;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .drag-zone p.label {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #a5b4fc;
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  .bookmarklet-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, var(--indigo), #4f46e5);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 14px 26px;
+    border-radius: 12px;
+    box-shadow: 0 8px 20px -6px rgba(99,102,241,.5);
+    cursor: grab;
+    user-select: none;
+    border: 1px solid rgba(255,255,255,.15);
+  }
+  .bookmarklet-btn:active { cursor: grabbing; }
+  .drag-zone .hint {
+    margin: 14px 0 0;
+    font-size: 13px;
+    color: #6b7280;
+  }
+  .steps {
+    margin: 0 0 24px;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  .steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 4px 0 4px 34px;
+    font-size: 14px;
+    color: #d1d5db;
+    line-height: 1.6;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(34,197,94,.12);
+    border: 1px solid rgba(34,197,94,.3);
+    color: #86efac;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .fallback {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px;
+    padding: 16px 18px;
+    font-size: 13.5px;
+    color: #9ca3af;
+    line-height: 1.6;
+  }
+  .fallback summary {
+    cursor: pointer;
+    color: #d1d5db;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .fallback ol { margin: 12px 0 0; padding-left: 18px; }
+  .fallback code {
+    background: rgba(255,255,255,.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    word-break: break-all;
+  }
+  .footer-note {
+    margin-top: 24px;
+    font-size: 12.5px;
+    color: #6b7280;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 34 V20 H34" fill="none" stroke="#818cf8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M66 20 H80 V34" fill="none" stroke="#818cf8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M80 66 V80 H66" fill="none" stroke="#818cf8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M34 80 H20 V66" fill="none" stroke="#818cf8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M31 52 L45 65 L71 35" fill="none" stroke="#4ade80" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="80" cy="20" r="3.5" fill="#fbbf24"/>
+        <path d="M87 12 A11 11 0 0 1 87 28" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+        <path d="M92.5 6 A18.5 18.5 0 0 1 92.5 34" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+      </svg>
+      <h1>SEO Page Auditor</h1>
+    </div>
+    <p class="subtitle">A one-click SEO &amp; AEO check for Webflow developers — run it right after finishing a page, before it goes live. Runs entirely in your browser, no install, no account.</p>
+
+    <div class="drag-zone">
+      <p class="label">Step 1 — drag this to your bookmarks bar</p>
+      <a class="bookmarklet-btn" href="javascript:(function(){var u='https://raw.githubusercontent.com/nikolamitic-pixel/seo-page-auditor/refs/heads/main/audit.js?cb='+Date.now();fetch(u).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(c){(0,eval)(c);}).catch(function(e){alert('SEO Auditor: failed to load the script.\n'+e.message);});})();" onclick="return false;" title="Drag this to your bookmarks bar — clicking it here won't do anything.">
+        🔍 SEO Page Auditor
+      </a>
+      <p class="hint">Clicking it here does nothing — you have to <strong>drag</strong> it up into your bookmarks bar.</p>
+    </div>
+
+    <ol class="steps">
+      <li>Make sure your bookmarks bar is visible (<code>⌘+Shift+B</code> on Mac, <code>Ctrl+Shift+B</code> on Windows/Linux).</li>
+      <li>Drag the blue button above straight into that bar.</li>
+      <li>Open any page you're working on, click the bookmark, and the audit panel appears.</li>
+    </ol>
+
+    <details class="fallback">
+      <summary>Drag &amp; drop not working? (trackpads, some browsers)</summary>
+      <ol>
+        <li>Right-click the blue button above → <em>Copy Link</em>.</li>
+        <li>Right-click your bookmarks bar → <em>Add page…</em> / <em>Add bookmark</em>.</li>
+        <li>Name it "SEO Page Auditor", paste the copied link into the URL field, save.</li>
+      </ol>
+    </details>
+
+    <p class="footer-note">Works on any site, not just Webflow — Webflow-specific checks simply won't trigger elsewhere.</p>
+  </div>
+</body>
+</html>
