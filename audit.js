@@ -22,23 +22,24 @@
   function addFinding(f) {
     f.id = 'f' + (++findingId);
     f.severity = f.severity || 'warning'; // 'error' | 'warning' | 'info'
-    f.category = f.category || 'Ostalo';
-    f.group = f.group || 'seo'; // 'seo' | 'aeo' — koji tab u panelu prikazuje ovaj nalaz
+    f.category = f.category || 'Other';
+    f.group = f.group || 'seo'; // 'seo' | 'aeo' — which tab in the panel shows this finding
     findings.push(f);
     return f;
   }
 
-  // Paralelna lista sa addFinding() — beleži provere koje su PROŠLE (nema problema), da bi
-  // korisnik u "Uspešno" tabu video i šta je ispravno urađeno na stranici, ne samo šta je
-  // pokvareno. Namerno odvojena od `findings` (ne meša se sa error/warning/info severity
-  // logikom) jer "uspeh" nema stepen ozbiljnosti — ili je provera prošla, ili nije.
+  // Parallel list to addFinding() — records checks that PASSED (no issue found), so the
+  // user can see in the "Success" tab what's actually correct on the page, not just what's
+  // broken. Deliberately kept separate from `findings` (not mixed with error/warning/info
+  // severity logic) because "success" has no severity level — a check either passes or it
+  // doesn't.
   var successes = [];
   var successId = 0;
 
   function addSuccess(f) {
     f.id = 's' + (++successId);
-    f.category = f.category || 'Ostalo';
-    f.group = f.group || 'seo'; // 'seo' | 'aeo' — informativno, trenutno se ne koristi za filtriranje u Success tabu
+    f.category = f.category || 'Other';
+    f.group = f.group || 'seo'; // 'seo' | 'aeo' — informational only, currently not used for filtering in the Success tab
     successes.push(f);
     return f;
   }
@@ -71,9 +72,9 @@
     }
   }
 
-  // Webflow je tokom vremena menjao CDN domen za assete (uploads-ssl.webflow.com ->
+  // Webflow has changed its asset CDN domain over time (uploads-ssl.webflow.com ->
   // assets.website-files.com -> assets-global.website-files.com -> cdn.prod.website-files.com...).
-  // Umesto fiksne liste, hvatamo bilo koji poddomen *.website-files.com plus poznate legacy domene.
+  // Instead of a fixed list, we match any *.website-files.com subdomain plus known legacy domains.
   var WEBFLOW_ASSET_HOST_SUFFIXES = ['website-files.com'];
   var WEBFLOW_ASSET_HOSTS_EXACT = ['uploads-ssl.webflow.com', 'daks2k3a4ib2z.cloudfront.net'];
 
@@ -86,7 +87,7 @@
   }
 
   function fmtBytes(n) {
-    if (n == null) return 'nepoznato';
+    if (n == null) return 'unknown';
     if (n < 1024) return n + ' B';
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
     return (n / (1024 * 1024)).toFixed(2) + ' MB';
@@ -97,7 +98,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // 5.0 Preliminarna provera URL-a
+  // 5.0 Preliminary URL check
   // ---------------------------------------------------------------------
 
   function checkPreliminary() {
@@ -106,12 +107,12 @@
       var nav = navEntries && navEntries[0];
       if (nav && nav.redirectCount > 0) {
         addFinding({
-          category: 'Preliminarna provera',
+          category: 'Preliminary check',
           severity: 'info',
-          title: 'Stranica je učitana preko redirekcije',
-          description: 'Browser je pratio ' + nav.redirectCount + ' redirekciju/a pre nego što je stigao do: ' + location.href,
-          why: 'Ako ovo nije očekivano, rezultati se odnose na krajnju stranicu, ne na URL koji si možda originalno otvorio.',
-          fix: 'Proveri da li je redirekcija namerna.',
+          title: 'Page was loaded via a redirect',
+          description: 'The browser followed ' + nav.redirectCount + ' redirect(s) before arriving at: ' + location.href,
+          why: 'If this is unexpected, the results reflect the final page, not the URL you may have originally opened.',
+          fix: 'Check whether the redirect is intentional.',
           element: null
         });
       }
@@ -120,12 +121,12 @@
     // Staging detection
     if (/\.webflow\.io$/.test(location.hostname)) {
       addFinding({
-        category: 'Preliminarna provera',
+        category: 'Preliminary check',
         severity: 'info',
-        title: 'Ovo je Webflow staging link',
-        description: 'Domen ' + location.hostname + ' je Webflow staging poddomen.',
-        why: 'Nalazi ovde ne utiču na score, ali je preporučeno proveriti i live domen pre objave.',
-        fix: 'Pokreni proveru i na live domenu kad bude spreman.',
+        title: 'This is a Webflow staging link',
+        description: 'The domain ' + location.hostname + ' is a Webflow staging subdomain.',
+        why: 'Findings here do not affect the score, but it is recommended to also check the live domain before publishing.',
+        fix: 'Run the audit on the live domain once it is ready.',
         element: null,
         stagingNotice: true
       });
@@ -133,7 +134,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // 5.1 Meta & head tagovi
+  // 5.1 Meta & head tags
   // ---------------------------------------------------------------------
 
   function getMeta(name, attr) {
@@ -145,74 +146,74 @@
   function checkMetaHead() {
     var charsetMeta = document.querySelector('meta[charset]') || document.querySelector('meta[http-equiv="Content-Type" i]');
     if (!charsetMeta) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta charset deklaracija nedostaje',
-        description: 'Nema <meta charset="..."> u head-u.', why: 'Bez eksplicitnog charset-a, browser može pogrešno detektovati enkoding pre nego što stigne do HTTP header-a, što retko ali realno izaziva pogrešno prikazane karaktere (npr. č/ć/š/ž) pri prvom renderovanju stranice.',
-        fix: 'Webflow ovo automatski dodaje — proveri da custom kod u <head> nije slučajno obrisao ili premestio tag.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta charset declaration is missing',
+        description: 'There is no <meta charset="..."> in the head.', why: 'Without an explicit charset, the browser may misdetect the encoding before it receives the HTTP header, which rarely — but genuinely — causes characters to render incorrectly on first paint.',
+        fix: 'Webflow adds this automatically — check that custom code in the <head> hasn\'t accidentally removed or moved the tag.', element: document.head });
     } else {
       var charsetVal = charsetMeta.hasAttribute('charset') ? charsetMeta.getAttribute('charset') : (charsetMeta.getAttribute('content') || '');
       if (!/utf-8/i.test(charsetVal)) {
-        addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta charset nije UTF-8',
-          description: 'Pronađena vrednost: "' + charsetVal + '".', why: 'UTF-8 je univerzalni standard koji pokriva sve jezike i karaktere — bilo šta drugo nosi realan rizik pogrešnog prikaza karaktera.',
-          fix: 'Postavi charset na UTF-8.', element: document.head });
+        addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta charset is not UTF-8',
+          description: 'Value found: "' + charsetVal + '".', why: 'UTF-8 is the universal standard that covers all languages and characters — anything else carries a real risk of characters rendering incorrectly.',
+          fix: 'Set the charset to UTF-8.', element: document.head });
       } else {
-        addSuccess({ category: 'Meta i head tagovi', title: 'Meta charset je prisutan i postavljen na UTF-8', description: '', element: document.head });
+        addSuccess({ category: 'Meta & head tags', title: 'Meta charset is present and set to UTF-8', description: '', element: document.head });
       }
     }
 
     var titleTags = document.querySelectorAll('title');
     if (titleTags.length > 1) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Više od jednog <title> taga u head-u (' + titleTags.length + ')',
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one <title> tag in the head (' + titleTags.length + ')',
         description: Array.prototype.map.call(titleTags, function (t) { return '"' + t.textContent + '"'; }).join(', '),
-        why: 'Browseri i Google obično uzimaju samo prvi <title> tag, ali ponašanje nije univerzalno garantovano preko svih parsera/bot-ova — duplikat najčešće znači grešku u Custom Code sekciji (npr. ručno dodat <title> pored Webflow-ovog).',
-        fix: 'Ukloni sve <title> tagove osim jednog — title podesi kroz Page Settings, ne ručno u Custom Code.', element: document.head });
+        why: 'Browsers and Google usually only take the first <title> tag, but this behavior isn\'t universally guaranteed across all parsers/bots — a duplicate most often signals a mistake in the Custom Code section (e.g. a manually added <title> alongside Webflow\'s own).',
+        fix: 'Remove all but one <title> tag — set the title via Page Settings, not manually in Custom Code.', element: document.head });
     }
 
     var descTags = document.querySelectorAll('meta[name="description" i]');
     if (descTags.length > 1) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Više od jednog meta description taga (' + descTags.length + ')',
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one meta description tag (' + descTags.length + ')',
         description: Array.prototype.map.call(descTags, function (m) { return '"' + (m.getAttribute('content') || '') + '"'; }).join(' | '),
-        why: 'Kad postoji više meta description tagova, ponašanje koji će Google uzeti nije garantovano — najčešće znači duplikat unet i kroz Page Settings i ručno kroz Custom Code.',
-        fix: 'Ukloni sve meta description tagove osim jednog.', element: document.head });
+        why: 'When multiple meta description tags exist, which one Google picks isn\'t guaranteed — this usually means a duplicate was entered both via Page Settings and manually via Custom Code.',
+        fix: 'Remove all but one meta description tag.', element: document.head });
     }
 
     var title = document.title || '';
     var titleLengthOk = false;
     if (!title.trim()) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Title tag nedostaje ili je prazan',
-        description: '<title> je prazan.', why: 'Title je jedan od najjačih on-page SEO signala i tekst koji korisnik vidi u rezultatima pretrage.',
-        fix: 'Dodaj jedinstven, opisan title (idealno 50-60 karaktera) u Page Settings.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Title tag is missing or empty',
+        description: 'The <title> is empty.', why: 'Title is one of the strongest on-page SEO signals and the text users see in search results.',
+        fix: 'Add a unique, descriptive title (ideally 50-60 characters) in Page Settings.', element: document.head });
     } else if (title.length > 60) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Title je predugačak (' + title.length + ' karaktera)',
-        description: 'Title: "' + title + '"', why: 'Google obično seče title posle ~60 karaktera u rezultatima pretrage.',
-        fix: 'Skrati title na 50-60 karaktera, stavi najbitnije reči na početak.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is too long (' + title.length + ' characters)',
+        description: 'Title: "' + title + '"', why: 'Google typically truncates the title after ~60 characters in search results.',
+        fix: 'Shorten the title to 50-60 characters, put the most important words first.', element: document.head });
     } else if (title.length < 15) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Title je vrlo kratak (' + title.length + ' karaktera)',
-        description: 'Title: "' + title + '"', why: 'Prekratak title često znači da nije dovoljno opisan.',
-        fix: 'Dopuni title da bolje opiše sadržaj stranice.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is very short (' + title.length + ' characters)',
+        description: 'Title: "' + title + '"', why: 'A title that\'s too short usually isn\'t descriptive enough.',
+        fix: 'Expand the title to better describe the page content.', element: document.head });
     } else {
       titleLengthOk = true;
     }
     var isPlaceholderTitle = /^(untitled|home|page \d+|lorem ipsum)$/i.test(title.trim());
     if (isPlaceholderTitle) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Title izgleda kao placeholder',
-        description: 'Title: "' + title + '"', why: 'Ovo liči na Webflow default vrednost koja nije zamenjena.',
-        fix: 'Postavi pravi, opisan title.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Title looks like a placeholder',
+        description: 'Title: "' + title + '"', why: 'This looks like a Webflow default value that hasn\'t been replaced.',
+        fix: 'Set a real, descriptive title.', element: document.head });
     }
     if (titleLengthOk && !isPlaceholderTitle) {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Title tag je prisutan i optimalne dužine (' + title.length + ' karaktera)',
+      addSuccess({ category: 'Meta & head tags', title: 'Title tag is present and of optimal length (' + title.length + ' characters)',
         description: 'Title: "' + title + '"', element: document.head });
     }
 
     var desc = getMeta('description');
     if (!desc || !desc.trim()) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Meta description nedostaje',
-        description: 'Nema meta description taga ili je prazan.', why: 'Meta description utiče na CTR iz rezultata pretrage iako nije direktan ranking faktor.',
-        fix: 'Dodaj meta description od 120-160 karaktera u Page Settings.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Meta description is missing',
+        description: 'There is no meta description tag, or it is empty.', why: 'Meta description influences CTR from search results even though it isn\'t a direct ranking factor.',
+        fix: 'Add a meta description of 120-160 characters in Page Settings.', element: document.head });
     } else if (desc.length > 160) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Meta description je predugačak (' + desc.length + ' karaktera)',
-        description: desc, why: 'Google seče opis posle ~155-160 karaktera.', fix: 'Skrati na 120-160 karaktera.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta description is too long (' + desc.length + ' characters)',
+        description: desc, why: 'Google truncates the description after ~155-160 characters.', fix: 'Shorten it to 120-160 characters.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Meta description je prisutan i odgovarajuće dužine (' + desc.length + ' karaktera)',
+      addSuccess({ category: 'Meta & head tags', title: 'Meta description is present and of appropriate length (' + desc.length + ' characters)',
         description: desc, element: document.head });
     }
 
@@ -220,99 +221,99 @@
     var ogDesc = getMeta('og:description', 'property');
     var ogImage = getMeta('og:image', 'property');
     if (!ogTitle) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:title nedostaje',
-        description: 'Nema Open Graph title taga.', why: 'Bez njega, deljenje linka na društvenim mrežama koristi fallback (često loš) naslov.',
-        fix: 'Dodaj og:title u Page Settings > Open Graph.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'og:title is missing',
+        description: 'There is no Open Graph title tag.', why: 'Without it, sharing the link on social media falls back to a (often poor) default title.',
+        fix: 'Add og:title in Page Settings > Open Graph.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'og:title je prisutan', description: ogTitle, element: document.head });
+      addSuccess({ category: 'Meta & head tags', title: 'og:title is present', description: ogTitle, element: document.head });
     }
     if (!ogDesc) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:description nedostaje',
-        description: 'Nema Open Graph description taga.', why: 'Bez njega, pregled linka na društvenim mrežama nema opis.',
-        fix: 'Dodaj og:description u Page Settings.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'og:description is missing',
+        description: 'There is no Open Graph description tag.', why: 'Without it, the link preview on social media has no description.',
+        fix: 'Add og:description in Page Settings.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'og:description je prisutan', description: ogDesc, element: document.head });
+      addSuccess({ category: 'Meta & head tags', title: 'og:description is present', description: ogDesc, element: document.head });
     }
 
     if (!ogImage) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'og:image nedostaje',
-        description: 'Nema Open Graph slike.', why: 'Linkovi bez OG slike izgledaju golo kad se dele na društvenim mrežama.',
-        fix: 'Dodaj og:image (1200x630px, JPG/PNG) u Page Settings.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'og:image is missing',
+        description: 'There is no Open Graph image.', why: 'Links without an OG image look bare when shared on social media.',
+        fix: 'Add og:image (1200x630px, JPG/PNG) in Page Settings.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'og:image je prisutan', description: ogImage, element: document.head });
+      addSuccess({ category: 'Meta & head tags', title: 'og:image is present', description: ogImage, element: document.head });
       checkOgImage(ogImage);
     }
 
     var twitterCard = getMeta('twitter:card');
     if (!twitterCard) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Twitter/X Card meta tag (twitter:card) nedostaje',
-        description: 'Nema <meta name="twitter:card">.', why: 'Twitter/X Card tagovi su tehnički odvojeni od Open Graph tagova — bez eksplicitnog twitter:card, X ponekad ne uspe pouzdano da povuče OG fallback, pa deljeni link može ostati bez ikakvog preview-a specifično na toj platformi.',
-        fix: 'Dodaj <meta name="twitter:card" content="summary_large_image"> (i idealno twitter:title/twitter:image) kroz Custom Code u head sekciji.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Twitter/X Card meta tag (twitter:card) is missing',
+        description: 'There is no <meta name="twitter:card">.', why: 'Twitter/X Card tags are technically separate from Open Graph tags — without an explicit twitter:card, X sometimes fails to reliably pull the OG fallback, so a shared link can end up with no preview at all specifically on that platform.',
+        fix: 'Add <meta name="twitter:card" content="summary_large_image"> (and ideally twitter:title/twitter:image) via Custom Code in the head section.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Twitter/X Card meta tag je prisutan (' + twitterCard + ')', description: '', element: document.head });
+      addSuccess({ category: 'Meta & head tags', title: 'Twitter/X Card meta tag is present (' + twitterCard + ')', description: '', element: document.head });
     }
 
     var canonical = document.querySelector('link[rel="canonical"]');
     if (!canonical) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Canonical tag nedostaje',
-        description: 'Nema <link rel="canonical">.', why: 'Bez canonical-a, Google sam bira koju verziju URL-a smatra glavnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira da li trenutno postoji duplikat. Ovo je nešto što developer treba da doda pre objave, ne "nice to have".',
-        fix: 'Dodaj canonical tag koji pokazuje na ovu stranicu.', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — nejasan "glavni" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — canonical sprečava duplicate content probleme i konsoliduje ranking signale na jednu URL adresu u Google indeksu.' });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Canonical tag is missing',
+        description: 'There is no <link rel="canonical">.', why: 'Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a "nice to have".',
+        fix: 'Add a canonical tag pointing to this page.', element: document.head,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an unclear "primary" URL makes it harder for AI answer engines to know which version of the page to cite.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — a canonical prevents duplicate content issues and consolidates ranking signals onto a single URL in the Google index.' });
     } else {
       checkCanonicalDuplication(canonical);
     }
 
     var robots = getMeta('robots');
     if (robots && /noindex/i.test(robots)) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Stranica je markirana kao noindex',
-        description: 'meta robots = "' + robots + '"', why: 'Ova stranica neće biti indeksirana od strane Google-a dok god ovo stoji.',
-        fix: 'Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > "Exclude from search results".', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — noindex stranica se neće pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.' });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Page is marked as noindex',
+        description: 'meta robots = "' + robots + '"', why: 'This page will not be indexed by Google as long as this remains in place.',
+        fix: 'If the page should be visible in search, remove noindex in Page Settings > SEO > "Exclude from search results".', element: document.head,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a noindex page won\'t appear in the sources AI answer engines (partly) rely on via the Google index either.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — a noindex directive completely removes the page from Google search, which is the most direct possible SEO problem.' });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Stranica nije markirana kao noindex', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — stranica je indeksibilna i može se pojaviti u Google pretrazi.' });
+      addSuccess({ category: 'Meta & head tags', title: 'Page is not marked as noindex', description: '', element: document.head,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a noindex page wouldn\'t appear in the sources AI answer engines (partly) rely on via the Google index either.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — the page is indexable and can appear in Google search.' });
     }
 
     var blocksSnippet = robots && (/nosnippet/i.test(robots) || /max-snippet:\s*0\b/i.test(robots));
     if (blocksSnippet) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Robots direktiva blokira prikaz isečka sadržaja (nosnippet/max-snippet:0)',
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Robots directive blocks the content snippet (nosnippet/max-snippet:0)',
         description: 'meta robots = "' + robots + '"',
-        why: 'Ova direktiva eksplicitno zabranjuje Google-u (i bilo kom AI answer engine-u koji se delimično oslanja na Google-ov indeks) da prikaže BILO KAKAV isečak teksta sa stranice — stranica se ne može pojaviti u AI Overviews ili featured snippet-ima, niti dobiti opis u klasičnim rezultatima pretrage. Ovo je direktan, dokumentovan i binaran blokator vidljivosti, ne heuristika.',
-        fix: 'Ukloni "nosnippet" i "max-snippet:0" iz meta robots taga, osim ako je namerno (npr. stranica sa osetljivim sadržajem).', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — ovo direktno sprečava AI answer engine-e da citiraju bilo koji deo sadržaja stranice.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — bez isečka, Google rezultat za ovu stranicu nema opis, što drastično smanjuje CTR čak i ako stranica dobro rangira.' });
+        why: 'This directive explicitly forbids Google (and any AI answer engine that partly relies on Google\'s index) from showing ANY text snippet from the page — the page can\'t appear in AI Overviews or featured snippets, nor get a description in classic search results. This is a direct, documented, binary visibility blocker, not a heuristic.',
+        fix: 'Remove "nosnippet" and "max-snippet:0" from the meta robots tag, unless it\'s intentional (e.g. a page with sensitive content).', element: document.head,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — this directly prevents AI answer engines from citing any part of the page\'s content.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — without a snippet, the Google result for this page has no description, which drastically reduces CTR even if the page ranks well.' });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Robots direktiva ne blokira prikaz isečka sadržaja', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — Google i AI answer engine-i mogu slobodno da prikažu isečak sadržaja ove stranice.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — stranica može imati normalan opis/isečak u Google rezultatima pretrage.' });
+      addSuccess({ category: 'Meta & head tags', title: 'Robots directive does not block the content snippet', description: '', element: document.head,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google and AI answer engines are free to display a snippet of this page\'s content.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — the page can have a normal description/snippet in Google search results.' });
     }
 
     var htmlLang = document.documentElement.getAttribute('lang');
     if (!htmlLang) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'lang atribut nedostaje na <html>',
-        description: '<html> nema lang atribut.', why: 'Pomaže i pretraživačima i screen readerima da znaju na kom je jeziku sadržaj.',
-        fix: 'Podesi jezik sajta u Webflow Site Settings.', element: document.documentElement });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'lang attribute is missing on <html>',
+        description: '<html> has no lang attribute.', why: 'It helps both search engines and screen readers know what language the content is in.',
+        fix: 'Set the site language in Webflow Site Settings.', element: document.documentElement });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'lang atribut je prisutan na <html> (' + htmlLang + ')', description: '', element: document.documentElement });
+      addSuccess({ category: 'Meta & head tags', title: 'lang attribute is present on <html> (' + htmlLang + ')', description: '', element: document.documentElement });
     }
 
     var viewport = document.querySelector('meta[name="viewport"]');
     if (!viewport) {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'Viewport meta tag nedostaje',
-        description: 'Nema <meta name="viewport">.', why: 'Bez ovoga stranica nije mobile-friendly, što direktno utiče na mobile-first indexing.',
-        fix: 'Webflow ovo obično dodaje automatski — proveri da custom kod nije obrisao tag.', element: document.head });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Viewport meta tag is missing',
+        description: 'There is no <meta name="viewport">.', why: 'Without this the page isn\'t mobile-friendly, which directly affects mobile-first indexing.',
+        fix: 'Webflow usually adds this automatically — check that custom code hasn\'t removed the tag.', element: document.head });
     } else {
-      addSuccess({ category: 'Meta i head tagovi', title: 'Viewport meta tag je prisutan', description: '', element: document.head });
+      addSuccess({ category: 'Meta & head tags', title: 'Viewport meta tag is present', description: '', element: document.head });
       var vpContent = viewport.getAttribute('content') || '';
       if (/user-scalable\s*=\s*no/i.test(vpContent) || /maximum-scale\s*=\s*1(\.0)?\b/.test(vpContent)) {
-        addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'Viewport onemogućava zumiranje korisniku',
-          description: 'viewport = "' + vpContent + '"', why: 'Google Search Console eksplicitno flaguje "user-scalable=no"/"maximum-scale=1" kao mobile usability problem — sprečava korisnike sa slabijim vidom da uvećaju sadržaj na mobilnom.',
-          fix: 'Ukloni user-scalable=no i maximum-scale=1 iz viewport taga (dozvoli zumiranje bar do maximum-scale=5).', element: document.head });
+        addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Viewport prevents the user from zooming',
+          description: 'viewport = "' + vpContent + '"', why: 'Google Search Console explicitly flags "user-scalable=no"/"maximum-scale=1" as a mobile usability problem — it prevents users with reduced vision from zooming in on content on mobile.',
+          fix: 'Remove user-scalable=no and maximum-scale=1 from the viewport tag (allow zooming up to at least maximum-scale=5).', element: document.head });
       } else {
-        addSuccess({ category: 'Meta i head tagovi', title: 'Viewport dozvoljava korisniku da zumira stranicu', description: '', element: document.head });
+        addSuccess({ category: 'Meta & head tags', title: 'Viewport allows the user to zoom the page', description: '', element: document.head });
       }
     }
   }
@@ -320,23 +321,23 @@
   function checkOgImage(ogImageUrl) {
     var ext = (ogImageUrl.split('?')[0].split('.').pop() || '').toLowerCase();
     if (ext === 'webp' || ext === 'avif') {
-      addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'OG image je u formatu koji društvene mreže nepouzdano prikazuju (' + ext.toUpperCase() + ')',
-        description: 'og:image: ' + ogImageUrl, why: 'Za razliku od običnih slika na stranici, OG sliku učitava bot svake društvene mreže — mnogi od njih ne renderuju WebP/AVIF pouzdano, pa preview može ispasti prazan ili slomljen.',
-        fix: 'Koristi JPG ili PNG za OG image (1200x630px, ispod 300KB).', element: null });
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is in a format social platforms render unreliably (' + ext.toUpperCase() + ')',
+        description: 'og:image: ' + ogImageUrl, why: 'Unlike regular images on the page, the OG image is fetched by each social platform\'s bot — many of them don\'t render WebP/AVIF reliably, so the preview can end up blank or broken.',
+        fix: 'Use JPG or PNG for the OG image (1200x630px, under 300KB).', element: null });
     }
     var img = new Image();
     img.onload = function () {
       if (img.naturalWidth < 600 || img.naturalHeight < 315) {
-        addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'OG image je premalih dimenzija (' + img.naturalWidth + 'x' + img.naturalHeight + ')',
-          description: 'og:image: ' + ogImageUrl, why: 'Minimum preporučen za dobar prikaz je 600x315px, idealno 1200x630px (1.91:1).',
-          fix: 'Zameni sa slikom minimum 1200x630px.', element: null });
+        addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is too small (' + img.naturalWidth + 'x' + img.naturalHeight + ')',
+          description: 'og:image: ' + ogImageUrl, why: 'The recommended minimum for a good preview is 600x315px, ideally 1200x630px (1.91:1).',
+          fix: 'Replace it with an image at least 1200x630px.', element: null });
       }
       renderPanel();
     };
     img.onerror = function () {
-      addFinding({ category: 'Meta i head tagovi', severity: 'error', title: 'OG image se ne učitava',
-        description: 'og:image URL vraća grešku: ' + ogImageUrl, why: 'Slomljena OG slika = prazan preview na društvenim mrežama.',
-        fix: 'Proveri da li je URL ispravan i da fajl postoji.', element: null });
+      addFinding({ category: 'Meta & head tags', severity: 'error', title: 'OG image fails to load',
+        description: 'og:image URL returns an error: ' + ogImageUrl, why: 'A broken OG image means an empty preview on social media.',
+        fix: 'Check that the URL is correct and that the file exists.', element: null });
       renderPanel();
     };
     img.src = ogImageUrl;
@@ -345,9 +346,9 @@
       fetch(ogImageUrl, { method: 'HEAD' }).then(function (r) {
         var len = r.headers.get('content-length');
         if (len && parseInt(len, 10) > 300 * 1024) {
-          addFinding({ category: 'Meta i head tagovi', severity: 'warning', title: 'OG image je veća od preporučenih 300KB (' + fmtBytes(parseInt(len, 10)) + ')',
-            description: 'og:image: ' + ogImageUrl, why: 'Neke platforme (npr. WhatsApp) agresivno kompresuju velike slike, što može pogoršati kvalitet preview-a.',
-            fix: 'Kompresuj sliku na ispod 300KB.', element: null });
+          addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is larger than the recommended 300KB (' + fmtBytes(parseInt(len, 10)) + ')',
+            description: 'og:image: ' + ogImageUrl, why: 'Some platforms (e.g. WhatsApp) aggressively compress large images, which can degrade preview quality.',
+            fix: 'Compress the image to under 300KB.', element: null });
           renderPanel();
         }
       }).catch(function () { /* CORS - ignore silently */ });
@@ -357,11 +358,11 @@
   // ---------------------------------------------------------------------
   // 5.1b Favicon
   // ---------------------------------------------------------------------
-  // Google Search Central eksplicitno dokumentuje favicon zahteve da bi se sajt prikazao sa
-  // svojom ikonicom u mobilnim rezultatima pretrage (kvadratan, min. 48x48px, mora biti
-  // crawlable). Nije core ranking faktor (isto kao OG tagovi) — otud "warning", ne "error" za
-  // odsustvo, ali "nosnippet"-nivoa direktan blok (robots.txt Disallow) ostaje takođe warning
-  // jer pogađa samo prikaz ikonice, ne ceo sadržaj stranice.
+  // Google Search Central explicitly documents favicon requirements so a site shows up
+  // with its own icon in mobile search results (square, min. 48x48px, must be crawlable).
+  // It's not a core ranking factor (same as OG tags), hence "warning" rather than "error"
+  // for its absence — but a "nosnippet"-level direct block (robots.txt Disallow) also stays
+  // a warning since it only affects the icon display, not the entire page's content.
   function checkFavicon() {
     var head = document.head;
     var linkEl = document.querySelector('link[rel~="icon"]') || document.querySelector('link[rel="shortcut icon"]') || document.querySelector('link[rel="apple-touch-icon"]');
@@ -373,35 +374,35 @@
     }
 
     function reportBroken() {
-      addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon nedostaje ili se ne učitava',
-        description: linkEl ? ('Pronađen <link> tag, ali resurs (' + faviconUrl + ') se ne učitava.') : ('Nema <link rel="icon"> u head-u, a ni fallback /favicon.ico ne postoji.'),
-        why: 'Google Search Central eksplicitno dokumentuje favicon zahteve da bi se sajt prikazao sa svojom ikonicom u mobilnim rezultatima pretrage i u Chrome tabovima/bookmark-ovima — bez njega se prikazuje generička ikonica, što smanjuje prepoznatljivost brenda i CTR u SERP-u.',
-        fix: 'Dodaj favicon u Webflow Site Settings > Icons (kvadratan, minimum 48x48px, .ico/.png/.svg).', element: linkEl || head });
+      addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is missing or fails to load',
+        description: linkEl ? ('A <link> tag was found, but the resource (' + faviconUrl + ') does not load.') : ('There is no <link rel="icon"> in the head, and no fallback /favicon.ico exists either.'),
+        why: 'Google Search Central explicitly documents favicon requirements so a site shows up with its own icon in mobile search results and in Chrome tabs/bookmarks — without it a generic icon is shown, which reduces brand recognition and CTR in the SERP.',
+        fix: 'Add a favicon in Webflow Site Settings > Icons (square, minimum 48x48px, .ico/.png/.svg).', element: linkEl || head });
     }
 
     function checkDimensionsAndFormat(url) {
       var ext = (url.split('?')[0].split('.').pop() || '').toLowerCase();
       if (ext && ['ico', 'png', 'svg', 'gif'].indexOf(ext) === -1) {
-        addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon je u neuobičajenom formatu (' + ext.toUpperCase() + ')',
-          description: url, why: 'Najšira podrška (browseri, Google Search) je za .ico, .png i .svg formate — ostali formati se mogu nepredvidivo ponašati u browser UI-u.',
-          fix: 'Koristi .ico, .png ili .svg format za favicon.', element: linkEl || head });
+        addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon is in an unusual format (' + ext.toUpperCase() + ')',
+          description: url, why: 'The widest support (browsers, Google Search) is for .ico, .png and .svg formats — other formats can behave unpredictably in browser UI.',
+          fix: 'Use the .ico, .png or .svg format for the favicon.', element: linkEl || head });
       }
       var img = new Image();
       img.onload = function () {
         var w = img.naturalWidth, h = img.naturalHeight;
         var issues = [];
-        if (w && h && Math.abs(w - h) > 1) issues.push('nije kvadratan (' + w + 'x' + h + ')');
-        if (w && h && (w < 48 || h < 48)) issues.push('manji je od preporučenih 48x48px (' + w + 'x' + h + ')');
+        if (w && h && Math.abs(w - h) > 1) issues.push('is not square (' + w + 'x' + h + ')');
+        if (w && h && (w < 48 || h < 48)) issues.push('is smaller than the recommended 48x48px (' + w + 'x' + h + ')');
         if (issues.length) {
-          addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon dimenzije nisu idealne (' + issues.join(', ') + ')',
-            description: url, why: 'Google preporučuje kvadratan favicon, minimum 48x48px (u multiplu te veličine), da bi se čisto prikazao u rezultatima pretrage i browser UI-u na svim rezolucijama.',
-            fix: 'Zameni favicon kvadratnom slikom minimum 48x48px (idealno 128x128px za retina ekrane).', element: linkEl || head });
+          addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon dimensions are not ideal (' + issues.join(', ') + ')',
+            description: url, why: 'Google recommends a square favicon, minimum 48x48px (in a multiple of that size), so it renders cleanly in search results and browser UI at all resolutions.',
+            fix: 'Replace the favicon with a square image at least 48x48px (ideally 128x128px for retina screens).', element: linkEl || head });
         } else if (w && h) {
-          addSuccess({ category: 'Favicon', title: 'Favicon je kvadratan i odgovarajuće veličine (' + w + 'x' + h + ')', description: url, element: linkEl || head });
+          addSuccess({ category: 'Favicon', title: 'Favicon is square and an appropriate size (' + w + 'x' + h + ')', description: url, element: linkEl || head });
         }
         renderPanel();
       };
-      img.onerror = function () { /* HEAD fetch iznad već hvata realnu "ne postoji" grešku — ovde tiho ignorišemo. */ };
+      img.onerror = function () { /* The HEAD fetch above already catches the real "doesn't exist" error — silently ignore here. */ };
       img.src = url;
     }
 
@@ -424,13 +425,13 @@
             }
           });
           if (blocked) {
-            addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon je blokiran u robots.txt',
-              description: 'Putanja "' + path + '" je obuhvaćena Disallow pravilom u /robots.txt (User-agent: *).',
-              why: 'Ako Googlebot ne sme da pristupi favicon fajlu, ne može ni da ga prikaže u mobilnim rezultatima pretrage — Google Search Central eksplicitno traži da favicon URL bude crawlable.',
-              fix: 'Dodaj Allow pravilo za favicon putanju u robots.txt, ili suzi Disallow pravilo da je ne obuhvata.', element: null });
+            addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is blocked in robots.txt',
+              description: 'The path "' + path + '" is covered by a Disallow rule in /robots.txt (User-agent: *).',
+              why: 'If Googlebot can\'t access the favicon file, it can\'t display it in mobile search results either — Google Search Central explicitly requires the favicon URL to be crawlable.',
+              fix: 'Add an Allow rule for the favicon path in robots.txt, or narrow the Disallow rule so it doesn\'t cover it.', element: null });
             renderPanel();
           }
-        }).catch(function () { /* robots.txt ne postoji ili CORS — ignoriši tiho */ });
+        }).catch(function () { /* robots.txt doesn't exist or CORS — ignore silently */ });
       } catch (e) {}
     }
 
@@ -439,13 +440,13 @@
         if (!r.ok) { reportBroken(); renderPanel(); return; }
         var ct = r.headers.get('content-type') || '';
         if (ct && ct.indexOf('image') === -1 && ct.indexOf('icon') === -1) { reportBroken(); renderPanel(); return; }
-        addSuccess({ category: 'Favicon', title: 'Favicon je prisutan i uspešno se učitava', description: faviconUrl, element: linkEl || head });
+        addSuccess({ category: 'Favicon', title: 'Favicon is present and loads successfully', description: faviconUrl, element: linkEl || head });
         checkDimensionsAndFormat(faviconUrl);
         checkRobotsBlock(faviconUrl);
         renderPanel();
       }).catch(function () {
-        // CORS na HEAD retko nastaje na istom domenu, ali za svaki slučaj ne prijavljujemo
-        // lažnu grešku — samo probamo dimenzije/format (ako se slika uopšte učita).
+        // CORS on a HEAD request rarely happens on the same origin, but just in case we don't
+        // report a false error — we just try the dimensions/format (if the image loads at all).
         checkDimensionsAndFormat(faviconUrl);
       });
     } catch (e) {}
@@ -461,42 +462,42 @@
     var canPath = canonicalUrl.pathname.replace(/\/$/, '');
 
     if (canonicalUrl.hostname === location.hostname && canPath !== curPath) {
-      addFinding({ category: 'URL i duplikacija stranice', severity: 'error',
-        title: 'Canonical pokazuje na drugu putanju na istom sajtu',
-        description: 'Trenutna stranica: ' + curPath + ' | Canonical: ' + canPath,
-        why: 'Čest uzrok: stranica je duplirana u Webflow-u i canonical je ostao da pokazuje na original — Google onda ignoriše ovu stranicu u korist te druge.',
-        fix: 'Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings da pokazuje na ovu stranicu.', element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — pogrešan canonical zbunjuje i AI answer engine-e oko toga koja je "prava" verzija stranice za citiranje.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — pogrešan canonical deli ranking signale (linkove, autoritet) između više URL-ova umesto da ih konsoliduje na jednu stranicu.' });
+      addFinding({ category: 'URL & page duplication', severity: 'error',
+        title: 'Canonical points to a different path on the same site',
+        description: 'Current page: ' + curPath + ' | Canonical: ' + canPath,
+        why: 'A common cause: the page was duplicated in Webflow and the canonical was left pointing at the original — Google then ignores this page in favor of that other one.',
+        fix: 'Check whether this is intentional. If not, fix the canonical in Page Settings to point to this page.', element: canonicalEl,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the "real" version of the page to cite.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.' });
     } else {
-      addSuccess({ category: 'URL i duplikacija stranice', title: 'Canonical tag je prisutan i pokazuje na ovu stranicu',
+      addSuccess({ category: 'URL & page duplication', title: 'Canonical tag is present and points to this page',
         description: 'Canonical: ' + canPath, element: canonicalEl,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jasan "glavni" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — ispravan canonical konsoliduje ranking signale na jednu, tačno određenu URL adresu.' });
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a clear "primary" URL helps AI answer engines know which version of the page to cite.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — a correct canonical consolidates ranking signals onto one, precisely defined URL.' });
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.10 URL slug (duplikacija)
+  // 5.10 URL slug (duplication)
   // ---------------------------------------------------------------------
 
   function checkSlug() {
     var segments = location.pathname.split('/').filter(Boolean);
     var last = segments[segments.length - 1] || '';
     if (/-\d+$/.test(last) && /-[2-9]$/.test(last)) {
-      addFinding({ category: 'URL i duplikacija stranice', severity: 'error',
-        title: 'URL slug se završava sufiksom sličnim "-2" (' + last + ')',
-        description: 'Putanja: ' + location.pathname,
-        why: 'Webflow automatski dodaje "-2", "-3" itd. na slug kada se stranica duplira. Ovo je konkretan, verifikovan dokaz da je stranica nastala dupliranjem i da je slug ostao netaknut pre objave — direktan rizik od duplicate content-a i needeskriptivnog URL-a u pretrazi.',
-        fix: 'Preimenuj slug u Page Settings u nešto opisno, i podesi 301 redirekciju sa starog ako je već indeksiran.', element: null });
+      addFinding({ category: 'URL & page duplication', severity: 'error',
+        title: 'URL slug ends with a suffix resembling "-2" (' + last + ')',
+        description: 'Path: ' + location.pathname,
+        why: 'Webflow automatically appends "-2", "-3", etc. to the slug when a page is duplicated. This is concrete, verified evidence that the page was created via duplication and the slug was left untouched before publishing — a direct risk of duplicate content and a non-descriptive URL in search.',
+        fix: 'Rename the slug in Page Settings to something descriptive, and set up a 301 redirect from the old one if it\'s already indexed.', element: null });
     } else {
-      addSuccess({ category: 'URL i duplikacija stranice', title: 'URL slug ne sadrži Webflow duplication sufiks (npr. "-2")',
-        description: 'Putanja: ' + location.pathname, element: null });
+      addSuccess({ category: 'URL & page duplication', title: 'URL slug does not contain a Webflow duplication suffix (e.g. "-2")',
+        description: 'Path: ' + location.pathname, element: null });
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.2 Heading struktura
+  // 5.2 Heading structure
   // ---------------------------------------------------------------------
 
   function checkHeadings() {
@@ -504,17 +505,17 @@
     var h1s = headings.filter(function (h) { return h.tagName === 'H1'; });
 
     if (h1s.length === 0) {
-      addFinding({ category: 'Heading struktura', severity: 'error', title: 'Nedostaje H1 na stranici',
-        description: 'Nijedan vidljiv H1 element nije pronađen.', why: 'H1 pomaže i korisnicima i Google-u da odmah razumeju temu stranice.',
-        fix: 'Dodaj tačno jedan H1 koji opisuje glavnu temu stranice.', element: document.body });
+      addFinding({ category: 'Heading structure', severity: 'error', title: 'H1 is missing on the page',
+        description: 'No visible H1 element was found.', why: 'H1 helps both users and Google immediately understand the topic of the page.',
+        fix: 'Add exactly one H1 describing the page\'s main topic.', element: document.body });
     } else if (h1s.length > 1) {
       h1s.slice(1).forEach(function (h) {
-        addFinding({ category: 'Heading struktura', severity: 'warning', title: 'Postoji više od jednog H1 na stranici (' + h1s.length + ' ukupno)',
-          description: 'Dodatni H1: "' + text(h).slice(0, 80) + '"', why: 'Više H1 tagova razvodnjava signal o glavnoj temi stranice.',
-          fix: 'Ostavi samo jedan H1, ostale promeni u H2/H3 po potrebi.', element: h });
+        addFinding({ category: 'Heading structure', severity: 'warning', title: 'There is more than one H1 on the page (' + h1s.length + ' total)',
+          description: 'Extra H1: "' + text(h).slice(0, 80) + '"', why: 'Multiple H1 tags dilute the signal of the page\'s main topic.',
+          fix: 'Keep only one H1, change the others to H2/H3 as needed.', element: h });
       });
     } else {
-      addSuccess({ category: 'Heading struktura', title: 'Tačno jedan H1 pronađen na stranici',
+      addSuccess({ category: 'Heading structure', title: 'Exactly one H1 found on the page',
         description: '"' + text(h1s[0]).slice(0, 80) + '"', element: h1s[0] });
     }
 
@@ -524,18 +525,18 @@
       var level = parseInt(h.tagName.substring(1), 10);
       if (lastLevel > 0 && level - lastLevel > 1) {
         hierarchySkipFound = true;
-        addFinding({ category: 'Heading struktura', severity: 'warning', title: 'Preskočena heading hijerarhija (H' + lastLevel + ' → H' + level + ')',
-          description: '"' + text(h).slice(0, 80) + '"', why: 'Preskakanje nivoa (npr. H1 pa odmah H3) remeti logičku strukturu dokumenta za screen readere i crawlere.',
-          fix: 'Koristi heading nivoe redom, bez preskakanja.', element: h });
+        addFinding({ category: 'Heading structure', severity: 'warning', title: 'Heading hierarchy skips a level (H' + lastLevel + ' → H' + level + ')',
+          description: '"' + text(h).slice(0, 80) + '"', why: 'Skipping levels (e.g. H1 then straight to H3) breaks the document\'s logical structure for screen readers and crawlers.',
+          fix: 'Use heading levels in order, without skipping.', element: h });
       }
       lastLevel = level;
     });
     if (!hierarchySkipFound && headings.length > 1) {
-      addSuccess({ category: 'Heading struktura', title: 'Heading hijerarhija je bez preskočenih nivoa',
-        description: headings.length + ' heading elemenata na stranici.', element: null });
+      addSuccess({ category: 'Heading structure', title: 'Heading hierarchy has no skipped levels',
+        description: headings.length + ' heading elements on the page.', element: null });
     }
 
-    // Vizuelno-semantička neusklađenost (heuristika)
+    // Visual-semantic mismatch (heuristic)
     var candidates = Array.prototype.slice.call(document.querySelectorAll('div, span, p')).filter(isVisible);
     var checked = 0;
     for (var i = 0; i < candidates.length && checked < 400; i++) {
@@ -546,24 +547,24 @@
       var fs = parseFloat(window.getComputedStyle(el).fontSize);
       var fw = window.getComputedStyle(el).fontWeight;
       if (fs >= 28 && (fw === 'bold' || parseInt(fw, 10) >= 600)) {
-        addFinding({ category: 'Heading struktura', severity: 'info', title: 'Tekst izgleda kao heading ali nije obeležen kao takav',
+        addFinding({ category: 'Heading structure', severity: 'info', title: 'Text looks like a heading but isn\'t marked up as one',
           description: '"' + t.slice(0, 80) + '" (font-size: ' + fs.toFixed(0) + 'px)',
-          why: 'Vizuelno velik/bold tekst van heading taga ne nosi semantičko značenje za crawlere i screen readere.',
-          fix: 'Ako je ovo stvarno naslov sekcije, obeleži ga odgovarajućim heading tagom (H2/H3...).', element: el });
+          why: 'Visually large/bold text outside a heading tag carries no semantic meaning for crawlers and screen readers.',
+          fix: 'If this is actually a section title, mark it up with the appropriate heading tag (H2/H3...).', element: el });
       }
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.3 Slike
+  // 5.3 Images
   // ---------------------------------------------------------------------
 
   var GENERIC_ALT_PATTERNS = /^(image|img|photo|picture|untitled|dsc\d*|screenshot.*|asset.*)$/i;
 
-  // Best-effort: pronalazi da li je width/height za element eksplicitno fiksiran preko CSS-a
-  // (klase, inline style) — ne samo preko HTML width/height atributa. Ne uzima u obzir
-  // specifičnost/!important niti da li je @media blok trenutno aktivan (best-effort heuristika,
-  // isto kao i ostale CSS-parsing provere u ovom fajlu).
+  // Best-effort: finds whether the width/height for an element is explicitly fixed via CSS
+  // (classes, inline style) — not just via the HTML width/height attributes. Doesn't account
+  // for specificity/!important, nor whether an @media block is currently active (best-effort
+  // heuristic, same as the other CSS-parsing checks in this file).
   function getDeclaredCssSize(el) {
     var declared = { width: null, height: null };
 
@@ -579,10 +580,10 @@
       if (!rules) return;
       for (var i = 0; i < rules.length; i++) {
         var rule = rules[i];
-        // Napomena: neki browseri/implementacije izlažu prazan (ali "truthy") .cssRules i na
-        // običnim CSSStyleRule objektima, pa NE prekidamo obradu na osnovu samog postojanja
-        // .cssRules — prvo proveravamo selector/style match, pa TEK ONDA (dodatno) rekurzija
-        // u eventualne ugnježdene pravila (@media, @supports...).
+        // Note: some browsers/implementations expose an empty (but "truthy") .cssRules even on
+        // plain CSSStyleRule objects, so we do NOT stop processing based on .cssRules alone
+        // existing — we first check the selector/style match, and ONLY THEN (additionally)
+        // recurse into any nested rules (@media, @supports...).
         if (rule.selectorText && rule.style) {
           var matches = false;
           try { matches = el.matches(rule.selectorText); } catch (e) { matches = false; }
@@ -599,15 +600,15 @@
       try { scanRules(sheets[i].cssRules || sheets[i].rules); } catch (e) { /* cross-origin stylesheet */ }
     }
 
-    applyDecl(el.style); // inline style ima najveći prioritet, primenjuje se poslednji
+    applyDecl(el.style); // inline style has the highest priority, applied last
 
     return declared;
   }
 
-  // Da li je jedna CSS/HTML vrednost dužine "fiksirana" (ima stvaran efekat), bez obzira na
-  // jedinicu (px, rem, vw, %, ...) — jedino što je "nefiksirano" su auto/initial/inherit/unset
-  // ili odsustvo vrednosti. Namerno ne proverava jedinicu: 10rem je isto toliko validno fiksiranje
-  // kao 160px, dokle god nije "auto" (dogovoreno sa korisnikom 10.08.2026).
+  // Whether a single CSS/HTML length value is "fixed" (has a real effect), regardless of unit
+  // (px, rem, vw, %, ...) — the only things that are "not fixed" are auto/initial/inherit/unset
+  // or the absence of a value. Deliberately doesn't check the unit: 10rem is just as valid a
+  // fixed value as 160px, as long as it isn't "auto" (agreed with the user on 10.08.2026).
   function isLengthFixed(v) {
     return !!v && v !== 'auto' && v !== 'initial' && v !== 'inherit' && v !== 'unset';
   }
@@ -625,13 +626,14 @@
       if (!isVisible(img)) return;
       checkedImgCount++;
 
-      // Webflow tehnički implementira "Alt Text: Decorative" tako što ostavi alt="" (PRAZAN, ali
-      // PRISUTAN atribut). NAPOMENA (10.08.2026, posle provere): potvrđeno je da "Decorative"
-      // opcija zaista generiše alt="" (zvaničan Webflow changelog), ALI nije potvrđeno da li
-      // Webflow radi ISTO i kad developer prosto NIKAD ne dotakne Alt Text polje (ne bira svesno
-      // "Decorative"). Znači ne možemo sa sigurnošću iz samog HTML-a da tvrdimo da je "Decorative"
-      // svesno izabrano — moglo je i slučajno ostati prazno. Poruka je zato namerno formulisana
-      // kao "možda", ne kao potvrđena činjenica.
+      // Webflow technically implements "Alt Text: Decorative" by leaving alt="" (EMPTY, but
+      // PRESENT attribute). NOTE (10.08.2026, after verification): it's confirmed that the
+      // "Decorative" option does generate alt="" (official Webflow changelog), BUT it's not
+      // confirmed whether Webflow does the SAME when a developer simply NEVER touches the Alt
+      // Text field (doesn't consciously pick "Decorative"). So we can't say with certainty from
+      // the HTML alone that "Decorative" was consciously chosen — it could just as easily have
+      // been left blank by accident. The message is therefore deliberately phrased as "possibly",
+      // not as a confirmed fact.
       var hasAltAttr = img.hasAttribute('alt');
       var altText = hasAltAttr ? (img.getAttribute('alt') || '').trim() : '';
       var isDecorative = hasAltAttr && altText === '';
@@ -639,32 +641,33 @@
       var isGeneric = hasAltAttr && altText !== '' && GENERIC_ALT_PATTERNS.test(altText);
 
       if (isDecorative) {
-        addFinding({ category: 'Slike', severity: 'info',
-          title: 'Alt tekst je prazan (alt="") — verovatno postavljeno na "Decorative" u Webflow-u',
+        addFinding({ category: 'Images', severity: 'info',
+          title: 'Alt text is empty (alt="") — likely set to "Decorative" in Webflow',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Prazan ali PRISUTAN alt="" je ispravan ARIA obrazac kad je slika SVESNO označena kao dekorativna u Webflow-u (screen reader je onda preskače). NE možemo sa sigurnošću utvrditi iz samog HTML-a da li je ovo svesno urađeno ili je Alt Text polje prosto ostalo netaknuto/zaboravljeno — oba slučaja mogu izgledati identično u renderovanom kodu.',
-          fix: 'Proveri direktno u Webflow Designer-u (Image Settings) da li Alt Text polje zaista pokazuje "Decorative". Ako da — nema potrebne akcije. Ako je slika zapravo trebalo da ima opisan alt tekst, dodaj ga.',
+          why: 'An empty but PRESENT alt="" is the correct ARIA pattern when an image has been CONSCIOUSLY marked as decorative in Webflow (the screen reader then skips it). We CANNOT determine with certainty from the HTML alone whether this was done deliberately or the Alt Text field was simply left untouched/forgotten — both cases can look identical in the rendered code.',
+          fix: 'Check directly in the Webflow Designer (Image Settings) whether the Alt Text field really shows "Decorative". If so — no action needed. If the image should actually have descriptive alt text, add it.',
           element: img });
       } else if (isMissing || isGeneric) {
-        addFinding({ category: 'Slike', severity: 'error',
-          title: isMissing ? 'Slika: nedostaje alt atribut' : 'Slika: generički alt tekst ("' + altText + '")',
+        addFinding({ category: 'Images', severity: 'error',
+          title: isMissing ? 'Image: alt attribute is missing' : 'Image: generic alt text ("' + altText + '")',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Alt tekst opisuje sliku pretraživačima i screen readerima; bez opisnog alt teksta slika je "nevidljiva" za SEO i pristupačnost.',
-          fix: 'Dodaj opisan alt tekst u Webflow Asset Manager-u (ili svesno postavi na "Decorative" ako je slika zaista čisto dekorativna).',
+          why: 'Alt text describes the image to search engines and screen readers; without descriptive alt text, the image is "invisible" for SEO and accessibility.',
+          fix: 'Add descriptive alt text in the Webflow Asset Manager (or deliberately set it to "Decorative" if the image is truly purely decorative).',
           element: img });
       } else {
         goodAltCount++;
       }
 
-      // CLS (Cumulative Layout Shift) u tipičnom block-flow layoutu (najčešći slučaj na
-      // Webflow stranicama) je pre svega posledica NEPOZNATE VISINE u trenutku učitavanja —
-      // čim je visina fiksirana (HTML atribut ILI CSS, bilo koja jedinica: px, rem, vw...),
-      // browser odmah rezerviše taj vertikalni prostor i ostatak stranice se ne pomera kad se
-      // slika učita, BEZ OBZIRA na to da li je širina "auto" ili takođe fiksirana. Širina koja
-      // se sama računa (auto, na osnovu aspect-ratio-a slike) ne remeti već rezervisan vertikalni
-      // prostor. Zato (dogovoreno sa korisnikom 10.08.2026) se ovde gleda ISKLJUČIVO da li je
-      // VISINA fiksirana — širina više nije uslov za "bezbedno", i ovakve slike se ne prijavljuju
-      // ni kao warning/error NI kao info napomena, već idu direktno u Success tab.
+      // In a typical block-flow layout (the most common case on Webflow sites), CLS (Cumulative
+      // Layout Shift) is primarily caused by an UNKNOWN HEIGHT at load time — as soon as the
+      // height is fixed (HTML attribute OR CSS, any unit: px, rem, vw...), the browser
+      // immediately reserves that vertical space and the rest of the page doesn't shift when the
+      // image loads, REGARDLESS of whether the width is "auto" or also fixed. A width that
+      // self-computes (auto, based on the image's aspect ratio) doesn't disturb vertical space
+      // that's already reserved. So (agreed with the user on 10.08.2026) this check looks
+      // EXCLUSIVELY at whether the HEIGHT is fixed — width is no longer a condition for
+      // "safe", and such images are not reported either as a warning/error or as an info note;
+      // they go straight into the Success tab.
       var declared = getDeclaredCssSize(img);
       var heightFixed = img.hasAttribute('height') || isLengthFixed(declared.height);
       var widthFixed = img.hasAttribute('width') || isLengthFixed(declared.width);
@@ -676,13 +679,13 @@
           heightOnlyFixedCount++;
         }
       } else {
-        addFinding({ category: 'Slike', severity: 'error',
-          title: 'Slika nema fiksiranu visinu (ni HTML atribut ni CSS)',
+        addFinding({ category: 'Images', severity: 'error',
+          title: 'Image has no fixed height (neither HTML attribute nor CSS)',
           description: (img.currentSrc || img.src || '').slice(0, 120) +
-            '\nCSS width: ' + (declared.width || 'nije pronađeno/definisano') +
-            ' | CSS height: ' + (declared.height || 'nije pronađeno/definisano'),
-          why: 'Ni HTML height atribut ni CSS ne fiksiraju visinu (vrednost je "auto" ili nije uopšte definisana) — browser ne može unapred da rezerviše vertikalni prostor za sliku, što realno izaziva layout shift (CLS) dok se slika ne učita. CLS je zvaničan Google Core Web Vital/ranking signal, pa je ovo verifikovan uzrok konkretnog problema sa merljivim uticajem na SEO, ne samo teorijski rizik. Širina nije uslov ovde — fiksirana širina sama po sebi ne rezerviše vertikalni prostor.',
-          fix: 'Dodaj eksplicitnu visinu (HTML height atribut, ili CSS height u bilo kojoj jedinici — px, rem, vw...) direktno na <img> tag ili u Style panelu. Širina može ostati auto.',
+            '\nCSS width: ' + (declared.width || 'not found/defined') +
+            ' | CSS height: ' + (declared.height || 'not found/defined'),
+          why: 'Neither the HTML height attribute nor CSS fixes the height (the value is "auto" or not defined at all) — the browser can\'t reserve vertical space for the image in advance, which genuinely causes layout shift (CLS) while the image loads. CLS is an official Google Core Web Vital/ranking signal, so this is a verified cause of a concrete problem with a measurable SEO impact, not just a theoretical risk. Width isn\'t a factor here — a fixed width alone doesn\'t reserve vertical space.',
+          fix: 'Add an explicit height (an HTML height attribute, or CSS height in any unit — px, rem, vw...) directly on the <img> tag or in the Style panel. Width can stay auto.',
           element: img });
       }
 
@@ -691,16 +694,16 @@
       var isExternal = host && host !== location.hostname && !isWebflowAssetHost(host);
 
       if (isExternal) {
-        addFinding({ category: 'Slike', severity: 'error', title: 'Slika je hostovana na eksternom serveru',
-          description: src, why: 'Ako se taj eksterni server/projekat ugasi (čest slučaj kod ostataka sa WordPress ili druge migracije), slika nestaje sa stranice. Veličina fajla se ne meri jer je server van naše kontrole.',
-          fix: 'Preuzmi sliku i uploaduj je direktno u Webflow Assets.', element: img });
+        addFinding({ category: 'Images', severity: 'error', title: 'Image is hosted on an external server',
+          description: src, why: 'If that external server/project goes offline (a common case with WordPress or other migration leftovers), the image disappears from the page. File size isn\'t measured here since the server is outside our control.',
+          fix: 'Download the image and upload it directly to Webflow Assets.', element: img });
       } else {
         internalHostCount++;
         var ext = (src.split('?')[0].split('.').pop() || '').toLowerCase();
         if (['jpg', 'jpeg', 'png', 'gif'].indexOf(ext) !== -1) {
-          addFinding({ category: 'Slike', severity: 'info', title: 'Slika nije u modernom formatu (trenutno: ' + ext.toUpperCase() + ')',
-            description: src, why: 'AVIF/WebP daju znatno manju veličinu fajla pri istom kvalitetu, što ubrzava učitavanje stranice.',
-            fix: 'Konvertuj u WebP ili AVIF (Webflow ima opciju automatske optimizacije slika u Asset Manager-u).', element: img });
+          addFinding({ category: 'Images', severity: 'info', title: 'Image is not in a modern format (currently: ' + ext.toUpperCase() + ')',
+            description: src, why: 'AVIF/WebP produce a significantly smaller file size at the same quality, which speeds up page loading.',
+            fix: 'Convert it to WebP or AVIF (Webflow has an automatic image optimization option in the Asset Manager).', element: img });
         } else if (['webp', 'avif'].indexOf(ext) !== -1) {
           modernFormatCount++;
         }
@@ -709,9 +712,9 @@
           fetch(src, { method: 'HEAD' }).then(function (r) {
             var len = r.headers.get('content-length');
             if (len && parseInt(len, 10) > 500 * 1024) {
-              addFinding({ category: 'Slike', severity: 'error', title: 'Slika je veća od 500KB (' + fmtBytes(parseInt(len, 10)) + ')',
-                description: src, why: 'Velike slike usporavaju učitavanje stranice i pogoršavaju LCP (Largest Contentful Paint) — zvaničan Google Core Web Vital/ranking signal. Veličina fajla je direktno izmerena (content-length header), ne pretpostavka.',
-                fix: 'Kompresuj sliku (npr. TinyPNG/Squoosh) ili je konvertuj u WebP/AVIF.', element: img });
+              addFinding({ category: 'Images', severity: 'error', title: 'Image is larger than 500KB (' + fmtBytes(parseInt(len, 10)) + ')',
+                description: src, why: 'Large images slow down page loading and hurt LCP (Largest Contentful Paint) — an official Google Core Web Vital/ranking signal. The file size is directly measured (content-length header), not an assumption.',
+                fix: 'Compress the image (e.g. TinyPNG/Squoosh) or convert it to WebP/AVIF.', element: img });
               renderPanel();
             }
           }).catch(function () {});
@@ -720,33 +723,33 @@
     });
 
     if (checkedImgCount > 0 && goodAltCount > 0) {
-      addSuccess({ category: 'Slike', title: goodAltCount + ' od ' + checkedImgCount + ' vidljivih slika ima opisan (ili svesno dekorativan) alt tekst',
+      addSuccess({ category: 'Images', title: goodAltCount + ' of ' + checkedImgCount + ' visible images have descriptive (or deliberately decorative) alt text',
         description: '', element: null });
     }
-    // Namerno NEMA nikakvog finding-a (ni warning ni info) za slike gde je visina fiksirana —
-    // dogovoreno sa korisnikom 10.08.2026 da je ovo u potpunosti prihvatljivo (slika će svakako
-    // biti vidljiva, širina se sama izračuna na osnovu aspect-ratio-a). Ide direktno u Success,
-    // razdvojeno po tipu radi transparentnosti (obe dimenzije fiksirane vs. samo visina).
+    // Deliberately NO finding (neither warning nor info) for images where the height is fixed —
+    // agreed with the user on 10.08.2026 that this is fully acceptable (the image will be
+    // visible regardless, the width self-computes based on aspect ratio). It goes straight into
+    // Success, split by type for transparency (both dimensions fixed vs. height only).
     if (bothDimsFixedCount > 0) {
-      addSuccess({ category: 'Slike', title: bothDimsFixedCount + ' slika ima fiksirane obe dimenzije (HTML atribut ili CSS, bilo koja jedinica)',
+      addSuccess({ category: 'Images', title: bothDimsFixedCount + ' image(s) have both dimensions fixed (HTML attribute or CSS, any unit)',
         description: '', element: null });
     }
     if (heightOnlyFixedCount > 0) {
-      addSuccess({ category: 'Slike', title: heightOnlyFixedCount + ' slika ima fiksiranu visinu (širina je auto — bezbedno, ne izaziva CLS)',
-        description: '', why: 'Fiksirana visina sama rezerviše vertikalni prostor bez obzira na širinu, pa je ovo dovoljno da spreči layout shift.', element: null });
+      addSuccess({ category: 'Images', title: heightOnlyFixedCount + ' image(s) have a fixed height (width is auto — safe, does not cause CLS)',
+        description: '', why: 'A fixed height alone reserves vertical space regardless of the width, which is enough to prevent layout shift.', element: null });
     }
     if (checkedImgCount > 0 && internalHostCount === checkedImgCount) {
-      addSuccess({ category: 'Slike', title: 'Sve slike su hostovane na istom domenu/Webflow Assets (nema eksternih hostova)',
+      addSuccess({ category: 'Images', title: 'All images are hosted on the same domain/Webflow Assets (no external hosts)',
         description: '', element: null });
     }
     if (modernFormatCount > 0) {
-      addSuccess({ category: 'Slike', title: modernFormatCount + ' slika je već u modernom formatu (WebP/AVIF)',
+      addSuccess({ category: 'Images', title: modernFormatCount + ' image(s) are already in a modern format (WebP/AVIF)',
         description: '', element: null });
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.4 Linkovi
+  // 5.4 Links
   // ---------------------------------------------------------------------
 
   var GENERIC_ANCHOR = /^(klikni ovde|click here|read more|saznaj vi[sš]e|vi[sš]e|ovde|here|link)$/i;
@@ -768,10 +771,10 @@
 
       if (isEmpty && !hasCompensatingRole) {
         emptyHrefFound = true;
-        addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link ne vodi nigde (href="' + (href || '') + '")',
+        addFinding({ category: 'Links', severity: 'warning', title: 'Link doesn\'t go anywhere (href="' + (href || '') + '")',
           description: '"' + text(a).slice(0, 60) + '"',
-          why: 'Ako ovo predstavlja tab/akordeon koji samo menja prikaz na istoj stranici, ispravan pristup po WAI-ARIA Tabs obrascu je <button> sa role="tab", ne <a> link — link semantički implicira navigaciju.',
-          fix: 'Ako element ne navigira nigde, promeni ga u <button> (ili dodaj role="tab"/role="button" + odgovarajuće ARIA atribute).', element: a });
+          why: 'If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role="tab", not an <a> link — a link semantically implies navigation.',
+          fix: 'If the element doesn\'t navigate anywhere, change it to a <button> (or add role="tab"/role="button" plus the corresponding ARIA attributes).', element: a });
       }
 
       // In-page anchor targets
@@ -779,32 +782,33 @@
         var targetId = href.slice(1);
         if (!document.getElementById(targetId) && !document.getElementsByName(targetId).length) {
           brokenAnchorFound = true;
-          addFinding({ category: 'Linkovi', severity: 'error', title: 'Anchor link vodi ka ID-ju koji ne postoji (#' + targetId + ')',
-            description: '"' + text(a).slice(0, 60) + '"', why: 'Klik na ovaj link neće uraditi ništa jer element sa tim ID-jem ne postoji na stranici.',
-            fix: 'Proveri da li je ciljni element preimenovan ili obrisan, i ispravi href ili ID.', element: a });
+          addFinding({ category: 'Links', severity: 'error', title: 'Anchor link points to an ID that doesn\'t exist (#' + targetId + ')',
+            description: '"' + text(a).slice(0, 60) + '"', why: 'Clicking this link won\'t do anything since no element with that ID exists on the page.',
+            fix: 'Check whether the target element was renamed or removed, and fix the href or ID.', element: a });
         }
       }
 
       var linkText = text(a);
-      // Napomena (dodato posle rigoroznog pregleda 10.08.2026): pre ove ispravke, provera je
-      // gledala SAMO vidljiv tekst i <img> dete — ignorisala je aria-label/aria-labelledby i
-      // SVG ikonice (čest obrazac za "icon-only" linkove, npr. dugme sa SVG ikonicom bez
-      // vidljivog teksta ali sa validnim aria-label-om). Bez ove provere, alat bi lažno
-      // prijavljivao potpuno ispravne, pristupačne linkove kao "bez teksta".
+      // Note (added after a rigorous review on 10.08.2026): before this fix, the check looked
+      // ONLY at visible text and an <img> child — it ignored aria-label/aria-labelledby and SVG
+      // icons (a common pattern for "icon-only" links, e.g. a button with an SVG icon and no
+      // visible text but a valid aria-label). Without this check, the tool would falsely flag
+      // perfectly correct, accessible links as "no text".
       var hasAriaLabel = !!(a.getAttribute('aria-label') && a.getAttribute('aria-label').trim());
       var hasAriaLabelledby = !!(a.getAttribute('aria-labelledby') && a.getAttribute('aria-labelledby').trim());
       var hasIconChild = !!a.querySelector('img, svg');
       if (!linkText && !hasIconChild && !hasAriaLabel && !hasAriaLabelledby) {
         noTextLinkFound = true;
-        addFinding({ category: 'Linkovi', severity: 'warning', title: 'Link bez teksta (i bez slike/ikonice/aria-label-a)',
-          description: href || '(nema href)', why: 'Prazan link nosi nula konteksta za korisnika i za crawler.',
-          fix: 'Dodaj vidljiv tekst ili aria-label.', element: a });
+        addFinding({ category: 'Links', severity: 'warning', title: 'Link with no text (and no image/icon/aria-label)',
+          description: href || '(no href)', why: 'An empty link carries zero context for the user and for the crawler.',
+          fix: 'Add visible text or an aria-label.', element: a });
       } else if (GENERIC_ANCHOR.test(linkText.trim())) {
-        // Napomena: naslov je ranije pogrešno pisao "Negenerički" (obrnuto od stvarnog značenja) —
-        // ova grana se aktivira baš kad JE tekst generički (poklapa GENERIC_ANCHOR obrazac).
-        addFinding({ category: 'Linkovi', severity: 'info', title: 'Generički anchor tekst: "' + linkText.trim() + '"',
-          description: 'href: ' + href, why: 'Opisan anchor tekst pomaže korisnicima i Google-u da razumeju kuda link vodi.',
-          fix: 'Zameni sa opisnim tekstom (npr. "Pogledaj cenovnik" umesto "klikni ovde").', element: a });
+        // Note: the title used to incorrectly say "Non-generic" (the opposite of the actual
+        // meaning) — this branch fires exactly when the text IS generic (matches the
+        // GENERIC_ANCHOR pattern).
+        addFinding({ category: 'Links', severity: 'info', title: 'Generic anchor text: "' + linkText.trim() + '"',
+          description: 'href: ' + href, why: 'Descriptive anchor text helps users and Google understand where the link leads.',
+          fix: 'Replace it with descriptive text (e.g. "View pricing" instead of "click here").', element: a });
       }
 
       if (href && !isEmpty && sameHost(href, location.hostname)) {
@@ -813,13 +817,13 @@
     });
 
     if (checkedLinkCount > 0 && !emptyHrefFound) {
-      addSuccess({ category: 'Linkovi', title: 'Nema linkova koji ne vode nigde (svi href atributi su validni)', description: '', element: null });
+      addSuccess({ category: 'Links', title: 'There are no links that go nowhere (all href attributes are valid)', description: '', element: null });
     }
     if (checkedLinkCount > 0 && !brokenAnchorFound) {
-      addSuccess({ category: 'Linkovi', title: 'Svi in-page anchor linkovi (#id) vode ka postojećim elementima', description: '', element: null });
+      addSuccess({ category: 'Links', title: 'All in-page anchor links (#id) point to existing elements', description: '', element: null });
     }
     if (checkedLinkCount > 0 && !noTextLinkFound) {
-      addSuccess({ category: 'Linkovi', title: 'Svi linkovi imaju vidljiv tekst ili sliku', description: '', element: null });
+      addSuccess({ category: 'Links', title: 'All links have visible text or an image', description: '', element: null });
     }
 
     // 404 / redirect chain check for internal links (best-effort, limited count)
@@ -829,7 +833,7 @@
     function maybeReportLinkCheckSuccess() {
       linkCheckSettled++;
       if (linkCheckSettled === toCheck.length && !linkCheckProblemFound) {
-        addSuccess({ category: 'Linkovi', title: 'Svi provereni interni linkovi (' + toCheck.length + ') vraćaju uspešan odgovor bez 404/redirekcije',
+        addSuccess({ category: 'Links', title: 'All checked internal links (' + toCheck.length + ') return a successful response with no 404/redirect',
           description: '', element: null });
         renderPanel();
       }
@@ -839,15 +843,15 @@
         fetch(item.href, { method: 'GET', redirect: 'manual' }).then(function (r) {
           if (r.status === 404) {
             linkCheckProblemFound = true;
-            addFinding({ category: 'Linkovi', severity: 'error', title: 'Interni link vodi na 404 stranicu',
-              description: item.href, why: 'Slomljen interni link šteti i korisničkom iskustvu i crawl efikasnosti.',
-              fix: 'Ispravi link ili vrati/preimenuj ciljnu stranicu.', element: item.el });
+            addFinding({ category: 'Links', severity: 'error', title: 'Internal link leads to a 404 page',
+              description: item.href, why: 'A broken internal link hurts both user experience and crawl efficiency.',
+              fix: 'Fix the link, or restore/rename the target page.', element: item.el });
             renderPanel();
           } else if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) {
             linkCheckProblemFound = true;
-            addFinding({ category: 'Linkovi', severity: 'info', title: 'Interni link prolazi kroz redirekciju',
-              description: item.href, why: 'Nije slomljeno, ali redirekcija usporava i razvodnjava link signal.',
-              fix: 'Ako je moguće, ažuriraj link da vodi direktno na finalni URL.', element: item.el });
+            addFinding({ category: 'Links', severity: 'info', title: 'Internal link goes through a redirect',
+              description: item.href, why: 'It isn\'t broken, but a redirect slows things down and dilutes the link signal.',
+              fix: 'If possible, update the link to point directly to the final URL.', element: item.el });
             renderPanel();
           }
           maybeReportLinkCheckSuccess();
@@ -857,7 +861,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // 5.5 Sadržaj
+  // 5.5 Content
   // ---------------------------------------------------------------------
 
   var PLACEHOLDER_PATTERNS = [
@@ -871,15 +875,15 @@
     // Thin content
     var visibleTextLen = text(main).replace(/\s+/g, ' ').length;
     if (visibleTextLen < 200) {
-      addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Vrlo malo vidljivog teksta na stranici (' + visibleTextLen + ' karaktera)',
-        description: '', why: 'Stranice sa vrlo malo teksta teže se rangiraju za relevantne upite (thin content).',
-        fix: 'Dodaj više relevantnog, korisnog sadržaja.', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje; "thin content" retko biva citiran.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — Google tradicionalno slabije rangira "thin content" stranice jer ne pružaju dovoljno vrednosti korisniku u odnosu na konkurenciju.' });
+      addFinding({ category: 'Content', severity: 'warning', title: 'Very little visible text on the page (' + visibleTextLen + ' characters)',
+        description: '', why: 'Pages with very little text tend to rank worse for relevant queries (thin content).',
+        fix: 'Add more relevant, useful content.', element: main,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — AI answer engines cite pages that have enough substance to directly answer the question; "thin content" is rarely cited.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — Google traditionally ranks "thin content" pages lower because they don\'t provide enough value to the user compared to the competition.' });
     } else {
-      addSuccess({ category: 'Sadržaj', title: 'Stranica ima dovoljno vidljivog teksta (' + visibleTextLen + ' karaktera)', description: '', element: main,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice sa dovoljno supstance da direktno odgovore na pitanje.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — dovoljna količina kvalitetnog sadržaja je osnovni preduslov da Google proceni stranicu kao vrednu rangiranja.' });
+      addSuccess({ category: 'Content', title: 'The page has enough visible text (' + visibleTextLen + ' characters)', description: '', element: main,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — AI answer engines cite pages that have enough substance to directly answer the question.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — a sufficient amount of quality content is a basic prerequisite for Google to consider the page worth ranking.' });
     }
 
     // Hidden content (potential keyword stuffing)
@@ -892,9 +896,9 @@
         var t = text(el);
         if (t && t.length > 60) {
           hiddenChecked++;
-          addFinding({ category: 'Sadržaj', severity: 'info', title: 'Sakriven sadržaj sa dosta teksta (display:none/visibility:hidden)',
-            description: '"' + t.slice(0, 80) + '..."', why: 'Skriven tekst sa dosta reči može delovati kao pokušaj keyword stuffing-a, čak i ako je nenamerno (npr. zaboravljen tab panel).',
-            fix: 'Proveri da li ovaj sadržaj treba da bude vidljiv, ili ga ukloni ako je ostatak razvoja.', element: el });
+          addFinding({ category: 'Content', severity: 'info', title: 'Hidden content with a substantial amount of text (display:none/visibility:hidden)',
+            description: '"' + t.slice(0, 80) + '..."', why: 'Hidden text with a lot of words can look like an attempt at keyword stuffing, even if unintentional (e.g. a forgotten tab panel).',
+            fix: 'Check whether this content should be visible, or remove it if it\'s leftover from development.', element: el });
         }
       }
     }
@@ -910,12 +914,12 @@
       if (seenRepeats[word]) continue;
       seenRepeats[word] = true;
       repeatedWordFound = true;
-      addFinding({ category: 'Sadržaj', severity: 'warning', title: 'Ponovljena reč zaredom: "' + m[1] + ' ' + m[1] + '"',
+      addFinding({ category: 'Content', severity: 'warning', title: 'Repeated word in a row: "' + m[1] + ' ' + m[1] + '"',
         description: '...' + bodyText.slice(Math.max(0, m.index - 30), m.index + 30) + '...',
-        why: 'Najčešće copy-paste greška.', fix: 'Ukloni duplikat reči.', element: null });
+        why: 'Most often a copy-paste mistake.', fix: 'Remove the duplicate word.', element: null });
     }
     if (!repeatedWordFound) {
-      addSuccess({ category: 'Sadržaj', title: 'Nema ponovljenih reči zaredom (copy-paste greška)', description: '', element: null });
+      addSuccess({ category: 'Content', title: 'No repeated words in a row (copy-paste mistake)', description: '', element: null });
     }
 
     // Placeholder text
@@ -924,14 +928,14 @@
       var mm = bodyText.match(re);
       if (mm) {
         placeholderFound = true;
-        addFinding({ category: 'Sadržaj', severity: 'error', title: 'Placeholder/Lorem ipsum tekst pronađen na stranici',
+        addFinding({ category: 'Content', severity: 'error', title: 'Placeholder/Lorem ipsum text found on the page',
           description: '"...' + bodyText.slice(Math.max(0, bodyText.indexOf(mm[0]) - 20), bodyText.indexOf(mm[0]) + 60) + '..."',
-          why: 'Čest slučaj kad CMS Rich Text element nije pravilno povezan sa pravim podatkom, pa ostane default vrednost.',
-          fix: 'Zameni placeholder tekst pravim sadržajem pre objave.', element: null });
+          why: 'A common case is when a CMS Rich Text element isn\'t properly bound to the real data, so the default value is left in place.',
+          fix: 'Replace the placeholder text with real content before publishing.', element: null });
       }
     });
     if (!placeholderFound) {
-      addSuccess({ category: 'Sadržaj', title: 'Nema placeholder/Lorem ipsum teksta na stranici', description: '', element: null });
+      addSuccess({ category: 'Content', title: 'No placeholder/Lorem ipsum text on the page', description: '', element: null });
     }
 
     // Manual <br> line breaks inside headings/paragraphs
@@ -940,16 +944,16 @@
       if (!isVisible(el)) return;
       var brCount = el.querySelectorAll('br').length;
       if (brCount >= 1) {
-        addFinding({ category: 'Sadržaj', severity: 'info', title: 'Ručni <br> prelom reda unutar ' + el.tagName.toLowerCase() + ' elementa',
+        addFinding({ category: 'Content', severity: 'info', title: 'Manual <br> line break inside a ' + el.tagName.toLowerCase() + ' element',
           description: '"' + text(el).slice(0, 80) + '"',
-          why: 'Ne utiče direktno na SEO rangiranje, ali prelom fiksiran za desktop izgled može da se "slomi" i čudno prelomi tekst na mobilnom (mobile-first indexing signal iskustva stranice).',
-          fix: 'Razmotri CSS rešenje (max-width, responsive font-size) umesto ručnog <br>.', element: el });
+          why: 'This doesn\'t directly affect SEO ranking, but a line break fixed for desktop layout can "break" and wrap the text oddly on mobile (a mobile-first indexing experience signal).',
+          fix: 'Consider a CSS solution (max-width, responsive font-size) instead of a manual <br>.', element: el });
       }
     });
   }
 
   // ---------------------------------------------------------------------
-  // 5.6 Fontovi
+  // 5.6 Fonts
   // ---------------------------------------------------------------------
 
   function checkFonts() {
@@ -965,15 +969,15 @@
     var distinct = Object.keys(families);
 
     if (distinct.length >= 4) {
-      addFinding({ category: 'Fontovi', severity: 'warning', title: 'Stranica koristi ' + distinct.length + ' različitih fontova: ' + distinct.join(', '),
-        description: '', why: 'Svaki dodatni font je dodatni fajl za preuzimanje i rizik za FOUT/FOIT, što pogoršava performanse.',
-        fix: 'Svedi broj fontova na 1-2 (npr. jedan za naslove, jedan za tekst).', element: null });
+      addFinding({ category: 'Fonts', severity: 'warning', title: 'The page uses ' + distinct.length + ' different fonts: ' + distinct.join(', '),
+        description: '', why: 'Every additional font is another file to download and a risk of FOUT/FOIT, which hurts performance.',
+        fix: 'Reduce the number of fonts to 1-2 (e.g. one for headings, one for body text).', element: null });
     } else if (distinct.length >= 2) {
-      addFinding({ category: 'Fontovi', severity: 'info', title: 'Stranica koristi ' + distinct.length + ' fonta: ' + distinct.join(', '),
-        description: '', why: 'Informativno — ne utiče na SEO score, ali vredi biti svestan.',
+      addFinding({ category: 'Fonts', severity: 'info', title: 'The page uses ' + distinct.length + ' fonts: ' + distinct.join(', '),
+        description: '', why: 'Informational only — doesn\'t affect the SEO score, but worth being aware of.',
         fix: '', element: null });
     } else if (distinct.length === 1) {
-      addSuccess({ category: 'Fontovi', title: 'Stranica koristi samo 1 font (' + distinct[0] + ') — minimalan rizik za FOUT/FOIT', description: '', element: null });
+      addSuccess({ category: 'Fonts', title: 'The page uses only 1 font (' + distinct[0] + ') — minimal risk of FOUT/FOIT', description: '', element: null });
     }
 
     // Google Fonts vs self-hosted
@@ -984,17 +988,17 @@
       if (src && /fonts\.googleapis\.com|fonts\.gstatic\.com/i.test(src)) usesGoogleFonts = true;
     });
     if (usesGoogleFonts) {
-      addFinding({ category: 'Fontovi', severity: 'warning', title: 'Stranica dinamički učitava Google Fonts sa Google servera',
-        description: '', why: 'Nemački sud (LG München I, 01/2022) presudio je da dinamičko učitavanje Google Fonts-a bez pristanka šalje IP adresu posetioca Google-u bez pravnog osnova po GDPR-u, što je pokrenulo talas opomena (uglavnom u Nemačkoj, ali GDPR važi u celoj EU). Nismo pravni savetnici — proveri sa pravnikom ako je relevantno za klijenta.',
-        fix: 'Preuzmi font fajlove i uploaduj ih direktno u Webflow Assets (self-hosting) umesto dinamičkog Google Fonts linka.', element: null });
+      addFinding({ category: 'Fonts', severity: 'warning', title: 'The page dynamically loads Google Fonts from Google\'s servers',
+        description: '', why: 'A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor\'s IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.',
+        fix: 'Download the font files and upload them directly to Webflow Assets (self-hosting) instead of a dynamic Google Fonts link.', element: null });
     } else {
-      addSuccess({ category: 'Fontovi', title: 'Nema dinamičkog učitavanja Google Fonts sa Google servera (GDPR rizik izbegnut)', description: '', element: null });
+      addSuccess({ category: 'Fonts', title: 'No dynamic loading of Google Fonts from Google\'s servers (GDPR risk avoided)', description: '', element: null });
     }
 
     // Font format check
     try {
       document.fonts.forEach(function (f) {
-        // FontFace API ne izlaže uvek src URL direktno; best effort preko toString()
+        // The FontFace API doesn't always expose the src URL directly; best effort via toString()
       });
     } catch (e) {}
     var oldFormatFound = false;
@@ -1014,16 +1018,16 @@
       } catch (e) { /* cross-origin stylesheet, can't read rules */ }
     }
     if (oldFormatFound) {
-      addFinding({ category: 'Fontovi', severity: 'info', title: 'Font fajl u starijem formatu (nije .woff2)',
-        description: '', why: '.woff2 ima znatno bolju kompresiju od .ttf/.otf/.eot, manji fajl = brže učitavanje.',
-        fix: 'Konvertuj font fajlove u .woff2 pre uploada u Webflow.', element: null });
+      addFinding({ category: 'Fonts', severity: 'info', title: 'Font file in an older format (not .woff2)',
+        description: '', why: '.woff2 has significantly better compression than .ttf/.otf/.eot — a smaller file means faster loading.',
+        fix: 'Convert the font files to .woff2 before uploading to Webflow.', element: null });
     } else if (fontFaceRuleFound) {
-      addSuccess({ category: 'Fontovi', title: 'Svi @font-face fajlovi su u modernom .woff2 formatu', description: '', element: null });
+      addSuccess({ category: 'Fonts', title: 'All @font-face files are in the modern .woff2 format', description: '', element: null });
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.7 Tehnički / crawlability
+  // 5.7 Technical / crawlability
   // ---------------------------------------------------------------------
 
   function checkTechnical() {
@@ -1038,13 +1042,13 @@
     Object.keys(idMap).forEach(function (id) {
       if (idMap[id].length > 1) {
         dupIdFound = true;
-        addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Duplikatan ID atribut: "' + id + '" (' + idMap[id].length + ' puta)',
-          description: '', why: 'Duplikatni ID-jevi lome in-page anchor linkove i ARIA reference (aria-controls, aria-labelledby) koje se oslanjaju na jedinstven ID. Čest rezultat kopiranja cele sekcije bez izmene ID-ja.',
-          fix: 'Preimenuj duplikate u jedinstvene ID-jeve.', element: idMap[id][1] });
+        addFinding({ category: 'Technical / crawlability', severity: 'info', title: 'Duplicate ID attribute: "' + id + '" (' + idMap[id].length + ' times)',
+          description: '', why: 'Duplicate IDs break in-page anchor links and ARIA references (aria-controls, aria-labelledby) that rely on a unique ID. Usually the result of copying an entire section without changing the ID.',
+          fix: 'Rename the duplicates to unique IDs.', element: idMap[id][1] });
       }
     });
     if (!dupIdFound && Object.keys(idMap).length > 0) {
-      addSuccess({ category: 'Tehnički / crawlability', title: 'Nema duplikatnih ID atributa na stranici', description: '', element: null });
+      addSuccess({ category: 'Technical / crawlability', title: 'No duplicate ID attributes on the page', description: '', element: null });
     }
 
     // DOM size / depth (Lighthouse-style thresholds, recommendation only)
@@ -1058,31 +1062,31 @@
     })(document.body, 0);
 
     if (totalNodes > 1500 || maxDepth > 32 || maxChildren > 60) {
-      addFinding({ category: 'Tehnički / crawlability', severity: 'info', title: 'Veliki/preduboko ugnježden DOM (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ', max dece jednog elementa: ' + maxChildren + ')',
-        description: '', why: 'Prevelik DOM usporava rendering i otežava crawlerima efikasno parsiranje. Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se ignorisati.',
-        fix: 'Razmotri pojednostavljenje strukture sekcija (manje ugnježdenih wrapper div-ova).', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — preveliki/preduboko ugnježden DOM usporava renderovanje, što posredno pogoršava Core Web Vitals metrike koje Google koristi za rangiranje.' });
+      addFinding({ category: 'Technical / crawlability', severity: 'info', title: 'Large/deeply nested DOM (nodes: ' + totalNodes + ', max depth: ' + maxDepth + ', max children of one element: ' + maxChildren + ')',
+        description: '', why: 'An overly large DOM slows down rendering and makes it harder for crawlers to parse efficiently. This is a recommendation, not an error — if it\'s intentional and doesn\'t cause a visible problem, it can be ignored.',
+        fix: 'Consider simplifying the section structure (fewer nested wrapper divs).', element: null,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a simpler DOM is easier for faster/simpler AI crawlers to parse.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — an overly large/deeply nested DOM slows down rendering, which indirectly hurts the Core Web Vitals metrics Google uses for ranking.' });
     } else {
-      addSuccess({ category: 'Tehnički / crawlability', title: 'DOM veličina/dubina je u razumnim granicama (čvorova: ' + totalNodes + ', max dubina: ' + maxDepth + ')', description: '', element: null,
-        crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — jednostavniji DOM je lakši i bržim/jednostavnijim AI crawlerima za parsiranje.',
-        crossNoteReverse: 'Relevantno i za SEO i za AEO — razumna veličina DOM-a doprinosi bržem renderovanju i boljim Core Web Vitals rezultatima.' });
+      addSuccess({ category: 'Technical / crawlability', title: 'DOM size/depth is within reasonable limits (nodes: ' + totalNodes + ', max depth: ' + maxDepth + ')', description: '', element: null,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a simpler DOM is easier for faster/simpler AI crawlers to parse.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — a reasonable DOM size contributes to faster rendering and better Core Web Vitals results.' });
     }
 
     // Mixed content
     if (location.protocol === 'https:') {
       var httpResources = Array.prototype.slice.call(document.querySelectorAll('img[src^="http://"], script[src^="http://"], link[href^="http://"], iframe[src^="http://"]'));
       httpResources.forEach(function (el) {
-        addFinding({ category: 'Tehnički / crawlability', severity: 'error', title: 'Mixed content: HTTP resurs na HTTPS stranici',
-          description: (el.src || el.href || ''), why: 'Browser može da blokira ili upozori na ovaj resurs, i to je bezbednosni signal.',
-          fix: 'Promeni URL resursa na https://.', element: el,
-          crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — HTTPS/bezbednost je jedan od Tier-1 tehničkih signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti izvora.',
-          crossNoteReverse: 'Relevantno i za SEO i za AEO — HTTPS je potvrđen Google ranking signal još od 2014, a mixed content upozorenja u browseru narušavaju poverenje korisnika.' });
+        addFinding({ category: 'Technical / crawlability', severity: 'error', title: 'Mixed content: HTTP resource on an HTTPS page',
+          description: (el.src || el.href || ''), why: 'The browser may block or warn about this resource, and it is a security signal.',
+          fix: 'Change the resource URL to https://.', element: el,
+          crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — HTTPS/security is one of the Tier-1 technical signals AI answer engines factor into assessing source trustworthiness.',
+          crossNoteReverse: 'Relevant to both SEO and AEO — HTTPS has been a confirmed Google ranking signal since 2014, and mixed content warnings in the browser undermine user trust.' });
       });
       if (!httpResources.length) {
-        addSuccess({ category: 'Tehnički / crawlability', title: 'Nema mixed content-a — svi resursi se učitavaju preko HTTPS-a', description: '', element: null,
-          crossRelevant: true, crossNote: 'Relevantno i za SEO i za AEO — HTTPS je Tier-1 tehnički signal pouzdanosti izvora.',
-          crossNoteReverse: 'Relevantno i za SEO i za AEO — potpun HTTPS bez mixed content upozorenja je potvrđen Google ranking signal.' });
+        addSuccess({ category: 'Technical / crawlability', title: 'No mixed content — all resources load over HTTPS', description: '', element: null,
+          crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — HTTPS is a Tier-1 technical trust signal for sources.',
+          crossNoteReverse: 'Relevant to both SEO and AEO — full HTTPS with no mixed content warnings is a confirmed Google ranking signal.' });
       }
     }
 
@@ -1099,22 +1103,22 @@
           blockingScriptFound = true;
           var current = '<script src="' + src + '"></script>';
           var suggested = '<script src="' + src + '" defer></script>';
-          addFinding({ category: 'Tehnički / crawlability', severity: 'error',
-            title: 'Treće-strana skripta bez async/defer (' + host + ')',
-            description: 'Trenutno:\n' + current + '\n\nPredloženo:\n' + suggested,
-            why: 'Skripta bez async/defer blokira parsiranje/renderovanje stranice na tom mestu dok se ne preuzme i izvrši sa eksternog servera — jedan od najčešćih, dobro dokumentovanih uzroka lošeg LCP-a (Core Web Vital/ranking signal). Prisustvo/odsustvo atributa je direktno verifikovano na <script> tagu, ne pretpostavka.',
-            fix: 'Dodaj "defer" atribut (preporučeno za skripte kojima je bitan redosled izvršavanja/DOM spremnost — većina chat widgeta i tracking piksela) ili "async" (za potpuno nezavisne skripte). Još bolje: premesti skriptu u Page Settings > Custom Code > "Before </body> tag" umesto u <head>.',
+          addFinding({ category: 'Technical / crawlability', severity: 'error',
+            title: 'Third-party script without async/defer (' + host + ')',
+            description: 'Current:\n' + current + '\n\nSuggested:\n' + suggested,
+            why: 'A script without async/defer blocks parsing/rendering of the page at that point until it\'s downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption.',
+            fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script into Page Settings > Custom Code > "Before </body> tag" instead of the <head>.',
             element: s });
         }
       }
     });
     if (thirdPartyScriptCount > 0 && !blockingScriptFound) {
-      addSuccess({ category: 'Tehnički / crawlability', title: 'Sve treće-strana skripte (' + thirdPartyScriptCount + ') imaju async/defer', description: '', element: null });
+      addSuccess({ category: 'Technical / crawlability', title: 'All third-party scripts (' + thirdPartyScriptCount + ') have async/defer', description: '', element: null });
     }
   }
 
   // ---------------------------------------------------------------------
-  // 5.9 Poseban tretman: nav/footer (post-processing)
+  // 5.9 Special handling: nav/footer (post-processing)
   // ---------------------------------------------------------------------
 
   function tagGlobalFindings() {
@@ -1123,7 +1127,7 @@
         var landmark = closestLandmark(f.element);
         if (landmark) {
           f.globalElement = true;
-          f.globalNote = 'Globalni element (' + landmark.tagName.toLowerCase() + ') — verovatno Symbol/Component koji se ponavlja na svim stranicama sajta. Ispravka na jednom mestu rešava problem sajt-wide. Preporučuje se brza provera na još 1-2 druge stranice.';
+          f.globalNote = 'Global element (' + landmark.tagName.toLowerCase() + ') — likely a Symbol/Component that repeats across all pages of the site. Fixing it in one place resolves the issue site-wide. A quick check on 1-2 other pages is recommended.';
         }
       }
     });
@@ -1153,47 +1157,48 @@
       cwv.cls = Math.round(sum * 1000) / 1000;
     } catch (e) {}
 
-    var CWV_CROSS_NOTE = 'Relevantno i za SEO i za AEO — Core Web Vitals su deo Tier-1 tehničkih signala koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.';
-    var CWV_CROSS_NOTE_REVERSE = 'Relevantno i za SEO i za AEO — Core Web Vitals (TTFB, LCP, CLS) su zvaničan Google ranking signal još od 2021. (Page Experience update).';
+    var CWV_CROSS_NOTE = 'Relevant to both SEO and AEO — Core Web Vitals are part of the Tier-1 technical signals that AEO research links to the likelihood of AI citation.';
+    var CWV_CROSS_NOTE_REVERSE = 'Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).';
 
-    // Dve granice po metrici (usklađeno sa Google-ovim zvaničnim "Needs Improvement" / "Poor"
-    // pragovima za LCP i CLS; TTFB nije zvaničan Core Web Vital, ali 1800ms je uobičajen "loše"
-    // prag u web.dev preporukama) — plitko "warning", duboko u "Poor" teritoriji "error".
+    // Two thresholds per metric (aligned with Google's official "Needs Improvement" / "Poor"
+    // thresholds for LCP and CLS; TTFB isn't an official Core Web Vital, but 1800ms is a common
+    // "poor" threshold in web.dev recommendations) — a mild "warning", deep into "Poor"
+    // territory an "error".
     if (cwv.ttfb != null && cwv.ttfb > 800) {
       var ttfbPoor = cwv.ttfb > 1800;
-      addFinding({ category: 'Performanse (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Spor TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
-        description: '', why: (ttfbPoor ? 'Preko 1800ms je duboko u "loše" teritoriji. ' : 'Preko 800ms je sporo. ') + 'Server sporo odgovara na prvi zahtev.', fix: 'Proveri custom kod/integracije koje mogu usporavati server response.', element: null,
+      addFinding({ category: 'Performance (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Slow TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
+        description: '', why: (ttfbPoor ? 'Over 1800ms is deep into "poor" territory. ' : 'Over 800ms is slow. ') + 'The server responds slowly to the initial request.', fix: 'Check custom code/integrations that could be slowing down the server response.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.ttfb != null) {
-      addSuccess({ category: 'Performanse (CWV)', title: 'TTFB je dobar (' + cwv.ttfb + 'ms, ispod 800ms praga)', description: '', element: null,
+      addSuccess({ category: 'Performance (CWV)', title: 'TTFB is good (' + cwv.ttfb + 'ms, under the 800ms threshold)', description: '', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
     if (cwv.lcp != null && cwv.lcp > 2500) {
       var lcpPoor = cwv.lcp > 4000;
-      addFinding({ category: 'Performanse (CWV)', severity: lcpPoor ? 'error' : 'warning', title: 'Spor LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
-        description: '', why: 'Google smatra dobrim LCP ispod 2500ms' + (lcpPoor ? ', a preko 4000ms svrstava u "Poor" kategoriju' : '') + '. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.',
-        fix: 'Optimizuj/kompresuj hero sliku, ukloni render-blocking resurse.', element: null,
+      addFinding({ category: 'Performance (CWV)', severity: lcpPoor ? 'error' : 'warning', title: 'Slow LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
+        description: '', why: 'Google considers a good LCP to be under 2500ms' + (lcpPoor ? ', and over 4000ms falls into the "Poor" category' : '') + '. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.',
+        fix: 'Optimize/compress the hero image, remove render-blocking resources.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.lcp != null) {
-      addSuccess({ category: 'Performanse (CWV)', title: 'LCP je dobar (' + cwv.lcp + 'ms, ispod 2500ms Google praga)', description: '', element: null,
+      addSuccess({ category: 'Performance (CWV)', title: 'LCP is good (' + cwv.lcp + 'ms, under Google\'s 2500ms threshold)', description: '', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
-      addFinding({ category: 'Performanse (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'Visok CLS (Cumulative Layout Shift): ' + cwv.cls,
-        description: '', why: 'Preko 0.1 znači primetno "skakanje" sadržaja tokom učitavanja' + (clsPoor ? ' (preko 0.25 je Google-ova "Poor" granica)' : '') + ' — najčešće zbog slika/fontova bez rezervisanog prostora.',
-        fix: 'Dodaj width/height na slike, proveri font-display podešavanja.', element: null,
+      addFinding({ category: 'Performance (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'High CLS (Cumulative Layout Shift): ' + cwv.cls,
+        description: '', why: 'Over 0.1 means noticeable content "jumping" during load' + (clsPoor ? ' (over 0.25 is Google\'s "Poor" threshold)' : '') + ' — most often due to images/fonts without reserved space.',
+        fix: 'Add width/height to images, check font-display settings.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else {
-      addSuccess({ category: 'Performanse (CWV)', title: 'CLS je dobar (' + cwv.cls + ', ispod 0.1 Google praga)', description: '', element: null,
+      addSuccess({ category: 'Performance (CWV)', title: 'CLS is good (' + cwv.cls + ', under Google\'s 0.1 threshold)', description: '', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
 
-    if (done) setTimeout(done, 1200); // dati vremena PerformanceObserver bufferu
+    if (done) setTimeout(done, 1200); // give the PerformanceObserver buffer some time
   }
 
   // ---------------------------------------------------------------------
-  // 5.11 AEO (Answer Engine Optimization) provere
+  // 5.11 AEO (Answer Engine Optimization) checks
   // ---------------------------------------------------------------------
 
   function getJsonLdBlocks() {
@@ -1208,15 +1213,15 @@
       } catch (e) {
         invalidFound = true;
         addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
-          title: 'JSON-LD schema blok sadrži nevalidan JSON',
+          title: 'JSON-LD schema block contains invalid JSON',
           description: (s.textContent || '').slice(0, 150),
-          why: 'Nevalidan JSON u <script type="application/ld+json"> se u potpunosti ignoriše od strane Google-a i AI crawlera — cela schema oznaka je beskorisna dok se ne ispravi sintaksa.',
-          fix: 'Proveri JSON sintaksu (nedostajući/suvišni zarezi, navodnici) npr. na validator.schema.org.', element: s });
+          why: 'Invalid JSON in a <script type="application/ld+json"> is completely ignored by Google and AI crawlers — the entire schema markup is useless until the syntax is fixed.',
+          fix: 'Check the JSON syntax (missing/extra commas, quotes), e.g. at validator.schema.org.', element: s });
       }
     });
     if (scripts.length > 0 && !invalidFound) {
       addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-        title: 'Svi JSON-LD schema blokovi (' + scripts.length + ') sadrže validan JSON', description: '', element: null });
+        title: 'All JSON-LD schema blocks (' + scripts.length + ') contain valid JSON', description: '', element: null });
     }
     return blocks;
   }
@@ -1258,29 +1263,29 @@
     var faqSchemas = findSchemaByType(blocks, 'FAQPage');
     if (looksLikeFAQ() && faqSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
-        title: 'Stranica izgleda kao FAQ sekcija ali nema FAQPage schema markup',
-        description: 'Pronađeni FAQ-oslični elementi (klase/ID sa "faq" ili 3+ heading-a u obliku pitanja) bez odgovarajuće JSON-LD FAQPage sheme.',
-        why: 'Prema dosadašnjim AEO istraživanjima, FAQPage schema je najjači pojedinačni prediktor da će AI answer engine (ChatGPT, Perplexity, Google AI Overviews) citirati stranicu kao izvor odgovora.',
-        fix: 'Dodaj JSON-LD FAQPage schema blok (mainEntity niz Question/acceptedAnswer objekata) koji odgovara vidljivim pitanjima i odgovorima na stranici.', element: null });
+        title: 'Page looks like a FAQ section but has no FAQPage schema markup',
+        description: 'FAQ-like elements were found (classes/IDs containing "faq", or 3+ question-style headings) without a corresponding JSON-LD FAQPage schema.',
+        why: 'Based on AEO research so far, FAQPage schema is the single strongest predictor that an AI answer engine (ChatGPT, Perplexity, Google AI Overviews) will cite the page as a source of an answer.',
+        fix: 'Add a JSON-LD FAQPage schema block (a mainEntity array of Question/acceptedAnswer objects) matching the visible questions and answers on the page.', element: null });
     } else if (faqSchemas.length) {
       faqSchemas.forEach(function (b) {
         var entities = b.raw.mainEntity;
         var arr = Array.isArray(entities) ? entities : (entities ? [entities] : []);
         if (!arr.length) {
           addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
-            title: 'FAQPage schema nema mainEntity (pitanja)',
-            description: '', why: 'FAQPage bez mainEntity niza Question objekata je nepotpuna i neće se koristiti za FAQ rich rezultate ili AI citiranje.',
-            fix: 'Dodaj mainEntity niz sa Question/acceptedAnswer objektima za svako pitanje sa stranice.', element: b.el });
+            title: 'FAQPage schema has no mainEntity (questions)',
+            description: '', why: 'A FAQPage without a mainEntity array of Question objects is incomplete and won\'t be used for FAQ rich results or AI citation.',
+            fix: 'Add a mainEntity array with Question/acceptedAnswer objects for every question on the page.', element: b.el });
         } else {
           var badItems = arr.filter(function (q) { return !q.acceptedAnswer || !q.acceptedAnswer.text; });
           if (badItems.length) {
             addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
-              title: badItems.length + ' pitanje/a u FAQPage schemi nema popunjen acceptedAnswer.text',
-              description: '', why: 'Nepotpuna pitanja se neće koristiti za FAQ rich rezultate/AI citiranje. Ovo je verifikovana činjenica o samoj schema JSON strukturi (ne heuristika ni pretpostavka) — svako takvo pitanje je efektivno beskorisno dok se ne popuni.',
-              fix: 'Popuni acceptedAnswer.text za svako Question u schemi.', element: b.el });
+              title: badItems.length + ' question(s) in the FAQPage schema have no acceptedAnswer.text filled in',
+              description: '', why: 'Incomplete questions won\'t be used for FAQ rich results/AI citation. This is a verified fact about the schema JSON structure itself (not a heuristic or assumption) — every such question is effectively useless until filled in.',
+              fix: 'Fill in acceptedAnswer.text for every Question in the schema.', element: b.el });
           } else {
             addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-              title: 'FAQPage schema je prisutna i kompletna (' + arr.length + ' pitanja sa odgovorima)', description: '', element: b.el });
+              title: 'FAQPage schema is present and complete (' + arr.length + ' questions with answers)', description: '', element: b.el });
           }
         }
       });
@@ -1290,20 +1295,20 @@
     var articleSchemas = findSchemaByType(blocks, 'Article').concat(findSchemaByType(blocks, 'BlogPosting'), findSchemaByType(blocks, 'NewsArticle'));
     if (looksLikeArticle() && articleSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
-        title: 'Stranica izgleda kao članak/blog post ali nema Article schema markup',
-        description: 'Pronađen <article> element ili dugačak tekst (600+ reči) sa više podnaslova, bez JSON-LD Article/BlogPosting sheme.',
-        why: 'Article schema pomaže AI answer engine-ima i Google-u da razumeju autora, datum objave/izmene i temu stranice — svi Tier-1 tehnički AEO signali.',
-        fix: 'Dodaj JSON-LD Article schema sa headline, author, datePublished, dateModified.', element: null });
+        title: 'Page looks like an article/blog post but has no Article schema markup',
+        description: 'An <article> element or a long text (600+ words) with multiple subheadings was found, without a JSON-LD Article/BlogPosting schema.',
+        why: 'Article schema helps AI answer engines and Google understand the author, publish/modified date, and topic of the page — all Tier-1 technical AEO signals.',
+        fix: 'Add a JSON-LD Article schema with headline, author, datePublished, dateModified.', element: null });
     } else {
       articleSchemas.forEach(function (b) {
         if (!b.raw.dateModified && !b.raw.datePublished) {
           addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
-            title: 'Article schema nema ni dateModified ni datePublished',
-            description: '', why: 'AI answer engine-i preferiraju sveže/nedavno ažurirane izvore — bez datuma nema signala svežine sadržaja, a ovo je Tier-1 AEO signal. Verifikovana činjenica o schema JSON-u (polje nedostaje ili ne postoji), ne heuristika.',
-            fix: 'Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolje: poveži polje automatski sa CMS "poslednja izmena" vrednošću umesto da bude ručno/hardkodovano, da se ne zaboravi ažurirati.', element: b.el });
+            title: 'Article schema has neither dateModified nor datePublished',
+            description: '', why: 'AI answer engines prefer fresh/recently updated sources — without a date there is no freshness signal for the content, and this is a Tier-1 AEO signal. A verified fact about the schema JSON (the field is missing or absent), not a heuristic.',
+            fix: 'Add dateModified (and datePublished) in ISO 8601 format. Best practice: bind the field automatically to the CMS "last modified" value instead of it being manual/hardcoded, so it doesn\'t get forgotten.', element: b.el });
         } else {
           addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-            title: 'Article schema ima datePublished/dateModified', description: '', element: b.el });
+            title: 'Article schema has datePublished/dateModified', description: '', element: b.el });
         }
         var author = b.raw.author;
         var authorObj = Array.isArray(author) ? author[0] : author;
@@ -1313,30 +1318,30 @@
             fetch(authorUrl, { method: 'HEAD' }).then(function (r) {
               if (r.status === 404) {
                 addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
-                  title: 'Author link u Article schemi vodi na 404',
+                  title: 'Author link in the Article schema leads to a 404',
                   description: 'author.url: ' + authorUrl,
-                  why: 'Neispravan author link slabi E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal koji AI answer engine-i i Google koriste za procenu verodostojnosti izvora.',
-                  fix: 'Ispravi author.url da vodi na validnu autorsku stranicu/profil.', element: b.el });
+                  why: 'An invalid author link weakens the E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal that AI answer engines and Google use to assess source credibility.',
+                  fix: 'Fix author.url to point to a valid author page/profile.', element: b.el });
               } else {
                 addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-                  title: 'Author link u Article schemi je validan (ne vraća 404)', description: 'author.url: ' + authorUrl, element: b.el });
+                  title: 'Author link in the Article schema is valid (doesn\'t return 404)', description: 'author.url: ' + authorUrl, element: b.el });
               }
               renderPanel();
             }).catch(function () {});
           } catch (e) {}
         } else if (!authorObj) {
           addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
-            title: 'Article schema nema author polje',
-            description: '', why: 'Autor je jedan od E-E-A-T signala koje AI answer engine-i uzimaju u obzir pri proceni pouzdanosti sadržaja.',
-            fix: 'Dodaj author (Person ili Organization) sa name i url.', element: b.el });
+            title: 'Article schema has no author field',
+            description: '', why: 'Author is one of the E-E-A-T signals AI answer engines factor into assessing content trustworthiness.',
+            fix: 'Add an author (Person or Organization) with name and url.', element: b.el });
         } else {
           addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-            title: 'Article schema ima author polje', description: '', element: b.el });
+            title: 'Article schema has an author field', description: '', element: b.el });
         }
       });
     }
 
-    // Organization / LocalBusiness — NAP (Name-Address-Phone) konzistentnost
+    // Organization / LocalBusiness — NAP (Name-Address-Phone) consistency
     var orgSchemas = findSchemaByType(blocks, 'Organization').concat(findSchemaByType(blocks, 'LocalBusiness'));
     orgSchemas.forEach(function (b) {
       var footer = document.querySelector('footer');
@@ -1349,11 +1354,11 @@
         var footerDigits = footerText.replace(/[^\d]/g, '');
         if (footerDigits.indexOf(schemaPhone) === -1) {
           napIssueFound = true;
-          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
-            title: 'Telefon u Organization/LocalBusiness schemi se ne poklapa sa brojem u footeru',
+          addFinding({ category: 'AEO - NAP consistency', group: 'aeo', severity: 'warning',
+            title: 'Phone number in the Organization/LocalBusiness schema doesn\'t match the number in the footer',
             description: 'Schema telephone: ' + b.raw.telephone,
-            why: 'NAP (Name-Address-Phone) neusklađenost između schema markup-a i vidljivog sadržaja je signal koji AI answer engine-i i Google mogu tumačiti kao nepouzdan/neažuran izvor podataka.',
-            fix: 'Uskladi telefon u schema markup-u sa onim koji je vidljivo prikazan u footeru.', element: b.el });
+            why: 'A NAP (Name-Address-Phone) mismatch between schema markup and visible content is a signal that AI answer engines and Google may interpret as an unreliable/outdated data source.',
+            fix: 'Align the phone number in the schema markup with the one visibly shown in the footer.', element: b.el });
         }
       }
 
@@ -1365,17 +1370,17 @@
         var missingParts = addrParts.filter(function (p) { return footerText.toLowerCase().indexOf(p.toLowerCase()) === -1; });
         if (addrParts.length && missingParts.length === addrParts.length) {
           napIssueFound = true;
-          addFinding({ category: 'AEO - NAP konzistentnost', group: 'aeo', severity: 'warning',
-            title: 'Adresa iz Organization/LocalBusiness sheme se ne pojavljuje nigde u vidljivom footeru',
-            description: 'Schema adresa: ' + addrStr,
-            why: 'NAP neusklađenost (adresa navedena u schemi koje nema nigde vidljivo na stranici) slabi poverenje u strukturirane podatke.',
-            fix: 'Prikaži istu adresu vidljivo (npr. u footeru) ili ukloni je iz scheme ako više nije tačna.', element: b.el });
+          addFinding({ category: 'AEO - NAP consistency', group: 'aeo', severity: 'warning',
+            title: 'Address from the Organization/LocalBusiness schema doesn\'t appear anywhere in the visible footer',
+            description: 'Schema address: ' + addrStr,
+            why: 'A NAP mismatch (an address listed in the schema that doesn\'t appear anywhere visibly on the page) weakens trust in the structured data.',
+            fix: 'Display the same address visibly (e.g. in the footer) or remove it from the schema if it\'s no longer accurate.', element: b.el });
         }
       }
 
       if (!napIssueFound && (schemaPhone || addrStr)) {
-        addSuccess({ category: 'AEO - NAP konzistentnost', group: 'aeo',
-          title: 'NAP podaci (telefon/adresa) iz schema markup-a su konzistentni sa footerom', description: '', element: b.el });
+        addSuccess({ category: 'AEO - NAP consistency', group: 'aeo',
+          title: 'NAP data (phone/address) from the schema markup is consistent with the footer', description: '', element: b.el });
       }
     });
 
@@ -1383,31 +1388,31 @@
     var breadcrumbSchemas = findSchemaByType(blocks, 'BreadcrumbList');
     if (looksLikeBreadcrumbUI() && breadcrumbSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
-        title: 'Vidljiv breadcrumb UI postoji, ali nema BreadcrumbList schema markup',
-        description: '', why: 'BreadcrumbList schema pomaže AI answer engine-ima i Google-u da razumeju hijerarhiju/kontekst stranice unutar sajta.',
-        fix: 'Dodaj JSON-LD BreadcrumbList schema koja odgovara vidljivoj breadcrumb navigaciji.', element: null });
+        title: 'A visible breadcrumb UI exists, but there is no BreadcrumbList schema markup',
+        description: '', why: 'BreadcrumbList schema helps AI answer engines and Google understand the page\'s hierarchy/context within the site.',
+        fix: 'Add a JSON-LD BreadcrumbList schema matching the visible breadcrumb navigation.', element: null });
     } else if (breadcrumbSchemas.length) {
       addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
-        title: 'BreadcrumbList schema je prisutna', description: '', element: breadcrumbSchemas[0].el });
+        title: 'BreadcrumbList schema is present', description: '', element: breadcrumbSchemas[0].el });
     }
 
-    // JS-render zavisnost (best-effort heuristika)
+    // JS-render dependency (best-effort heuristic)
     try {
       fetch(location.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
         var tmp = document.createElement('div');
-        tmp.innerHTML = rawHtml; // ne izvršava <script> tagove kad se seče ovako
+        tmp.innerHTML = rawHtml; // doesn't execute <script> tags when sliced this way
         Array.prototype.forEach.call(tmp.querySelectorAll('script,style,noscript'), function (n) { n.remove(); });
         var rawText = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
         var renderedText = text(document.body).replace(/\s+/g, ' ').trim();
         if (renderedText.length > 300 && rawText.length < renderedText.length * 0.3) {
-          addFinding({ category: 'AEO - JS rendering zavisnost', group: 'aeo', severity: 'warning',
-            title: 'Veći deo sadržaja se pojavljuje tek posle izvršavanja JavaScript-a (sirov HTML: ~' + rawText.length + ' kar., renderovano: ~' + renderedText.length + ' kar.)',
+          addFinding({ category: 'AEO - JS rendering dependency', group: 'aeo', severity: 'warning',
+            title: 'Most of the content only appears after JavaScript executes (raw HTML: ~' + rawText.length + ' chars, rendered: ~' + renderedText.length + ' chars)',
             description: '',
-            why: 'Napomena: ovo je heuristika i može davati lažne rezultate (npr. cookie banner blokira fetch). Neki AI crawleri i jednostavniji botovi ne izvršavaju JavaScript pouzdano — ako je ključni sadržaj vidljiv tek posle JS renderovanja, rizikuje se da ti botovi "vide" praznu ili skoro praznu stranicu. Webflow stranice su obično server-renderovane pa je ovo retko, ali custom kod/embed-ovi mogu naknadno ubacivati sadržaj.',
-            fix: 'Proveri "View Page Source" (Ctrl/Cmd+U) i uporedi sa onim što se vidi na ekranu — ako ključni tekst nedostaje u sirovom HTML-u, razmotri da taj sadržaj bude deo početnog HTML odgovora servera.', element: null });
+            why: 'Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Some AI crawlers and simpler bots don\'t execute JavaScript reliably — if key content is only visible after JS rendering, there\'s a risk those bots "see" an empty or nearly empty page. Webflow pages are usually server-rendered so this is rare, but custom code/embeds can inject content afterward.',
+            fix: 'Check "View Page Source" (Ctrl/Cmd+U) and compare it with what\'s visible on screen — if key text is missing from the raw HTML, consider making that content part of the server\'s initial HTML response.', element: null });
           renderPanel();
         }
-      }).catch(function () { /* CORS ili mrežna greška — preskoči */ });
+      }).catch(function () { /* CORS or network error — skip */ });
     } catch (e) {}
   }
 
@@ -1417,12 +1422,12 @@
 
   var panelHost, shadow, highlightBox;
 
-  // Ikonica alata (10.08.2026, deo vizuelnog redizajna): reticle/highlight-box uglovi (direktna
-  // referenca na sopstveni highlight box koji alat crta oko problema na strani) + checkmark
-  // ("prošlo proveru") + signal/broadcast akcenat (stranica emituje signal koji čitaju i
-  // pretraživači I AI answer engine-i — SEO+AEO u jednoj slici, bez klišeiziranog "AI sparkle").
-  // Namerno originalna kombinacija, ne generički magnifying-glass/shield/bug ikonica koje se
-  // koriste u većini SEO/audit alata.
+  // Tool icon (10.08.2026, part of the visual redesign): reticle/highlight-box corners (a direct
+  // reference to the tool's own highlight box drawn around issues on the page) + a checkmark
+  // ("check passed") + a signal/broadcast accent (the page emits a signal read by both search
+  // engines AND AI answer engines — SEO+AEO in one image, without a clichéd "AI sparkle").
+  // Deliberately an original combination, not the generic magnifying-glass/shield/bug icons used
+  // by most SEO/audit tools.
   var HEADER_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
     '<path d="M20 34 V20 H34" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
     '<path d="M66 20 H80 V34" fill="none" stroke="#818cf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
@@ -1434,25 +1439,25 @@
     '</svg>';
   var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
-  var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' | 'shared' — filter UNUTAR Success taba
-                               // ('seo'/'aeo' = isključivo tog domena, bez crossRelevant; 'shared' =
-                               // "SEO + AEO", samo crossRelevant stavke — vidi 10.08.2026 SPEC unos)
-  var activeCategory = 'all'; // naziv kategorije (npr. 'Slike', 'Linkovi'...) ili 'all' — dodatni
-                               // filter UNUTAR trenutnog severity filtera (error/warning/info/Sve)
-  var activeCategoryOrigin = 'all'; // 'all' | 'shared' | 'solo' — sub-filter UNUTAR izabrane kategorije,
-                               // relevantan samo kad ta kategorija sadrži i stavke sa crossRelevant:true
-                               // ("AEO + SEO stavke", dele se sa "↔" napomenom u oba taba) i stavke bez
-                               // te zastavice ("Samo SEO/AEO stavke", relevantne isključivo za tab u kom
-                               // se trenutno gledaju) — npr. "Meta i head tagovi" u SEO tabu meša title/
-                               // OG/Twitter (solo) sa canonical/noindex/nosnippet (shared). Vidi
-                               // 10.08.2026 SPEC unos.
+  var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' | 'shared' — filter WITHIN the Success tab
+                               // ('seo'/'aeo' = exclusively that domain, without crossRelevant; 'shared' =
+                               // "SEO + AEO", crossRelevant items only — see the 10.08.2026 SPEC entry)
+  var activeCategory = 'all'; // category name (e.g. 'Images', 'Links'...) or 'all' — an additional
+                               // filter WITHIN the current severity filter (error/warning/info/All)
+  var activeCategoryOrigin = 'all'; // 'all' | 'shared' | 'solo' — sub-filter WITHIN the selected category,
+                               // only relevant when that category contains both crossRelevant:true items
+                               // ("AEO + SEO items", shared with a "↔" note in both tabs) and items without
+                               // that flag ("SEO/AEO only items", relevant exclusively to the tab currently
+                               // being viewed) — e.g. "Meta & head tags" in the SEO tab mixes title/OG/
+                               // Twitter (solo) with canonical/noindex/nosnippet (shared). See the
+                               // 10.08.2026 SPEC entry.
 
-  // Drag (pomeranje) i resize (visina) stanje za panel — pamti se na modul nivou jer
-  // renderPanel() u potpunosti ponovo kreira .panel div pri svakom pozivu (npr. na svaki novi
-  // async nalaz, promenu taba ili filtera) — bez ovog pamćenja panel bi "skakao" nazad na
-  // podrazumevanu poziciju/visinu pri svakom re-renderu.
-  var panelPosition = null; // { top, left } u px, popunjava se čim korisnik prevuče panel
-  var panelHeight = null; // px, popunjava se čim korisnik promeni visinu preko resize ručke
+  // Drag (moving) and resize (height) state for the panel — kept at the module level because
+  // renderPanel() fully recreates the .panel div on every call (e.g. on every new async finding,
+  // tab change, or filter change) — without this state the panel would "snap" back to its
+  // default position/height on every re-render.
+  var panelPosition = null; // { top, left } in px, populated as soon as the user drags the panel
+  var panelHeight = null; // px, populated as soon as the user changes the height via the resize handle
   var isDragging = false, dragStartX = 0, dragStartY = 0, dragStartTop = 0, dragStartLeft = 0;
   var isResizing = false, resizeStartY = 0, resizeStartHeight = 0;
   var MIN_PANEL_HEIGHT = 160;
@@ -1497,22 +1502,22 @@
     var style = document.createElement('style');
     style.textContent = [
       ':host{all:initial;}',
-      // box-sizing:border-box na SVE elemente unutar panela — bez ovoga padding/border na
-      // .item ili .desc mogu gurnuti sadržaj šire od deklarisane širine panela i izazvati
-      // horizontalni scroll čak i kad je word-break ispravno podešen.
+      // box-sizing:border-box on ALL elements inside the panel — without this, padding/border on
+      // .item or .desc can push content wider than the panel's declared width and cause a
+      // horizontal scroll even when word-break is set up correctly.
       '.panel *{box-sizing:border-box;}',
-      // --- Vizuelni redizajn (10.08.2026) — korisnik je tražio "moderniji" izgled, dosadašnji
-      // je delovao "old school"/neozbiljno. Glavni krivci su bili: pljosnate jednobojne pozadine,
-      // pune zasićene boje na severity badge-ovima (klasičan "Windows alert box" izgled), oštra
-      // 2px linija za aktivan tab, generički system font, i podrazumevani (nestilizovani)
-      // scrollbar/select. Ispravke ispod, redom.
+      // --- Visual redesign (10.08.2026) — the user asked for a "more modern" look, the previous
+      // one felt "old school"/unpolished. The main culprits were: flat single-color backgrounds,
+      // fully saturated colors on severity badges (a classic "Windows alert box" look), a sharp
+      // 2px line for the active tab, a generic system font, and default (unstyled)
+      // scrollbar/select. Fixes below, in order.
       //
-      // 1) Font: Inter (ako je dostupan na sistemu ili preko fallback lanca) umesto generičkog
-      // system-ui stacka, plus font-smoothing za čistiji render teksta na svim OS-ima.
-      // 2) Panel pozadina: blaga vertikalna gradijent (umesto pljosnatog #111827) + suptilan
-      // 1px "inset" obrub + mekša, dublja senka — daje "floating card" osećaj.
-      // 3) Gornja akcentna traka (gradijent indigo→amber, isti akcent kao nova SVG ikonica) —
-      // sitan detalj koji odmah signalizira da je ovo dizajnirani proizvod, ne brzi prototip.
+      // 1) Font: Inter (if available on the system, or via the fallback chain) instead of the
+      // generic system-ui stack, plus font-smoothing for cleaner text rendering across all OSes.
+      // 2) Panel background: a subtle vertical gradient (instead of the flat #111827) + a subtle
+      // 1px "inset" border + a softer, deeper shadow — gives a "floating card" feel.
+      // 3) Top accent bar (indigo→amber gradient, the same accent as the new SVG icon) —
+      // a small detail that immediately signals this is a designed product, not a quick prototype.
       '.panel{position:fixed;top:12px;right:12px;width:380px;max-width:calc(100vw - 24px);max-height:90vh;min-height:' + MIN_PANEL_HEIGHT + 'px;display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;font-size:13px;border-radius:16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow-x:hidden;overflow-y:hidden;}',
       '.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 16px 0 0;}',
       '.hdr{position:relative;flex:0 0 auto;padding:13px 10px 13px 14px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;}',
@@ -1528,16 +1533,17 @@
       '.tabbtn.active::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:#6366f1;}',
       '.tabbtn.success-tab.active::after{background:#22c55e;}',
       '.summary{flex:0 0 auto;padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid rgba(255,255,255,.06);}',
-      // Dropdown red za filtriranje po kategoriji (Slike, Linkovi...) — ide ISPOD severity
-      // summary reda, iznad liste. Native <select> stilizovan da odgovara tamnoj temi panela,
-      // sa custom strelicom (SVG data-uri) umesto podrazumevane (koja izgleda zastarelo).
+      // Dropdown row for filtering by category (Images, Links...) — sits BELOW the severity
+      // summary row, above the list. A native <select> styled to match the panel's dark theme,
+      // with a custom arrow (SVG data-uri) instead of the default one (which looks dated).
       '.catrow{flex:0 0 auto;padding:0 14px 10px;border-bottom:1px solid rgba(255,255,255,.06);}',
       '.cat-select{appearance:none;-webkit-appearance:none;width:100%;background:rgba(255,255,255,.05) url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6"><path d="M1 1L5 5L9 1" stroke="%239ca3af" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>\') no-repeat right 10px center;color:#e5e7eb;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 28px 7px 10px;font-size:12px;font-family:inherit;cursor:pointer;transition:border-color .15s ease,background-color .15s ease;}',
       '.cat-select:hover{border-color:rgba(255,255,255,.22);background-color:rgba(255,255,255,.08);}',
-      // 4) Badge-ovi: prelaz sa punih zasićenih pozadina (klasičan "alert box" izgled) na
-      // suptilne, providne "tinted pill" boje sa tankim obrubom i malom tačkom iste boje ispred
-      // teksta (dodaje se preko ::before, bez izmene JS/DOM strukture) — ovo je najveća pojedinačna
-      // izmena koja "smanjuje" old-school utisak, jer su pune zasićene pozadine bile glavni krivac.
+      // 4) Badges: moving from fully saturated backgrounds (a classic "alert box" look) to
+      // subtle, translucent "tinted pill" colors with a thin border and a small dot of the same
+      // color before the text (added via ::before, without changing the JS/DOM structure) — this
+      // is the single biggest change that "reduces" the old-school feel, since the fully
+      // saturated backgrounds were the main culprit.
       '.badge{border-radius:20px;padding:3px 10px;font-weight:600;font-size:11.5px;cursor:pointer;user-select:none;border:1px solid transparent;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;transition:border-color .15s ease,background-color .15s ease,transform .1s ease;}',
       '.badge:hover{transform:translateY(-1px);}',
       '.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}',
@@ -1549,14 +1555,15 @@
       '.badge.warning{background:rgba(245,158,11,.12);color:#fcd34d;border-color:rgba(245,158,11,.3);}',
       '.badge.info{background:rgba(59,130,246,.12);color:#93c5fd;border-color:rgba(59,130,246,.3);}',
       '.badge.success{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.3);}',
-      // Grupni filter/tagovi UNUTAR Success taba (SEO/AEO klasifikacija uspešnih provera) —
-      // namerno drugačije boje od .badge.info (plava) i AEO taba da se vizuelno razlikuju kao
-      // "grupa" a ne "ozbiljnost". "Sve" koristi istu zelenu kao generički success badge.
+      // Group filter/tags WITHIN the Success tab (SEO/AEO classification of successful checks) —
+      // deliberately different colors from .badge.info (blue) and the AEO tab, so they're
+      // visually distinguishable as a "group" rather than a "severity". "All" uses the same
+      // green as the generic success badge.
       '.badge.group-all{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.3);}',
       '.badge.group-seo{background:rgba(99,102,241,.12);color:#a5b4fc;border-color:rgba(99,102,241,.3);}',
       '.badge.group-aeo{background:rgba(168,85,247,.12);color:#d8b4fe;border-color:rgba(168,85,247,.3);}',
-      // "shared" (SEO + AEO) koristi amber — ista boja kao "signal" akcenat u logotipu alata, koji
-      // upravo predstavlja da stranica "emituje" signal ka oba tipa pretraživača (10.08.2026).
+      // "shared" (SEO + AEO) uses amber — the same color as the "signal" accent in the tool's
+      // logo, which represents the page "broadcasting" a signal to both types of engines (10.08.2026).
       '.badge.group-shared{background:rgba(245,158,11,.12);color:#fbbf24;border-color:rgba(245,158,11,.3);}',
       '.badge.active{border-color:#6366f1;box-shadow:0 0 0 1px rgba(99,102,241,.35);}',
       '.badge.group-all.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
@@ -1564,12 +1571,13 @@
       '.badge.group-aeo.active{border-color:#a855f7;box-shadow:0 0 0 1px rgba(168,85,247,.35);}',
       '.badge.group-shared.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.35);}',
       '.badge.success.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
-      // .list je jedini skrolujući deo panela — flex:1 popunjava sav preostali prostor između
-      // fiksnih delova (header/tabovi/summary) i resize ručke na dnu. overflow-x:hidden +
-      // overflow-y:auto — dozvoljava vertikalni scroll, ali NIKAD horizontalni.
+      // .list is the only scrolling part of the panel — flex:1 fills all remaining space between
+      // the fixed parts (header/tabs/summary) and the resize handle at the bottom.
+      // overflow-x:hidden + overflow-y:auto — allows vertical scroll, but NEVER horizontal.
       '.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;}',
-      // 5) Custom (tanak, zaobljen) scrollbar umesto podrazumevanog — podrazumevani debeli sivi
-      // scrollbar je jedan od najupadljivijih "ovo je neko brzo sklopio" signala u tamnim panelima.
+      // 5) A custom (thin, rounded) scrollbar instead of the default one — the default thick gray
+      // scrollbar is one of the most obvious "someone threw this together quickly" signals in
+      // dark panels.
       '.list::-webkit-scrollbar{width:8px;}',
       '.list::-webkit-scrollbar-track{background:transparent;}',
       '.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;}',
@@ -1578,25 +1586,26 @@
       '.item:hover{background:rgba(255,255,255,.035);}',
       '.item.success-item{cursor:default;}',
       '.item.success-item:hover{background:transparent;}',
-      // word-break/overflow-wrap na SVE tekstualne delove stavke — ovo je ono što realno
-      // sprečava horizontalni scroll kad tekst sadrži dugačke URL-ove, kod bez razmaka
-      // (npr. <script src="...">) ili duge reči bez prirodnog mesta za prelom. white-space
-      // ostaje pre-wrap na .desc (čuva namerne nove redove iz koda), ali overflow-wrap:anywhere
-      // i dalje sme da prelomi PREDUGAČKU pojedinačnu "reč" (npr. URL) usred nje ako mora.
+      // word-break/overflow-wrap on ALL text parts of an item — this is what actually prevents
+      // horizontal scroll when the text contains long URLs, code with no spaces
+      // (e.g. <script src="...">) or long words with no natural break point. white-space
+      // stays pre-wrap on .desc (preserves intentional newlines from the code), but
+      // overflow-wrap:anywhere can still break an overly long single "word" (e.g. a URL) mid-way
+      // if it has to.
       '.item .cat, .item .title, .item .desc{overflow-wrap:anywhere;word-break:break-word;}',
       '.item .cat{color:#8b93a7;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}',
       '.item .title{font-weight:600;margin:4px 0;line-height:1.4;}',
-      // NAMERNO bez max-height/overflow:hidden ovde — ranija verzija je sekla duži tekst
-      // (npr. "Trenutno/Predloženo" kod skript primera, ili duže "why" objašnjenje) na 60px
-      // bez ikakvog načina da se pročita ostatak. Tekst se sad uvek prikazuje u punoj visini;
-      // spoljni .list kontejner se brine o skrolovanju cele liste.
+      // DELIBERATELY no max-height/overflow:hidden here — an earlier version truncated longer
+      // text (e.g. the "Current/Suggested" script example, or a longer "why" explanation) at
+      // 60px with no way to read the rest. Text is now always shown at full height; the outer
+      // .list container handles scrolling for the whole list.
       '.item .desc{color:#c3c9d6;white-space:pre-wrap;font-size:12px;line-height:1.5;margin-top:4px;}',
       '.item .global{margin-top:6px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.item .cross{margin-top:6px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.empty{padding:32px 20px;color:#8b93a7;font-size:13px;text-align:center;line-height:1.5;}',
       '.tag{display:inline-block;margin-right:4px;}',
-      // 6) Resize ručka: fina zaobljena "grip" pilula (::after) umesto teksta "•••", isto
-      // interakciono ponašanje (prevlačenje menja visinu), samo suptilniji vizuelni jezik.
+      // 6) Resize handle: a fine, rounded "grip" pill (::after) instead of the text "•••", the
+      // same interaction behavior (dragging changes the height), just a more subtle visual language.
       '.resize-handle{flex:0 0 auto;height:16px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:transparent;border-top:1px solid rgba(255,255,255,.05);user-select:none;}',
       '.resize-handle::after{content:"";width:32px;height:4px;border-radius:4px;background:rgba(255,255,255,.14);transition:background-color .15s ease;}',
       '.resize-handle:hover::after{background:rgba(255,255,255,.28);}'
@@ -1623,24 +1632,24 @@
     }, 350);
   }
 
-  // Bira tekst "↔" napomene za crossRelevant nalaz/uspeh u zavisnosti od toga u kom kontekstu
-  // (tabu/grupi) se trenutno prikazuje. contextGroup je 'seo' | 'aeo' | 'all' | 'shared'
-  // ('all'/'shared' za Success tab — 'all' kad je selektovano "Sve" i 'shared' kad je
-  // selektovan dedikovani "SEO + AEO" filter; u oba slučaja nema "gost" konteksta, uvek se
-  // prikazuje matična napomena, isto kao ranije). Oba teksta (crossNote i crossNoteReverse)
-  // UVEK počinju sa "Relevantno i za SEO i za AEO" (dogovoreno 10.08.2026 — eksplicitno navesti
-  // oba, ne implicitno pretpostaviti da je tab u kom se gleda već "ta druga strana") — razlika
-  // je samo u KONKRETNOM obrazloženju posle crte: crossNote objašnjava iz SEO-ugla (prikazuje se
-  // kad je item u svojoj matičnoj SEO grupi, ili u dedikovanom "SEO + AEO" pogledu),
-  // crossNoteReverse iz AEO-ugla (prikazuje se kao "gost" u AEO tabu/filteru).
+  // Picks the "↔" note text for a crossRelevant finding/success depending on the context
+  // (tab/group) it's currently being shown in. contextGroup is 'seo' | 'aeo' | 'all' | 'shared'
+  // ('all'/'shared' for the Success tab — 'all' when "All" is selected and 'shared' when the
+  // dedicated "SEO + AEO" filter is selected; in both cases there's no "guest" context, the
+  // native note is always shown, same as before). Both texts (crossNote and crossNoteReverse)
+  // ALWAYS start with "Relevant to both SEO and AEO" (agreed 10.08.2026 — explicitly state both,
+  // rather than implicitly assuming the tab being viewed is already "the other side") — the
+  // difference is only in the SPECIFIC explanation after the dash: crossNote explains from the
+  // SEO angle (shown when the item is in its native SEO group, or in the dedicated "SEO + AEO"
+  // view), crossNoteReverse from the AEO angle (shown as a "guest" in the AEO tab/filter).
   function getCrossText(item, contextGroup) {
     if (!item.crossRelevant) return '';
-    if (contextGroup === 'shared') return item.crossNote || item.crossNoteReverse || 'Relevantno i za SEO i za AEO.';
+    if (contextGroup === 'shared') return item.crossNote || item.crossNoteReverse || 'Relevant to both SEO and AEO.';
     var native = item.group === 'aeo' ? 'aeo' : 'seo';
     if (contextGroup && contextGroup !== 'all' && contextGroup !== native) {
-      return item.crossNoteReverse || item.crossNote || 'Relevantno i za SEO i za AEO.';
+      return item.crossNoteReverse || item.crossNote || 'Relevant to both SEO and AEO.';
     }
-    return item.crossNote || 'Relevantno i za SEO i za AEO.';
+    return item.crossNote || 'Relevant to both SEO and AEO.';
   }
 
   function renderPanel() {
@@ -1648,10 +1657,11 @@
     var old = shadow.querySelector('.panel');
     if (old) old.remove();
 
-    // crossRelevant nalazi/uspesi (native SEO, ali sa dokumentovanim AEO uticajem) se sada
-    // prikazuju U OBA taba — jednom sa napomenom "↔ Relevantno i za AEO" (u SEO tabu, njihovom
-    // matičnom domu) i jednom sa obrnutom napomenom "↔ Relevantno i za SEO" (u AEO tabu, gde se
-    // pojavljuju kao "gost"). Vidi getCrossText() ispod za logiku biranja teksta po kontekstu.
+    // crossRelevant findings/successes (native SEO, but with documented AEO impact) are now
+    // shown in BOTH tabs — once with the note "↔ Also relevant to AEO" (in the SEO tab, their
+    // native home) and once with the reverse note "↔ Also relevant to SEO" (in the AEO tab,
+    // where they appear as a "guest"). See getCrossText() below for the logic that picks the
+    // text per context.
     var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
     var aeoFindings = findings.filter(function (f) { return f.group === 'aeo' || f.crossRelevant; });
     if (activeTab !== 'seo' && activeTab !== 'aeo' && activeTab !== 'success') activeTab = 'seo';
@@ -1681,7 +1691,7 @@
     closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__SeoAuditorRunning = false; };
     hdr.appendChild(closeBtn);
     hdr.addEventListener('mousedown', function (e) {
-      if (e.target === closeBtn) return; // ne pokreći drag kad se klikne na X dugme
+      if (e.target === closeBtn) return; // don't start dragging when the X button is clicked
       isDragging = true;
       var rect = panel.getBoundingClientRect();
       dragStartX = e.clientX;
@@ -1706,7 +1716,7 @@
     var successTab = document.createElement('button');
     successTab.className = 'tabbtn success-tab' + (activeTab === 'success' ? ' active' : '');
     successTab.style.color = activeTab === 'success' ? '#4ade80' : '#166534';
-    successTab.textContent = '✓ Uspešno (' + successes.length + ')';
+    successTab.textContent = '✓ Success (' + successes.length + ')';
     successTab.onclick = function () { activeTab = 'success'; renderPanel(); };
     tabs.appendChild(seoTab);
     tabs.appendChild(aeoTab);
@@ -1719,13 +1729,14 @@
     var sorted;
 
     if (activeTab === 'success') {
-      // Success tab nema severity filter (uspeh nema stepen ozbiljnosti), ALI ima svoj filter
-      // po SEO/AEO grupi. Podela je po `crossRelevant` zastavici (isti kriterijum kao kategorija
-      // dropdown u SEO/AEO tabovima — vidi 10.08.2026 SPEC unos) — NE po "native group", jer bi
-      // to mešalo deljene (canonical, noindex, CWV, mixed content...) sa čisto-domenskim
-      // stavkama: "SEO" = isključivo SEO stavke (bez crossRelevant), "AEO" = isključivo AEO
-      // stavke (bez crossRelevant), "SEO + AEO" = deljene stavke (crossRelevant:true,
-      // bez obzira na native group — trenutno su sve native SEO, ali kriterijum je generičan).
+      // The Success tab has no severity filter (success has no severity level), BUT it has its
+      // own filter by SEO/AEO group. The split is based on the `crossRelevant` flag (the same
+      // criterion as the category dropdown in the SEO/AEO tabs — see the 10.08.2026 SPEC entry)
+      // — NOT by "native group", since that would mix shared items (canonical, noindex, CWV,
+      // mixed content...) with purely domain-specific ones: "SEO" = exclusively SEO items
+      // (without crossRelevant), "AEO" = exclusively AEO items (without crossRelevant),
+      // "SEO + AEO" = shared items (crossRelevant:true, regardless of native group — currently
+      // all of them are native SEO, but the criterion is generic).
       var soloSeoSuccesses = successes.filter(function (s) { return s.group !== 'aeo' && !s.crossRelevant; });
       var soloAeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' && !s.crossRelevant; });
       var sharedSuccesses = successes.filter(function (s) { return !!s.crossRelevant; });
@@ -1740,7 +1751,7 @@
         span.onclick = function () { activeSuccessGroup = grp; renderPanel(); };
         return span;
       }
-      summary.appendChild(makeSuccessGroupBadge('all', 'Sve', successes.length));
+      summary.appendChild(makeSuccessGroupBadge('all', 'All', successes.length));
       summary.appendChild(makeSuccessGroupBadge('seo', 'SEO', soloSeoSuccesses.length));
       summary.appendChild(makeSuccessGroupBadge('aeo', 'AEO', soloAeoSuccesses.length));
       summary.appendChild(makeSuccessGroupBadge('shared', 'SEO + AEO', sharedSuccesses.length));
@@ -1760,7 +1771,7 @@
         span.onclick = function () { activeSeverity = sev; renderPanel(); };
         return span;
       }
-      summary.appendChild(makeSeverityBadge('all', 'Sve', current.length));
+      summary.appendChild(makeSeverityBadge('all', 'All', current.length));
       summary.appendChild(makeSeverityBadge('error', 'error', counts.error));
       summary.appendChild(makeSeverityBadge('warning', 'warning', counts.warning));
       summary.appendChild(makeSeverityBadge('info', 'info', counts.info));
@@ -1768,22 +1779,23 @@
 
       var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
 
-      // Dropdown za dodatno filtriranje PO KATEGORIJI (Slike, Linkovi, Meta i head tagovi...)
-      // UNUTAR već izabranog severity filtera — npr. "warning" + "Slike" prikazuje samo
-      // warning nalaze o slikama. Lista kategorija u dropdown-u se računa iz `filtered` (posle
-      // severity filtera), pa se menja u zavisnosti od toga koji je severity trenutno izabran.
+      // Dropdown for additional filtering BY CATEGORY (Images, Links, Meta & head tags...)
+      // WITHIN the already-selected severity filter — e.g. "warning" + "Images" shows only
+      // warning findings about images. The list of categories in the dropdown is computed from
+      // `filtered` (after the severity filter), so it changes depending on which severity is
+      // currently selected.
       //
-      // Neke kategorije sadrže MEŠAVINU: stavke koje su relevantne SAMO za trenutni tab
-      // (`crossRelevant` nije postavljen) i stavke koje su relevantne i za SEO i za AEO
-      // (`crossRelevant: true` — iste one koje nose "↔" napomenu). Npr. "Meta i head tagovi" u
-      // SEO tabu ima i čisto-SEO stavke (title dužina, OG tagovi, Twitter Card...) i deljene
-      // stavke (canonical, noindex, nosnippet). Za takve mešovite kategorije, dropdown dobija
-      // <optgroup> sa 3 pod-opcije: "Sve (SEO+AEO)", "AEO + SEO stavke" (deljene) i "Samo
-      // SEO/AEO stavke" (samo ovaj tab) — kriterijum podele je `crossRelevant` zastavica, NE
-      // "native tab vs gost tab" (ta podela bi retko bila mešovita, jer gostujuće kategorije već
-      // po imenu skoro nikad ne dele naziv sa native AEO kategorijama, koje su uvek prefiksovane
-      // sa "AEO - "). Za kategorije koje NISU mešovite (sve stavke su ili sve deljene ili sve
-      // isključivo ovog taba), ostaje jedna flat opcija kao i pre.
+      // Some categories contain a MIX: items that are relevant ONLY to the current tab
+      // (`crossRelevant` not set) and items that are relevant to both SEO and AEO
+      // (`crossRelevant: true` — the same ones that carry the "↔" note). E.g. "Meta & head
+      // tags" in the SEO tab has both pure-SEO items (title length, OG tags, Twitter Card...)
+      // and shared items (canonical, noindex, nosnippet). For such mixed categories, the
+      // dropdown gets an <optgroup> with 3 sub-options: "All", "AEO + SEO items" (shared) and
+      // "SEO/AEO only items" (this tab only) — the split criterion is the `crossRelevant` flag,
+      // NOT "native tab vs guest tab" (that split would rarely be mixed, since guest categories
+      // almost never share a name with native AEO categories by name anyway, which are always
+      // prefixed with "AEO - "). For categories that are NOT mixed (all items are either all
+      // shared or all exclusive to this tab), a single flat option remains, as before.
       var categoryCounts = {};
       var categorySharedCounts = {};
       filtered.forEach(function (f) {
@@ -1795,9 +1807,9 @@
       if (activeCategory === 'all') {
         activeCategoryOrigin = 'all';
       } else if (activeCategoryOrigin !== 'all') {
-        // "shared"/"solo" pod-filter je smislen samo ako kategorija uopšte ima bar jednu deljenu
-        // (crossRelevant) stavku — ako je severity filter promenjen tako da ih više uopšte nema,
-        // vrati na "Sve" (usklađeno sa uslovom za <optgroup> ispod).
+        // The "shared"/"solo" sub-filter only makes sense if the category has at least one
+        // shared (crossRelevant) item at all — if the severity filter changed such that there
+        // are none left, revert to "All" (consistent with the condition for the <optgroup> below).
         var sharedC = categorySharedCounts[activeCategory] || 0;
         if (!(sharedC > 0)) activeCategoryOrigin = 'all';
       }
@@ -1809,7 +1821,7 @@
         select.className = 'cat-select';
         var allOpt = document.createElement('option');
         allOpt.value = 'all::all';
-        allOpt.textContent = 'Sve kategorije (' + filtered.length + ')';
+        allOpt.textContent = 'All categories (' + filtered.length + ')';
         select.appendChild(allOpt);
         var soloLabel = activeTab === 'aeo' ? 'AEO' : 'SEO';
         categoryNames.forEach(function (cat) {
@@ -1817,24 +1829,24 @@
           var sharedCount = categorySharedCounts[cat] || 0;
           var soloCount = total - sharedCount;
           if (sharedCount > 0) {
-            // Kategorija sadrži bar jednu deljenu (crossRelevant) stavku — <optgroup> sa 3
-            // pod-opcije, DOSLEDNO čak i kad je kategorija 100% deljena (soloCount === 0, npr.
-            // "Tehnički / crawlability" u AEO tabu) — u tom slučaju "Samo AEO/SEO stavke"
-            // pod-opcija jednostavno pokazuje (0), umesto da se kategorija tretira drugačije u
-            // zavisnosti od taba (dogovoreno 10.08.2026, videti SPEC).
+            // The category contains at least one shared (crossRelevant) item — an <optgroup>
+            // with 3 sub-options, CONSISTENTLY even when the category is 100% shared
+            // (soloCount === 0, e.g. "Technical / crawlability" in the AEO tab) — in that case
+            // the "SEO/AEO only items" sub-option simply shows (0), rather than treating the
+            // category differently depending on the tab (agreed 10.08.2026, see SPEC).
             var group = document.createElement('optgroup');
             group.label = cat;
             var optAll = document.createElement('option');
             optAll.value = cat + '::all';
-            optAll.textContent = 'Sve (SEO+AEO) (' + total + ')';
+            optAll.textContent = 'All (' + total + ')';
             group.appendChild(optAll);
             var optShared = document.createElement('option');
             optShared.value = cat + '::shared';
-            optShared.textContent = 'AEO + SEO stavke (' + sharedCount + ')';
+            optShared.textContent = 'AEO + SEO items (' + sharedCount + ')';
             group.appendChild(optShared);
             var optSolo = document.createElement('option');
             optSolo.value = cat + '::solo';
-            optSolo.textContent = 'Samo ' + soloLabel + ' stavke (' + soloCount + ')';
+            optSolo.textContent = soloLabel + ' only items (' + soloCount + ')';
             group.appendChild(optSolo);
             select.appendChild(group);
           } else {
@@ -1864,8 +1876,8 @@
       sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
     }
 
-    // .list je jedini skrolujući deo — sprečava da hdr/tabs/summary "skaču" i zamenjuje raniji
-    // pristup sa position:sticky offsetima koje je trebalo ručno pogađati.
+    // .list is the only scrolling part — prevents the hdr/tabs/summary from "jumping" and
+    // replaces the earlier approach with position:sticky offsets that had to be guessed manually.
     var list = document.createElement('div');
     list.className = 'list';
 
@@ -1874,22 +1886,22 @@
       empty.className = 'empty';
       if (activeTab === 'success') {
         empty.textContent = successes.length
-          ? 'Nema uspešnih provera za izabranu grupu ("' + activeSuccessGroup + '") u ovom tabu.'
-          : 'Još nema evidentiranih uspešnih provera (ili se stranica još analizira).';
+          ? 'No successful checks for the selected group ("' + activeSuccessGroup + '") in this tab.'
+          : 'No successful checks recorded yet (or the page is still being analyzed).';
       } else if (!current.length) {
-        empty.textContent = activeTab === 'aeo' ? 'Nema AEO nalaza na ovoj stranici. 🎉' : 'Nema SEO nalaza na ovoj stranici. 🎉';
+        empty.textContent = activeTab === 'aeo' ? 'No AEO findings on this page. 🎉' : 'No SEO findings on this page. 🎉';
       } else if (activeCategory !== 'all') {
-        empty.textContent = 'Nema nalaza za filter severity="' + activeSeverity + '" + kategorija="' + activeCategory + '".';
+        empty.textContent = 'No findings for filter severity="' + activeSeverity + '" + category="' + activeCategory + '".';
       } else {
-        empty.textContent = 'Nema nalaza za izabrani filter ("' + activeSeverity + '") u ovom tabu.';
+        empty.textContent = 'No findings for the selected filter ("' + activeSeverity + '") in this tab.';
       }
       list.appendChild(empty);
     }
 
     if (activeTab === 'success') {
       sorted.forEach(function (s) {
-        // Bedž prati TRENUTNI izabrani filter (SEO/AEO/SEO+AEO), a u "Sve" pogledu prati
-        // NATIVNU grupu stavke — vidi getCrossText() za logiku "↔" napomene.
+        // The badge follows the CURRENTLY selected filter (SEO/AEO/SEO+AEO), while in the "All"
+        // view it follows the item's NATIVE group — see getCrossText() for the "↔" note logic.
         var native = s.group === 'aeo' ? 'aeo' : 'seo';
         var grp = activeSuccessGroup !== 'all' ? activeSuccessGroup : native;
         var grpLabel = grp === 'shared' ? 'SEO+AEO' : grp.toUpperCase();
@@ -1916,8 +1928,8 @@
           '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
           (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
           (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
-          (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Zašto:</b> ' + f.why + '</div>' : '') +
-          (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Rešenje:</b> ' + f.fix + '</div>' : '');
+          (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Why:</b> ' + f.why + '</div>' : '') +
+          (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Fix:</b> ' + f.fix + '</div>' : '');
         item.onclick = function () { highlightElement(f.element); };
         list.appendChild(item);
       });
@@ -1927,9 +1939,9 @@
 
     var resizeHandle = document.createElement('div');
     resizeHandle.className = 'resize-handle';
-    // Vizuelna "grip" pilula se sad crta preko CSS-a (.resize-handle::after), ne teksta —
-    // deo redizajna (10.08.2026), textContent namerno prazan.
-    resizeHandle.title = 'Prevuci da promeniš visinu panela';
+    // The visual "grip" pill is now drawn via CSS (.resize-handle::after), not text — part of
+    // the redesign (10.08.2026), textContent deliberately left empty.
+    resizeHandle.title = 'Drag to resize panel height';
     resizeHandle.addEventListener('mousedown', function (e) {
       isResizing = true;
       var rect = panel.getBoundingClientRect();
