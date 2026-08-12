@@ -1462,6 +1462,170 @@
   var isResizing = false, resizeStartY = 0, resizeStartHeight = 0;
   var MIN_PANEL_HEIGHT = 160;
 
+  // Keyboard navigation (11.08.2026) — Up/Down cycles through the currently visible list of
+  // items (whatever tab/filter is active), Esc closes the panel. `lastRenderedRows` is rebuilt
+  // on every renderPanel() call to mirror exactly what's on screen (respecting the active tab/
+  // severity/category filter), so arrow keys always match what the user actually sees.
+  var lastRenderedRows = []; // [{ item: <finding or success object>, el: <.item DOM element> }, ...]
+  var selectedIndex = -1;
+
+  // Score badge (11.08.2026) — a quick "how bad is this page" number in the header, computed
+  // from error/warning/info counts across the WHOLE page (both tabs combined, using the raw
+  // `findings` array so a crossRelevant item — which appears in both tabs — is only counted
+  // once). This is a simple weighted heuristic for orientation, NOT an official/standardized
+  // score (documented as such via the badge's title/tooltip).
+  function computeScore() {
+    var score = 100;
+    findings.forEach(function (f) {
+      if (f.severity === 'error') score -= 8;
+      else if (f.severity === 'warning') score -= 3;
+      else score -= 1; // info
+    });
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+  function scoreGrade(score) {
+    if (score >= 90) return 'A';
+    if (score >= 80) return 'B';
+    if (score >= 70) return 'C';
+    if (score >= 60) return 'D';
+    return 'F';
+  }
+  function scoreColor(score) {
+    if (score >= 80) return '#4ade80';
+    if (score >= 60) return '#fbbf24';
+    return '#f87171';
+  }
+
+  // Toast notification (11.08.2026) — a small, temporary, auto-dismissing message appended
+  // directly to <html> (like highlightBox), NOT inside the shadow DOM panel, so it stays
+  // visible even when it needs to warn about the panel itself (e.g. "the panel is covering
+  // this element"). Reused for clipboard-copy confirmations too.
+  var toastEl;
+  function showToast(message) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.style.cssText = 'all:initial;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+        'background:#1f2333;color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+        'font-size:12.5px;padding:10px 16px;border-radius:10px;box-shadow:0 10px 30px -6px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08);' +
+        'z-index:2147483647;max-width:360px;text-align:center;line-height:1.4;opacity:0;transition:opacity .2s ease;pointer-events:none;';
+      document.documentElement.appendChild(toastEl);
+    }
+    toastEl.textContent = message;
+    toastEl.style.opacity = '1';
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(function () {
+      toastEl.style.opacity = '0';
+    }, 3200);
+  }
+
+  // Clipboard helper (11.08.2026) — used by the "Copy report" header button and the per-item
+  // "Copy" button next to a Fix suggestion. Tries the modern async Clipboard API first, falls
+  // back to the older execCommand('copy') approach (via a temporary offscreen textarea) for
+  // contexts where the Clipboard API is unavailable or blocked (e.g. insecure context, some
+  // permission policies) — either way, the user gets a toast confirming success or failure.
+  function copyToClipboard(str, successMessage) {
+    function done(ok) {
+      showToast(ok ? (successMessage || 'Copied to clipboard.') : 'Could not copy to clipboard — your browser may be blocking it.');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(str).then(function () { done(true); }).catch(function () { done(false); });
+    } else {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = str;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        done(ok);
+      } catch (e) {
+        done(false);
+      }
+    }
+  }
+
+  // Plain-text report builder (11.08.2026) — deliberately plain text (not HTML/Markdown), so it
+  // pastes cleanly anywhere (Slack, email, a ClickUp comment, a plain document). Per agreed
+  // scope: includes title/category/severity/description/"why it matters" for every finding
+  // (both tabs), but DELIBERATELY OMITS the `fix` suggestion text (the user asked for the report
+  // to stay focused on WHAT's wrong and WHY it matters, not the fix — the "Copy fix" button on
+  // each item covers the fix separately, on demand). Successes are summarized as counts only
+  // (not a full per-item list) to keep the report a reasonable length.
+  function buildReportText() {
+    var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
+    var aeoFindings = findings.filter(function (f) { return f.group === 'aeo' || f.crossRelevant; });
+    var seoCounts = { error: 0, warning: 0, info: 0 };
+    seoFindings.forEach(function (f) { seoCounts[f.severity] = (seoCounts[f.severity] || 0) + 1; });
+    var aeoCounts = { error: 0, warning: 0, info: 0 };
+    aeoFindings.forEach(function (f) { aeoCounts[f.severity] = (aeoCounts[f.severity] || 0) + 1; });
+    var soloSeoSuccesses = successes.filter(function (s) { return s.group !== 'aeo' && !s.crossRelevant; }).length;
+    var soloAeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' && !s.crossRelevant; }).length;
+    var sharedSuccesses = successes.filter(function (s) { return !!s.crossRelevant; }).length;
+
+    var lines = [];
+    lines.push('SEO PAGE AUDITOR — Report');
+    lines.push(location.href);
+    lines.push(new Date().toLocaleString());
+    lines.push('');
+    lines.push('SUMMARY');
+    lines.push('SEO tab: ' + seoCounts.error + ' errors, ' + seoCounts.warning + ' warnings, ' + seoCounts.info + ' info');
+    lines.push('AEO tab: ' + aeoCounts.error + ' errors, ' + aeoCounts.warning + ' warnings, ' + aeoCounts.info + ' info');
+    lines.push('Successes: ' + successes.length + ' total (' + soloSeoSuccesses + ' SEO-only, ' + soloAeoSuccesses + ' AEO-only, ' + sharedSuccesses + ' SEO+AEO)');
+    lines.push('');
+
+    var order = { error: 0, warning: 1, info: 2 };
+    function pushSection(title, list, contextGroup) {
+      lines.push('— ' + title + ' —');
+      if (!list.length) {
+        lines.push('(no findings)');
+        lines.push('');
+        return;
+      }
+      var sorted = list.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+      sorted.forEach(function (f) {
+        lines.push('[' + f.severity.toUpperCase() + '] ' + f.category + ' — ' + f.title);
+        if (f.description) lines.push(f.description);
+        if (f.crossRelevant) lines.push('(' + getCrossText(f, contextGroup) + ')');
+        if (f.globalNote) lines.push('Global element: ' + f.globalNote);
+        if (f.why) lines.push('Why it matters: ' + f.why);
+        lines.push('');
+      });
+    }
+    pushSection('SEO FINDINGS', seoFindings, 'seo');
+    pushSection('AEO FINDINGS', aeoFindings, 'aeo');
+
+    return lines.join('\n');
+  }
+
+  // Per-URL history (11.08.2026, localStorage) — lets the panel show "last run vs. now" so a
+  // developer re-running the audit after fixing issues gets an immediate sense of progress.
+  // Legitimate use of localStorage here: this is a real bookmarklet running in a real browser
+  // tab, not a Claude.ai artifact (where localStorage is unsupported/forbidden) — see SPEC.md.
+  // Wrapped in try/catch throughout: localStorage can throw (private browsing modes, quota,
+  // disabled storage) and none of this is essential to the tool's core function, so any failure
+  // here must never break the audit itself.
+  var HISTORY_KEY_PREFIX = 'seoAuditorHistory::';
+  function loadPreviousRun() {
+    try {
+      var raw = localStorage.getItem(HISTORY_KEY_PREFIX + location.href);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function saveCurrentRun() {
+    try {
+      var data = { totalFindings: findings.length, successes: successes.length, timestamp: Date.now() };
+      localStorage.setItem(HISTORY_KEY_PREFIX + location.href, JSON.stringify(data));
+    } catch (e) {
+      // Ignore — see comment above.
+    }
+  }
+  var previousRun = null; // populated once at the very start of run(), before any checks execute
+
   function setupDragHandlers() {
     if (setupDragHandlers._attached) return;
     setupDragHandlers._attached = true;
@@ -1488,6 +1652,52 @@
     document.addEventListener('mouseup', function () {
       if (isDragging) { isDragging = false; document.body.style.userSelect = ''; }
       if (isResizing) { isResizing = false; document.body.style.userSelect = ''; }
+    });
+  }
+
+  // Closes the panel/highlight box and resets the running flag — shared by the header's ✕
+  // button and the Esc keyboard shortcut (11.08.2026) so both go through the exact same
+  // teardown path.
+  function closePanel() {
+    if (panelHost) panelHost.remove();
+    if (highlightBox) highlightBox.remove();
+    clearAllHighlights();
+    window.__SeoAuditorRunning = false;
+  }
+
+  // Keyboard navigation (11.08.2026): Up/Down cycles through whatever list is currently visible
+  // in the panel (respecting the active tab/severity/category filter — see `lastRenderedRows`,
+  // populated fresh on every renderPanel() call), Esc closes the panel. Ignored while the user
+  // is typing into a normal page input/textarea/contenteditable, since this is a document-level
+  // listener and the audited page may have its own forms.
+  function setupKeyboardHandlers() {
+    if (setupKeyboardHandlers._attached) return;
+    setupKeyboardHandlers._attached = true;
+    document.addEventListener('keydown', function (e) {
+      if (!panelHost) return;
+      var tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)) return;
+
+      if (e.key === 'Escape') {
+        closePanel();
+        return;
+      }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if (!lastRenderedRows.length) return;
+      e.preventDefault();
+      if (selectedIndex === -1) {
+        selectedIndex = 0;
+      } else if (e.key === 'ArrowDown') {
+        selectedIndex = Math.min(selectedIndex + 1, lastRenderedRows.length - 1);
+      } else {
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+      }
+      var row = lastRenderedRows[selectedIndex];
+      if (!row) return;
+      lastRenderedRows.forEach(function (r) { r.el.classList.remove('kbd-selected'); });
+      row.el.classList.add('kbd-selected');
+      row.el.scrollIntoView({ block: 'nearest' });
+      if (row.item.element) highlightElement(row.item.element);
     });
   }
 
@@ -1571,6 +1781,10 @@
       '.badge.group-aeo.active{border-color:#a855f7;box-shadow:0 0 0 1px rgba(168,85,247,.35);}',
       '.badge.group-shared.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.35);}',
       '.badge.success.active{border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35);}',
+      // "Highlight all" toggle badge (11.08.2026) — amber, matching the amber boxes it draws on
+      // the page (see showAllHighlights()), so the color itself hints at what the toggle does.
+      '.badge.highlightall{background:rgba(245,158,11,.1);color:#fbbf24;border-color:rgba(245,158,11,.28);}',
+      '.badge.highlightall.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.35);}',
       // .list is the only scrolling part of the panel — flex:1 fills all remaining space between
       // the fixed parts (header/tabs/summary) and the resize handle at the bottom.
       // overflow-x:hidden + overflow-y:auto — allows vertical scroll, but NEVER horizontal.
@@ -1608,7 +1822,22 @@
       // same interaction behavior (dragging changes the height), just a more subtle visual language.
       '.resize-handle{flex:0 0 auto;height:16px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;background:transparent;border-top:1px solid rgba(255,255,255,.05);user-select:none;}',
       '.resize-handle::after{content:"";width:32px;height:4px;border-radius:4px;background:rgba(255,255,255,.14);transition:background-color .15s ease;}',
-      '.resize-handle:hover::after{background:rgba(255,255,255,.28);}'
+      '.resize-handle:hover::after{background:rgba(255,255,255,.28);}',
+      // Score badge in the header (11.08.2026) — color is set inline per-render (green/amber/
+      // red depending on the score), only the shape/spacing lives here.
+      '.score-badge{margin-left:8px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid;background:rgba(255,255,255,.04);white-space:nowrap;}',
+      // Generic small "Copy" button (11.08.2026) — used for the header's "Copy report" action
+      // and the per-item "Copy fix" action. Deliberately subtle (not a full .badge) so it reads
+      // as a secondary/utility action, not a primary control.
+      '.copybtn{margin-left:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#e5e7eb;border-radius:6px;padding:1px 7px;font-size:10.5px;font-family:inherit;cursor:pointer;transition:background-color .15s ease;}',
+      '.copybtn:hover{background:rgba(255,255,255,.18);}',
+      // "Previous run vs. now" banner (11.08.2026, localStorage-backed) — sits below the tab bar,
+      // above the severity/group summary, and applies regardless of which tab is active (it's a
+      // whole-page comparison, not per-tab).
+      '.prevrun{flex:0 0 auto;padding:8px 14px;font-size:11px;color:#9ca3af;line-height:1.4;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);}',
+      // Keyboard-selected item (11.08.2026, Up/Down navigation) — a left accent bar + tint,
+      // distinct from :hover so it stays visible while the mouse is elsewhere.
+      '.item.kbd-selected{background:rgba(99,102,241,.1);box-shadow:inset 3px 0 0 #6366f1;}'
     ].join('');
     shadow.appendChild(style);
 
@@ -1617,6 +1846,43 @@
     document.documentElement.appendChild(highlightBox);
 
     setupDragHandlers();
+    setupKeyboardHandlers();
+  }
+
+  // True if two DOMRect-like boxes overlap at all (11.08.2026, used by the "panel is covering
+  // the element" warning below).
+  function rectsOverlap(a, b) {
+    return !(b.left > a.right || b.right < a.left || b.top > a.bottom || b.bottom < a.top);
+  }
+
+  // "Highlight all at once" (11.08.2026) — draws a box around every currently-listed
+  // finding/success that has a bound element, all at the same time, instead of the normal
+  // one-at-a-time click-to-highlight. Deliberately a SEPARATE box style from the single-item
+  // highlightBox (amber border, no darkening backdrop) — with many boxes on screen at once the
+  // full-viewport "spotlight" dimming trick used by highlightElement() would just make most of
+  // the page uniformly dark, defeating the point. Deliberately DOES NOT run the panel-overlap
+  // toast check (see highlightElement()) — with potentially dozens of boxes on screen, the panel
+  // covering at least one of them is the expected, unremarkable case, not something worth
+  // interrupting the user about every time this view refreshes (per user request, 11.08.2026).
+  var highlightAllActive = false;
+  var highlightAllBoxes = [];
+  function clearAllHighlights() {
+    highlightAllBoxes.forEach(function (box) { box.remove(); });
+    highlightAllBoxes = [];
+  }
+  function showAllHighlights(items) {
+    clearAllHighlights();
+    items.forEach(function (item) {
+      if (!item.element) return;
+      var r = item.element.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return; // not laid out / not on screen right now
+      var box = document.createElement('div');
+      box.style.cssText = 'position:fixed;pointer-events:none;border:2px solid #fbbf24;border-radius:4px;z-index:2147483645;' +
+        'box-shadow:0 0 0 2px rgba(251,191,36,.2);transition:opacity .15s ease;' +
+        'top:' + (r.top - 3) + 'px;left:' + (r.left - 3) + 'px;width:' + (r.width + 6) + 'px;height:' + (r.height + 6) + 'px;';
+      document.documentElement.appendChild(box);
+      highlightAllBoxes.push(box);
+    });
   }
 
   function highlightElement(el) {
@@ -1629,6 +1895,18 @@
       highlightBox.style.left = (r.left - 4) + 'px';
       highlightBox.style.width = (r.width + 8) + 'px';
       highlightBox.style.height = (r.height + 8) + 'px';
+
+      // 11.08.2026: the panel is a fixed-position overlay, so it can end up sitting directly on
+      // top of the very element it just highlighted (most likely when the element is near the
+      // top-right of the viewport, the panel's default corner). Warn the user via a toast rather
+      // than silently leaving them staring at a highlight box they can't actually see.
+      var panelEl = shadow && shadow.querySelector('.panel');
+      if (panelEl) {
+        var panelRect = panelEl.getBoundingClientRect();
+        if (rectsOverlap(panelRect, r)) {
+          showToast('The panel is covering this element — drag the panel (by its header) to another part of the screen to see it.');
+        }
+      }
     }, 350);
   }
 
@@ -1672,6 +1950,11 @@
       current.forEach(function (f) { counts[f.severity] = (counts[f.severity] || 0) + 1; });
     }
 
+    // Reset per-render keyboard-navigation state — rebuilt fresh below to mirror exactly what's
+    // about to be shown (11.08.2026, see setupKeyboardHandlers()).
+    selectedIndex = -1;
+    var renderedRows = [];
+
     var panel = document.createElement('div');
     panel.className = 'panel';
     if (panelPosition) {
@@ -1683,15 +1966,32 @@
       panel.style.height = panelHeight + 'px';
     }
 
+    // Score badge (11.08.2026) — computed from ALL findings (both tabs combined via the raw
+    // `findings` array, so crossRelevant items aren't double-counted), shown right next to the
+    // tool name regardless of which tab is active.
+    var score = computeScore();
+    var scoreHtml = '<span class="score-badge" style="color:' + scoreColor(score) + ';border-color:' + scoreColor(score) + '55;" ' +
+      'title="Heuristic score (100 minus penalties for errors/warnings/info across the whole page). Not an official metric.">' +
+      score + ' (' + scoreGrade(score) + ')</span>';
+
     var hdr = document.createElement('div');
     hdr.className = 'hdr';
-    hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b></div>';
+    hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b>' + scoreHtml + '</div>';
+    var hdrActions = document.createElement('div');
+    hdrActions.style.cssText = 'display:flex;align-items:center;gap:2px;';
+    var copyReportBtn = document.createElement('button');
+    copyReportBtn.textContent = '📋';
+    copyReportBtn.title = 'Copy full report (SEO + AEO findings) to clipboard';
+    copyReportBtn.onclick = function () { copyToClipboard(buildReportText(), 'Report copied to clipboard.'); };
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
-    closeBtn.onclick = function () { panelHost.remove(); highlightBox.remove(); window.__SeoAuditorRunning = false; };
-    hdr.appendChild(closeBtn);
+    closeBtn.title = 'Close';
+    closeBtn.onclick = closePanel;
+    hdrActions.appendChild(copyReportBtn);
+    hdrActions.appendChild(closeBtn);
+    hdr.appendChild(hdrActions);
     hdr.addEventListener('mousedown', function (e) {
-      if (e.target === closeBtn) return; // don't start dragging when the X button is clicked
+      if (e.target === closeBtn || e.target === copyReportBtn) return; // don't start dragging when a header button is clicked
       isDragging = true;
       var rect = panel.getBoundingClientRect();
       dragStartX = e.clientX;
@@ -1702,6 +2002,22 @@
       e.preventDefault();
     });
     panel.appendChild(hdr);
+
+    // "Previous run vs. now" banner (11.08.2026, localStorage-backed) — shown right below the
+    // header regardless of the active tab, since it's a whole-page comparison. Only appears once
+    // a previous run for this exact URL exists (see loadPreviousRun(), called once in run()).
+    if (previousRun) {
+      var totalNow = findings.length;
+      var diff = totalNow - previousRun.totalFindings;
+      var diffLabel = diff === 0 ? 'no change' : (diff < 0 ? ('−' + Math.abs(diff)) : ('+' + diff));
+      var diffColor = diff < 0 ? '#4ade80' : (diff > 0 ? '#f87171' : '#9ca3af');
+      var when = new Date(previousRun.timestamp).toLocaleString();
+      var prevBanner = document.createElement('div');
+      prevBanner.className = 'prevrun';
+      prevBanner.innerHTML = 'Last run (' + when + '): ' + previousRun.totalFindings + ' findings → now: ' + totalNow +
+        ' <span style="color:' + diffColor + ';font-weight:700;">(' + diffLabel + ')</span>';
+      panel.appendChild(prevBanner);
+    }
 
     var tabs = document.createElement('div');
     tabs.className = 'tabs';
@@ -1729,6 +2045,10 @@
     var sorted;
 
     if (activeTab === 'success') {
+      // "Highlight all" only applies to findings (problems), not successes — nothing to
+      // highlight as "wrong" here, and there's no toggle button in this tab. Clear any leftover
+      // boxes from a previous SEO/AEO view so they don't linger while looking at successes.
+      clearAllHighlights();
       // The Success tab has no severity filter (success has no severity level), BUT it has its
       // own filter by SEO/AEO group. The split is based on the `crossRelevant` flag (the same
       // criterion as the category dropdown in the SEO/AEO tabs — see the 10.08.2026 SPEC entry)
@@ -1874,6 +2194,26 @@
         return activeCategoryOrigin === 'shared' ? !!f.crossRelevant : !f.crossRelevant;
       });
       sorted = filtered.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
+
+      // "Highlight all at once" toggle (11.08.2026) — draws boxes for every currently-listed
+      // finding with a bound element, all at once. Added to the summary row AFTER `sorted` is
+      // final so its count matches exactly what's about to be shown (respects severity + category
+      // filters, same as the list below). Only rendered when there's at least one highlightable
+      // (has `.element`) finding, since an empty/uselessly-disabled toggle is worse than no toggle.
+      var highlightableCount = sorted.filter(function (f) { return !!f.element; }).length;
+      if (highlightableCount > 0) {
+        var haBtn = document.createElement('span');
+        haBtn.className = 'badge highlightall' + (highlightAllActive ? ' active' : '');
+        haBtn.textContent = (highlightAllActive ? '◼' : '◻') + ' Highlight all (' + highlightableCount + ')';
+        haBtn.title = 'Draw a box around every listed finding at once, instead of one at a time.';
+        haBtn.onclick = function () { highlightAllActive = !highlightAllActive; renderPanel(); };
+        summary.appendChild(haBtn);
+      }
+      if (highlightAllActive) {
+        showAllHighlights(sorted);
+      } else {
+        clearAllHighlights();
+      }
     }
 
     // .list is the only scrolling part — prevents the hdr/tabs/summary from "jumping" and
@@ -1917,6 +2257,7 @@
           item.onclick = function () { highlightElement(s.element); };
         }
         list.appendChild(item);
+        renderedRows.push({ item: s, el: item });
       });
     } else {
       sorted.forEach(function (f) {
@@ -1929,11 +2270,23 @@
           (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
           (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
           (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Why:</b> ' + f.why + '</div>' : '') +
-          (f.fix ? '<div class="desc" style="color:#86efac;margin-top:4px;"><b>Fix:</b> ' + f.fix + '</div>' : '');
+          (f.fix ? '<div class="desc fixrow" style="color:#86efac;margin-top:4px;"><b>Fix:</b> ' + f.fix + ' <button class="copybtn copy-fix-btn" title="Copy this fix suggestion to clipboard">Copy</button></div>' : '');
         item.onclick = function () { highlightElement(f.element); };
+        if (f.fix) {
+          var fixBtn = item.querySelector('.copy-fix-btn');
+          if (fixBtn) {
+            fixBtn.onclick = function (e) {
+              e.stopPropagation(); // don't also trigger the item's own highlight click
+              copyToClipboard(f.fix, 'Fix copied to clipboard.');
+            };
+          }
+        }
         list.appendChild(item);
+        renderedRows.push({ item: f, el: item });
       });
     }
+
+    lastRenderedRows = renderedRows;
 
     panel.appendChild(list);
 
@@ -1961,6 +2314,11 @@
   // ---------------------------------------------------------------------
 
   function run() {
+    // Capture the PREVIOUS run's results (if any, from an earlier visit to this exact URL)
+    // before this run adds anything new — see the "Previous run vs. now" banner in renderPanel()
+    // and saveCurrentRun() below (11.08.2026).
+    previousRun = loadPreviousRun();
+
     checkPreliminary();
     checkSlug();
     checkMetaHead();
@@ -1978,6 +2336,9 @@
     measureCWV(function () {
       tagGlobalFindings();
       renderPanel();
+      // Save AFTER the async CWV pass completes, so the stored count reflects the fully
+      // finished audit (including CWV-related findings), not the mid-run synchronous snapshot.
+      saveCurrentRun();
     });
   }
 
