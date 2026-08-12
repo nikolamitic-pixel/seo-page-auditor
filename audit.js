@@ -1106,6 +1106,11 @@
           addFinding({ category: 'Technical / crawlability', severity: 'error',
             title: 'Third-party script without async/defer (' + host + ')',
             description: 'Current:\n' + current + '\n\nSuggested:\n' + suggested,
+            // Dedicated field (11.08.2026) for the "Copy suggested code" button — separate from
+            // `fix` (a prose recommendation) and from `description` (the human-readable
+            // Current/Suggested comparison shown in the panel), so the copy action grabs just
+            // the ready-to-paste <script> tag, not the "Current:"/"Suggested:" labels around it.
+            suggestedCode: suggested,
             why: 'A script without async/defer blocks parsing/rendering of the page at that point until it\'s downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption.',
             fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script into Page Settings > Custom Code > "Before </body> tag" instead of the <head>.',
             element: s });
@@ -1644,6 +1649,49 @@
   }
   var previousRun = null; // populated once at the very start of run(), before any checks execute
 
+  // Panel setup persistence across a page refresh (11.08.2026, localStorage) — a bookmarklet has
+  // no way to survive a full page reload on its own (the entire JS context is destroyed and
+  // recreated from scratch — that requires a browser EXTENSION's content-script mechanism, which
+  // this project deliberately isn't, per the install/distribution tradeoffs already documented in
+  // SPEC.md). This is the closest practical equivalent: remember the panel's position, height,
+  // and active tab/filters so that re-clicking the bookmarklet after a refresh (which the
+  // Webflow publish → refresh workflow already requires) picks up right where the user left it,
+  // instead of resetting to defaults every time. Cleared explicitly when the user clicks the ✕
+  // close button (see clearPanelState() in closePanel()) — that's the deliberate "off" signal;
+  // a mere page refresh is NOT treated as one.
+  var PANEL_STATE_KEY_PREFIX = 'seoAuditorPanelState::';
+  function loadPanelState() {
+    try {
+      var raw = localStorage.getItem(PANEL_STATE_KEY_PREFIX + location.href);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function savePanelState() {
+    try {
+      var state = {
+        panelPosition: panelPosition,
+        panelHeight: panelHeight,
+        activeTab: activeTab,
+        activeSeverity: activeSeverity,
+        activeCategory: activeCategory,
+        activeCategoryOrigin: activeCategoryOrigin,
+        activeSuccessGroup: activeSuccessGroup
+      };
+      localStorage.setItem(PANEL_STATE_KEY_PREFIX + location.href, JSON.stringify(state));
+    } catch (e) {
+      // Ignore — see comment above savePanelState()'s sibling functions.
+    }
+  }
+  function clearPanelState() {
+    try {
+      localStorage.removeItem(PANEL_STATE_KEY_PREFIX + location.href);
+    } catch (e) {
+      // Ignore.
+    }
+  }
+
   // Report preview panel (11.08.2026, added after feedback that silently copying the report
   // straight to the clipboard gave no visibility into what was actually copied) — a second
   // floating panel, anchored to the LEFT of the main panel (which stays wherever it is/was
@@ -1658,7 +1706,11 @@
     if (!shadow) return;
     var existing = shadow.querySelector('.report-preview');
     if (existing) existing.remove();
-    if (!reportPreviewVisible) return;
+    if (!reportPreviewVisible) {
+      var mainPanelEl = shadow.querySelector('.panel');
+      if (mainPanelEl) mainPanelEl.classList.remove('has-preview'); // un-dock the seam styling
+      return;
+    }
 
     var box = document.createElement('div');
     box.className = 'report-preview';
@@ -1691,6 +1743,21 @@
     box.appendChild(ta);
 
     shadow.appendChild(box);
+
+    // Dock the preview to the LEFT edge of the main panel — sized/positioned to match it exactly
+    // (same top, same height), so it reads as a drawer sliding out of the panel rather than a
+    // separately floating window (11.08.2026, per explicit request). Recomputed here (in
+    // addition to the live drag/resize sync in setupDragHandlers()) so it's correctly placed the
+    // moment it's first opened, before any drag/resize happens.
+    var panelEl = shadow.querySelector('.panel');
+    if (panelEl) {
+      var pRect = panelEl.getBoundingClientRect();
+      var previewWidth = box.getBoundingClientRect().width || 440;
+      box.style.top = pRect.top + 'px';
+      box.style.left = Math.max(4, pRect.left - previewWidth - 8) + 'px';
+      box.style.height = (pRect.height || 600) + 'px';
+      panelEl.classList.add('has-preview');
+    }
   }
 
   function setupDragHandlers() {
@@ -1699,6 +1766,10 @@
     document.addEventListener('mousemove', function (e) {
       var panelEl = shadow && shadow.querySelector('.panel');
       if (!panelEl) return;
+      // The report-preview panel (11.08.2026) is docked to the main panel's left edge — while
+      // dragging/resizing, reposition it in lockstep so it visually stays "attached" instead of
+      // lagging until the next renderPanel() call.
+      var previewEl = shadow.querySelector('.report-preview');
       if (isDragging) {
         var dx = e.clientX - dragStartX;
         var dy = e.clientY - dragStartY;
@@ -1708,17 +1779,23 @@
         panelEl.style.left = newLeft + 'px';
         panelEl.style.right = 'auto';
         panelPosition = { top: newTop, left: newLeft };
+        if (previewEl) {
+          var previewWidth = previewEl.getBoundingClientRect().width || 440;
+          previewEl.style.top = newTop + 'px';
+          previewEl.style.left = Math.max(4, newLeft - previewWidth - 8) + 'px';
+        }
       }
       if (isResizing) {
         var dyResize = e.clientY - resizeStartY;
         var newHeight = Math.max(MIN_PANEL_HEIGHT, resizeStartHeight + dyResize);
         panelEl.style.height = newHeight + 'px';
         panelHeight = newHeight;
+        if (previewEl) previewEl.style.height = newHeight + 'px';
       }
     });
     document.addEventListener('mouseup', function () {
-      if (isDragging) { isDragging = false; document.body.style.userSelect = ''; }
-      if (isResizing) { isResizing = false; document.body.style.userSelect = ''; }
+      if (isDragging) { isDragging = false; document.body.style.userSelect = ''; savePanelState(); }
+      if (isResizing) { isResizing = false; document.body.style.userSelect = ''; savePanelState(); }
     });
   }
 
@@ -1730,6 +1807,7 @@
     if (highlightBox) highlightBox.remove();
     clearAllHighlights();
     reportPreviewVisible = false;
+    clearPanelState(); // explicit ✕/Esc close = "forget where I was", unlike a mere page refresh
     window.__SeoAuditorRunning = false;
   }
 
@@ -1906,12 +1984,19 @@
       // Keyboard-selected item (11.08.2026, Up/Down navigation) — a left accent bar + tint,
       // distinct from :hover so it stays visible while the mouse is elsewhere.
       '.item.kbd-selected{background:rgba(99,102,241,.1);box-shadow:inset 3px 0 0 #6366f1;}',
-      // Report preview panel (11.08.2026) — a second floating panel anchored to the LEFT side of
-      // the viewport (independent of wherever the user has dragged the main panel), same dark
-      // "floating card" visual language as .panel (gradient background, top accent bar, rounded
-      // corners) so it reads as part of the same tool rather than a bolted-on browser alert.
-      '.report-preview{position:fixed;top:12px;left:12px;width:440px;max-width:calc(100vw - 24px);height:min(600px,80vh);display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;border-radius:16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow:hidden;}',
-      '.report-preview::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 16px 0 0;}',
+      // Report preview panel (11.08.2026, redocked same day after feedback) — now DOCKED to the
+      // main panel's left edge rather than floating independently: rounded on its own left side,
+      // FLAT on the right side where it touches the main panel, so it reads as a drawer sliding
+      // out of the panel rather than a separate floating window. Position/height are always set
+      // inline by JS (renderReportPreview() + the live drag/resize sync in setupDragHandlers())
+      // to match the main panel's current top/height exactly — the top/left/height here are just
+      // pre-JS fallback values, never visibly used in practice.
+      '.report-preview{position:fixed;top:12px;left:12px;width:440px;max-width:calc(100vw - 24px);height:min(600px,80vh);display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;border-radius:16px 0 0 16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow:hidden;}',
+      '.report-preview::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 0 0 0;}',
+      // The main panel gets a matching flat-left/rounded-right seam while the preview is docked
+      // (class toggled in renderReportPreview()), so the two read as one continuous surface.
+      '.panel.has-preview{border-radius:0 16px 16px 0;}',
+      '.panel.has-preview::before{border-radius:0 16px 0 0;}',
       '.report-preview-hdr{flex:0 0 auto;padding:13px 10px 13px 14px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;}',
       '.report-preview-hdr b{font-size:13.5px;font-weight:700;letter-spacing:.01em;}',
       '.report-preview-hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:15px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background-color .15s ease,color .15s ease;}',
@@ -1920,7 +2005,13 @@
       // its own row, so it's the first thing the eye lands on before scanning the report itself.
       '.report-preview-actions{flex:0 0 auto;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);}',
       '.report-preview-copybtn{margin-left:0;padding:6px 14px;font-size:12.5px;font-weight:600;border-radius:8px;}',
-      '.report-preview-textarea{flex:1 1 auto;min-height:0;width:100%;border:none;outline:none;resize:none;background:transparent;color:#c3c9d6;font-family:"SF Mono",Monaco,Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;padding:14px;white-space:pre-wrap;}'
+      '.report-preview-textarea{flex:1 1 auto;min-height:0;width:100%;border:none;outline:none;resize:none;background:transparent;color:#c3c9d6;font-family:"SF Mono",Monaco,Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;padding:14px;white-space:pre-wrap;overflow-y:auto;overflow-x:hidden;}',
+      // Same thin custom scrollbar as the main panel's .list, for visual consistency, and
+      // explicitly requested so long reports are easier to scroll through.
+      '.report-preview-textarea::-webkit-scrollbar{width:8px;}',
+      '.report-preview-textarea::-webkit-scrollbar-track{background:transparent;}',
+      '.report-preview-textarea::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;}',
+      '.report-preview-textarea::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2);}'
     ].join('');
     shadow.appendChild(style);
 
@@ -2354,6 +2445,7 @@
           '<div class="cat">' + f.category + '</div>' +
           '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
           '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
+          (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="Copy the suggested code to clipboard" style="margin:6px 0 0;">📋 Copy suggested code</button>' : '') +
           (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
           (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
           (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Why:</b> ' + f.why + '</div>' : '') +
@@ -2365,6 +2457,15 @@
             fixBtn.onclick = function (e) {
               e.stopPropagation(); // don't also trigger the item's own highlight click
               copyToClipboard(f.fix, 'Fix copied to clipboard.');
+            };
+          }
+        }
+        if (f.suggestedCode) {
+          var codeBtn = item.querySelector('.copy-code-btn');
+          if (codeBtn) {
+            codeBtn.onclick = function (e) {
+              e.stopPropagation();
+              copyToClipboard(f.suggestedCode, 'Suggested code copied to clipboard.');
             };
           }
         }
@@ -2395,6 +2496,7 @@
 
     shadow.appendChild(panel);
     renderReportPreview(); // re-append if it was open — persists across tab/filter re-renders
+    savePanelState(); // persist tab/severity/category/successGroup — see loadPanelState() comment
   }
 
   // ---------------------------------------------------------------------
@@ -2406,6 +2508,22 @@
     // before this run adds anything new — see the "Previous run vs. now" banner in renderPanel()
     // and saveCurrentRun() below (11.08.2026).
     previousRun = loadPreviousRun();
+
+    // Restore panel position/height/active tab/filters from before a page refresh, if any was
+    // saved (11.08.2026 — see the comment above loadPanelState()). Applied BEFORE the first
+    // renderPanel() call so the very first render already reflects it, with no visible "snap"
+    // from default to restored state. Each field is only applied if present, so a partially-old
+    // or partially-missing saved object still safely restores whatever it does have.
+    var savedPanelState = loadPanelState();
+    if (savedPanelState) {
+      if (savedPanelState.panelPosition) panelPosition = savedPanelState.panelPosition;
+      if (savedPanelState.panelHeight) panelHeight = savedPanelState.panelHeight;
+      if (savedPanelState.activeTab) activeTab = savedPanelState.activeTab;
+      if (savedPanelState.activeSeverity) activeSeverity = savedPanelState.activeSeverity;
+      if (savedPanelState.activeCategory) activeCategory = savedPanelState.activeCategory;
+      if (savedPanelState.activeCategoryOrigin) activeCategoryOrigin = savedPanelState.activeCategoryOrigin;
+      if (savedPanelState.activeSuccessGroup) activeSuccessGroup = savedPanelState.activeSuccessGroup;
+    }
 
     checkPreliminary();
     checkSlug();
