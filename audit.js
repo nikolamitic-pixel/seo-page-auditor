@@ -1547,8 +1547,20 @@
     }
   }
 
-  // Plain-text report builder (11.08.2026) — deliberately plain text (not HTML/Markdown), so it
-  // pastes cleanly anywhere (Slack, email, a ClickUp comment, a plain document). Per agreed
+  // Indents every line of a (possibly multi-line) string with `prefix` — used so a finding's
+  // detail lines (description, "Why it matters"...) stay visually subordinate to its numbered
+  // title line, INCLUDING multi-line embedded content like the "Current/Suggested" code example
+  // (11.08.2026 — a plain .replace() on the first line only would leave the continuation lines
+  // of a multi-line description flush-left, undoing the indentation).
+  function indentLines(text, prefix) {
+    return String(text).split('\n').map(function (line) { return prefix + line; }).join('\n');
+  }
+
+  // Plain-text report builder (11.08.2026, reformatted for readability same day after feedback
+  // that the wall-of-text version was hard to scan) — deliberately plain text (not HTML/
+  // Markdown), so it pastes cleanly anywhere (Slack, email, a ClickUp comment, a plain
+  // document), using only ASCII "=" divider lines and indentation for structure rather than
+  // Markdown syntax that wouldn't render as intended in a plain-text destination. Per agreed
   // scope: includes title/category/severity/description/"why it matters" for every finding
   // (both tabs), but DELIBERATELY OMITS the `fix` suggestion text (the user asked for the report
   // to stay focused on WHAT's wrong and WHY it matters, not the fix — the "Copy fix" button on
@@ -1564,33 +1576,39 @@
     var soloSeoSuccesses = successes.filter(function (s) { return s.group !== 'aeo' && !s.crossRelevant; }).length;
     var soloAeoSuccesses = successes.filter(function (s) { return s.group === 'aeo' && !s.crossRelevant; }).length;
     var sharedSuccesses = successes.filter(function (s) { return !!s.crossRelevant; }).length;
+    var DIVIDER = '============================================================';
 
     var lines = [];
     lines.push('SEO PAGE AUDITOR — Report');
     lines.push(location.href);
     lines.push(new Date().toLocaleString());
     lines.push('');
+    lines.push(DIVIDER);
     lines.push('SUMMARY');
-    lines.push('SEO tab: ' + seoCounts.error + ' errors, ' + seoCounts.warning + ' warnings, ' + seoCounts.info + ' info');
-    lines.push('AEO tab: ' + aeoCounts.error + ' errors, ' + aeoCounts.warning + ' warnings, ' + aeoCounts.info + ' info');
-    lines.push('Successes: ' + successes.length + ' total (' + soloSeoSuccesses + ' SEO-only, ' + soloAeoSuccesses + ' AEO-only, ' + sharedSuccesses + ' SEO+AEO)');
+    lines.push(DIVIDER);
+    lines.push('SEO tab   : ' + seoCounts.error + ' errors, ' + seoCounts.warning + ' warnings, ' + seoCounts.info + ' info');
+    lines.push('AEO tab   : ' + aeoCounts.error + ' errors, ' + aeoCounts.warning + ' warnings, ' + aeoCounts.info + ' info');
+    lines.push('Successes : ' + successes.length + ' total (' + soloSeoSuccesses + ' SEO-only, ' + soloAeoSuccesses + ' AEO-only, ' + sharedSuccesses + ' SEO+AEO)');
     lines.push('');
 
     var order = { error: 0, warning: 1, info: 2 };
     function pushSection(title, list, contextGroup) {
-      lines.push('— ' + title + ' —');
+      lines.push(DIVIDER);
+      lines.push(title + ' (' + list.length + ')');
+      lines.push(DIVIDER);
+      lines.push('');
       if (!list.length) {
         lines.push('(no findings)');
         lines.push('');
         return;
       }
       var sorted = list.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
-      sorted.forEach(function (f) {
-        lines.push('[' + f.severity.toUpperCase() + '] ' + f.category + ' — ' + f.title);
-        if (f.description) lines.push(f.description);
-        if (f.crossRelevant) lines.push('(' + getCrossText(f, contextGroup) + ')');
-        if (f.globalNote) lines.push('Global element: ' + f.globalNote);
-        if (f.why) lines.push('Why it matters: ' + f.why);
+      sorted.forEach(function (f, idx) {
+        lines.push((idx + 1) + '. [' + f.severity.toUpperCase() + '] ' + f.category + ' — ' + f.title);
+        if (f.description) lines.push(indentLines(f.description, '   '));
+        if (f.crossRelevant) lines.push('   (' + getCrossText(f, contextGroup) + ')');
+        if (f.globalNote) lines.push('   Global element: ' + f.globalNote);
+        if (f.why) lines.push(indentLines('Why it matters: ' + f.why, '   '));
         lines.push('');
       });
     }
@@ -1625,6 +1643,55 @@
     }
   }
   var previousRun = null; // populated once at the very start of run(), before any checks execute
+
+  // Report preview panel (11.08.2026, added after feedback that silently copying the report
+  // straight to the clipboard gave no visibility into what was actually copied) — a second
+  // floating panel, anchored to the LEFT of the main panel (which stays wherever it is/was
+  // dragged to), showing the exact report text in a read-only textarea with a "Copy to
+  // clipboard" button above it. `reportPreviewText` is a snapshot taken once when the preview
+  // is opened (via the header's 📋 button) — it does not "live update" as new async findings
+  // (e.g. CWV) arrive after that point; re-opening it (close + reopen) refreshes it.
+  var reportPreviewVisible = false;
+  var reportPreviewText = '';
+
+  function renderReportPreview() {
+    if (!shadow) return;
+    var existing = shadow.querySelector('.report-preview');
+    if (existing) existing.remove();
+    if (!reportPreviewVisible) return;
+
+    var box = document.createElement('div');
+    box.className = 'report-preview';
+
+    var pHdr = document.createElement('div');
+    pHdr.className = 'report-preview-hdr';
+    pHdr.innerHTML = '<b>Report preview</b>';
+    var pClose = document.createElement('button');
+    pClose.textContent = '✕';
+    pClose.title = 'Close preview';
+    pClose.onclick = function () { reportPreviewVisible = false; renderReportPreview(); };
+    pHdr.appendChild(pClose);
+    box.appendChild(pHdr);
+
+    var pActions = document.createElement('div');
+    pActions.className = 'report-preview-actions';
+    var pCopyBtn = document.createElement('button');
+    pCopyBtn.className = 'copybtn report-preview-copybtn';
+    pCopyBtn.textContent = '📋 Copy to clipboard';
+    pCopyBtn.onclick = function () { copyToClipboard(reportPreviewText, 'Report copied to clipboard.'); };
+    pActions.appendChild(pCopyBtn);
+    box.appendChild(pActions);
+
+    // A <textarea> (read-only) rather than a plain <div> — this also gives the user a manual
+    // fallback way to select-all/copy the text themselves if the Clipboard API is ever blocked.
+    var ta = document.createElement('textarea');
+    ta.className = 'report-preview-textarea';
+    ta.readOnly = true;
+    ta.value = reportPreviewText;
+    box.appendChild(ta);
+
+    shadow.appendChild(box);
+  }
 
   function setupDragHandlers() {
     if (setupDragHandlers._attached) return;
@@ -1662,6 +1729,7 @@
     if (panelHost) panelHost.remove();
     if (highlightBox) highlightBox.remove();
     clearAllHighlights();
+    reportPreviewVisible = false;
     window.__SeoAuditorRunning = false;
   }
 
@@ -1837,7 +1905,22 @@
       '.prevrun{flex:0 0 auto;padding:8px 14px;font-size:11px;color:#9ca3af;line-height:1.4;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);}',
       // Keyboard-selected item (11.08.2026, Up/Down navigation) — a left accent bar + tint,
       // distinct from :hover so it stays visible while the mouse is elsewhere.
-      '.item.kbd-selected{background:rgba(99,102,241,.1);box-shadow:inset 3px 0 0 #6366f1;}'
+      '.item.kbd-selected{background:rgba(99,102,241,.1);box-shadow:inset 3px 0 0 #6366f1;}',
+      // Report preview panel (11.08.2026) — a second floating panel anchored to the LEFT side of
+      // the viewport (independent of wherever the user has dragged the main panel), same dark
+      // "floating card" visual language as .panel (gradient background, top accent bar, rounded
+      // corners) so it reads as part of the same tool rather than a bolted-on browser alert.
+      '.report-preview{position:fixed;top:12px;left:12px;width:440px;max-width:calc(100vw - 24px);height:min(600px,80vh);display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;border-radius:16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow:hidden;}',
+      '.report-preview::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 16px 0 0;}',
+      '.report-preview-hdr{flex:0 0 auto;padding:13px 10px 13px 14px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;}',
+      '.report-preview-hdr b{font-size:13.5px;font-weight:700;letter-spacing:.01em;}',
+      '.report-preview-hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:15px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background-color .15s ease,color .15s ease;}',
+      '.report-preview-hdr button:hover{background:rgba(255,255,255,.08);color:#f3f4f6;}',
+      // The "Copy to clipboard" action sits ABOVE the text content (per explicit request), in
+      // its own row, so it's the first thing the eye lands on before scanning the report itself.
+      '.report-preview-actions{flex:0 0 auto;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.report-preview-copybtn{margin-left:0;padding:6px 14px;font-size:12.5px;font-weight:600;border-radius:8px;}',
+      '.report-preview-textarea{flex:1 1 auto;min-height:0;width:100%;border:none;outline:none;resize:none;background:transparent;color:#c3c9d6;font-family:"SF Mono",Monaco,Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;padding:14px;white-space:pre-wrap;}'
     ].join('');
     shadow.appendChild(style);
 
@@ -1981,8 +2064,12 @@
     hdrActions.style.cssText = 'display:flex;align-items:center;gap:2px;';
     var copyReportBtn = document.createElement('button');
     copyReportBtn.textContent = '📋';
-    copyReportBtn.title = 'Copy full report (SEO + AEO findings) to clipboard';
-    copyReportBtn.onclick = function () { copyToClipboard(buildReportText(), 'Report copied to clipboard.'); };
+    copyReportBtn.title = 'Preview the full report (SEO + AEO findings) before copying it';
+    copyReportBtn.onclick = function () {
+      reportPreviewText = buildReportText();
+      reportPreviewVisible = true;
+      renderReportPreview();
+    };
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
     closeBtn.title = 'Close';
@@ -2307,6 +2394,7 @@
     panel.appendChild(resizeHandle);
 
     shadow.appendChild(panel);
+    renderReportPreview(); // re-append if it was open — persists across tab/filter re-renders
   }
 
   // ---------------------------------------------------------------------
