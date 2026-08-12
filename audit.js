@@ -1744,18 +1744,20 @@
 
     shadow.appendChild(box);
 
-    // Dock the preview to the LEFT edge of the main panel — sized/positioned to match it exactly
-    // (same top, same height), so it reads as a drawer sliding out of the panel rather than a
-    // separately floating window (11.08.2026, per explicit request). Recomputed here (in
-    // addition to the live drag/resize sync in setupDragHandlers()) so it's correctly placed the
-    // moment it's first opened, before any drag/resize happens.
+    // Dock the preview flush against the LEFT edge of the main panel — same top, touching left
+    // edge (no gap, so the seam reads as one continuous surface), height capped to 90% of the
+    // panel's height so it never visually overshoots the panel even while it's being resized
+    // (11.08.2026, per explicit request; gap removed + height cap added 12.08.2026 per follow-up
+    // feedback). Recomputed here (in addition to the live drag/resize sync in
+    // setupDragHandlers()) so it's correctly placed the moment it's first opened, before any
+    // drag/resize happens.
     var panelEl = shadow.querySelector('.panel');
     if (panelEl) {
       var pRect = panelEl.getBoundingClientRect();
       var previewWidth = box.getBoundingClientRect().width || 440;
       box.style.top = pRect.top + 'px';
-      box.style.left = Math.max(4, pRect.left - previewWidth - 8) + 'px';
-      box.style.height = (pRect.height || 600) + 'px';
+      box.style.left = Math.max(0, pRect.left - previewWidth) + 'px';
+      box.style.height = ((pRect.height || 600) * 0.9) + 'px';
       panelEl.classList.add('has-preview');
     }
   }
@@ -1780,9 +1782,10 @@
         panelEl.style.right = 'auto';
         panelPosition = { top: newTop, left: newLeft };
         if (previewEl) {
+          // Flush against the panel's left edge — no gap (12.08.2026).
           var previewWidth = previewEl.getBoundingClientRect().width || 440;
           previewEl.style.top = newTop + 'px';
-          previewEl.style.left = Math.max(4, newLeft - previewWidth - 8) + 'px';
+          previewEl.style.left = Math.max(0, newLeft - previewWidth) + 'px';
         }
       }
       if (isResizing) {
@@ -1790,7 +1793,9 @@
         var newHeight = Math.max(MIN_PANEL_HEIGHT, resizeStartHeight + dyResize);
         panelEl.style.height = newHeight + 'px';
         panelHeight = newHeight;
-        if (previewEl) previewEl.style.height = newHeight + 'px';
+        // Capped to 90% of the panel's height so the preview never grows taller than (or even as
+        // tall as) the panel while it's being resized (12.08.2026, per explicit request).
+        if (previewEl) previewEl.style.height = (newHeight * 0.9) + 'px';
       }
     });
     document.addEventListener('mouseup', function () {
@@ -2005,13 +2010,16 @@
       // its own row, so it's the first thing the eye lands on before scanning the report itself.
       '.report-preview-actions{flex:0 0 auto;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);}',
       '.report-preview-copybtn{margin-left:0;padding:6px 14px;font-size:12.5px;font-weight:600;border-radius:8px;}',
-      '.report-preview-textarea{flex:1 1 auto;min-height:0;width:100%;border:none;outline:none;resize:none;background:transparent;color:#c3c9d6;font-family:"SF Mono",Monaco,Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;padding:14px;white-space:pre-wrap;overflow-y:auto;overflow-x:hidden;}',
-      // Same thin custom scrollbar as the main panel's .list, for visual consistency, and
-      // explicitly requested so long reports are easier to scroll through.
-      '.report-preview-textarea::-webkit-scrollbar{width:8px;}',
-      '.report-preview-textarea::-webkit-scrollbar-track{background:transparent;}',
-      '.report-preview-textarea::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;}',
-      '.report-preview-textarea::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2);}'
+      // scrollbar-width/-color cover Firefox (no ::-webkit-scrollbar support there); the report
+      // can be tens of thousands of px tall (200+ findings) against a ~1500px viewport, which
+      // makes a subtle thumb nearly invisible, so this is intentionally higher-contrast/wider
+      // than the main panel's .list scrollbar (12.08.2026, per explicit "I don't see a scrollbar"
+      // report).
+      '.report-preview-textarea{flex:1 1 auto;min-height:0;width:100%;border:none;outline:none;resize:none;background:transparent;color:#c3c9d6;font-family:"SF Mono",Monaco,Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;padding:14px;white-space:pre-wrap;overflow-y:auto;overflow-x:hidden;scrollbar-width:auto;scrollbar-color:rgba(255,255,255,.35) rgba(255,255,255,.06);}',
+      '.report-preview-textarea::-webkit-scrollbar{width:10px;}',
+      '.report-preview-textarea::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:8px;}',
+      '.report-preview-textarea::-webkit-scrollbar-thumb{background:rgba(255,255,255,.35);border-radius:8px;border:2px solid transparent;background-clip:padding-box;}',
+      '.report-preview-textarea::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.5);background-clip:padding-box;}'
     ].join('');
     shadow.appendChild(style);
 
