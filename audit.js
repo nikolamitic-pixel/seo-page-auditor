@@ -1706,11 +1706,7 @@
     if (!shadow) return;
     var existing = shadow.querySelector('.report-preview');
     if (existing) existing.remove();
-    if (!reportPreviewVisible) {
-      var mainPanelEl = shadow.querySelector('.panel');
-      if (mainPanelEl) mainPanelEl.classList.remove('has-preview'); // un-dock the seam styling
-      return;
-    }
+    if (!reportPreviewVisible) return;
 
     var box = document.createElement('div');
     box.className = 'report-preview';
@@ -1747,14 +1743,13 @@
 
     shadow.appendChild(box);
 
-    // Dock the preview flush against the LEFT edge of the main panel (touching, no gap, so the
-    // seam reads as one continuous surface) and VERTICALLY CENTERED on it — height capped to 90%
-    // of the panel's height (so it never visually overshoots the panel even while it's being
-    // resized) with the leftover 10% split evenly above/below, instead of pinned to the panel's
-    // top (11.08.2026 initial dock; gap removed + height cap 12.08.2026; centered 12.08.2026 per
-    // follow-up request). Recomputed here (in addition to the live drag/resize sync in
-    // setupDragHandlers()) so it's correctly placed the moment it's first opened, before any
-    // drag/resize happens.
+    // Dock the preview flush against the LEFT edge of the main panel (touching, no gap) and
+    // VERTICALLY CENTERED on it — height capped to 90% of the panel's height (so it never
+    // visually overshoots the panel even while it's being resized) with the leftover 10% split
+    // evenly above/below, instead of pinned to the panel's top (11.08.2026 initial dock; gap
+    // removed + height cap 12.08.2026; centered 12.08.2026 per follow-up request). Recomputed
+    // here (in addition to the live drag/resize sync in setupDragHandlers()) so it's correctly
+    // placed the moment it's first opened, before any drag/resize happens.
     var panelEl = shadow.querySelector('.panel');
     if (panelEl) {
       var pRect = panelEl.getBoundingClientRect();
@@ -1764,7 +1759,6 @@
       box.style.top = (pRect.top + (panelH - previewHeight) / 2) + 'px';
       box.style.left = Math.max(0, pRect.left - previewWidth) + 'px';
       box.style.height = previewHeight + 'px';
-      panelEl.classList.add('has-preview');
     }
   }
 
@@ -2012,19 +2006,20 @@
       // Keyboard-selected item (11.08.2026, Up/Down navigation) — a left accent bar + tint,
       // distinct from :hover so it stays visible while the mouse is elsewhere.
       '.item.kbd-selected{background:rgba(99,102,241,.1);box-shadow:inset 3px 0 0 #6366f1;}',
-      // Report preview panel (11.08.2026, redocked same day after feedback) — now DOCKED to the
-      // main panel's left edge rather than floating independently: rounded on its own left side,
-      // FLAT on the right side where it touches the main panel, so it reads as a drawer sliding
-      // out of the panel rather than a separate floating window. Position/height are always set
-      // inline by JS (renderReportPreview() + the live drag/resize sync in setupDragHandlers())
-      // to match the main panel's current top/height exactly — the top/left/height here are just
-      // pre-JS fallback values, never visibly used in practice.
+      // Report preview panel (11.08.2026, redocked same day after feedback) — DOCKED next to the
+      // main panel's left edge (touching, no gap): rounded on its own LEFT side, FLAT on the
+      // RIGHT side where it touches the main panel, so it still reads as a drawer glued to the
+      // panel rather than a fully independent floating card. Originally the main panel's own
+      // left corners were ALSO squared off (via a `.panel.has-preview` override) to make the
+      // pair look like one fully fused shape — but that made the main panel visibly lose its
+      // rounding while the preview was open (flagged via screenshot, 12.08.2026), so that part
+      // was removed: the main panel now ALWAYS keeps its normal full border-radius (its own
+      // `.panel{...border-radius:16px...}` rule is never overridden). Only the PREVIEW's own
+      // right edge stays square — clarified by the user (13.08.2026) after an interim attempt
+      // rounded all 4 corners of the preview too, which wasn't what was wanted; it should stay
+      // glued/flat on the side touching the panel.
       '.report-preview{position:fixed;top:12px;left:12px;width:440px;max-width:calc(100vw - 24px);height:min(600px,80vh);display:flex;flex-direction:column;background:linear-gradient(180deg,#171a2e 0%,#0d0f1a 100%);color:#f3f4f6;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;border-radius:16px 0 0 16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);z-index:2147483647;overflow:hidden;}',
       '.report-preview::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#6366f1,#a855f7 60%,#f59e0b);border-radius:16px 0 0 0;}',
-      // The main panel gets a matching flat-left/rounded-right seam while the preview is docked
-      // (class toggled in renderReportPreview()), so the two read as one continuous surface.
-      '.panel.has-preview{border-radius:0 16px 16px 0;}',
-      '.panel.has-preview::before{border-radius:0 16px 0 0;}',
       '.report-preview-hdr{flex:0 0 auto;padding:13px 10px 13px 14px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;}',
       '.report-preview-hdr b{font-size:13.5px;font-weight:700;letter-spacing:.01em;}',
       '.report-preview-hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:15px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background-color .15s ease,color .15s ease;}',
