@@ -1721,7 +1721,10 @@
     var pClose = document.createElement('button');
     pClose.textContent = '✕';
     pClose.title = 'Close preview';
-    pClose.onclick = function () { reportPreviewVisible = false; renderReportPreview(); };
+    // Full renderPanel() (not just renderReportPreview()) so the header toggle button also loses
+    // its "active" state when the preview is closed from here — keeps both entry points (the
+    // header toggle and this ✕) in sync (12.08.2026).
+    pClose.onclick = function () { reportPreviewVisible = false; renderPanel(); };
     pHdr.appendChild(pClose);
     box.appendChild(pHdr);
 
@@ -1744,20 +1747,23 @@
 
     shadow.appendChild(box);
 
-    // Dock the preview flush against the LEFT edge of the main panel — same top, touching left
-    // edge (no gap, so the seam reads as one continuous surface), height capped to 90% of the
-    // panel's height so it never visually overshoots the panel even while it's being resized
-    // (11.08.2026, per explicit request; gap removed + height cap added 12.08.2026 per follow-up
-    // feedback). Recomputed here (in addition to the live drag/resize sync in
+    // Dock the preview flush against the LEFT edge of the main panel (touching, no gap, so the
+    // seam reads as one continuous surface) and VERTICALLY CENTERED on it — height capped to 90%
+    // of the panel's height (so it never visually overshoots the panel even while it's being
+    // resized) with the leftover 10% split evenly above/below, instead of pinned to the panel's
+    // top (11.08.2026 initial dock; gap removed + height cap 12.08.2026; centered 12.08.2026 per
+    // follow-up request). Recomputed here (in addition to the live drag/resize sync in
     // setupDragHandlers()) so it's correctly placed the moment it's first opened, before any
     // drag/resize happens.
     var panelEl = shadow.querySelector('.panel');
     if (panelEl) {
       var pRect = panelEl.getBoundingClientRect();
+      var panelH = pRect.height || 600;
       var previewWidth = box.getBoundingClientRect().width || 440;
-      box.style.top = pRect.top + 'px';
+      var previewHeight = panelH * 0.9;
+      box.style.top = (pRect.top + (panelH - previewHeight) / 2) + 'px';
       box.style.left = Math.max(0, pRect.left - previewWidth) + 'px';
-      box.style.height = ((pRect.height || 600) * 0.9) + 'px';
+      box.style.height = previewHeight + 'px';
       panelEl.classList.add('has-preview');
     }
   }
@@ -1782,9 +1788,14 @@
         panelEl.style.right = 'auto';
         panelPosition = { top: newTop, left: newLeft };
         if (previewEl) {
-          // Flush against the panel's left edge — no gap (12.08.2026).
+          // Flush against the panel's left edge — no gap (12.08.2026). Vertically centered on
+          // the panel (12.08.2026) — dragging only moves top/left, height is unaffected, so the
+          // existing rect height (still valid right after the top/left assignment above) gives
+          // the offset needed to keep the preview centered as it follows the panel.
           var previewWidth = previewEl.getBoundingClientRect().width || 440;
-          previewEl.style.top = newTop + 'px';
+          var curPanelHeight = panelEl.getBoundingClientRect().height;
+          var previewHeightNow = curPanelHeight * 0.9;
+          previewEl.style.top = (newTop + (curPanelHeight - previewHeightNow) / 2) + 'px';
           previewEl.style.left = Math.max(0, newLeft - previewWidth) + 'px';
         }
       }
@@ -1793,9 +1804,16 @@
         var newHeight = Math.max(MIN_PANEL_HEIGHT, resizeStartHeight + dyResize);
         panelEl.style.height = newHeight + 'px';
         panelHeight = newHeight;
-        // Capped to 90% of the panel's height so the preview never grows taller than (or even as
-        // tall as) the panel while it's being resized (12.08.2026, per explicit request).
-        if (previewEl) previewEl.style.height = (newHeight * 0.9) + 'px';
+        if (previewEl) {
+          // Capped to 90% of the panel's height so the preview never grows taller than (or even
+          // as tall as) the panel while it's being resized (12.08.2026), and re-centered on the
+          // panel's (unchanged, since resize only grows downward) top for every new height
+          // (12.08.2026, per follow-up request).
+          var previewHeightResized = newHeight * 0.9;
+          var panelTopNow = panelEl.getBoundingClientRect().top;
+          previewEl.style.height = previewHeightResized + 'px';
+          previewEl.style.top = (panelTopNow + (newHeight - previewHeightResized) / 2) + 'px';
+        }
       }
     });
     document.addEventListener('mouseup', function () {
@@ -1887,6 +1905,11 @@
       '.hdr b{font-size:13.5px;font-weight:700;letter-spacing:.01em;}',
       '.hdr button{background:transparent;color:#9ca3af;border:none;cursor:pointer;font-size:15px;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background-color .15s ease,color .15s ease;}',
       '.hdr button:hover{background:rgba(255,255,255,.08);color:#f3f4f6;}',
+      // "Pressed" look for a toggle button in the header (e.g. the Report-preview button, 12.08.2026)
+      // — same amber accent as the "Highlight all" toggle badge, so both read as the same kind of
+      // on/off control.
+      '.hdr button.active{background:rgba(245,158,11,.16);color:#fbbf24;box-shadow:inset 0 0 0 1px rgba(245,158,11,.4);}',
+      '.hdr button.active:hover{background:rgba(245,158,11,.24);color:#fbbf24;}',
       '.tabs{flex:0 0 auto;display:flex;gap:2px;padding:6px 8px 0;background:transparent;}',
       '.tabbtn{flex:1;padding:8px 6px;background:transparent;border:none;color:#8b93a7;font-size:12px;font-weight:600;cursor:pointer;border-radius:8px 8px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background-color .15s ease,color .15s ease;position:relative;}',
       '.tabbtn:hover{color:#e5e7eb;background:rgba(255,255,255,.04);}',
@@ -2161,13 +2184,18 @@
     hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b>' + scoreHtml + '</div>';
     var hdrActions = document.createElement('div');
     hdrActions.style.cssText = 'display:flex;align-items:center;gap:2px;';
+    // Toggle button (12.08.2026, per explicit request) — same on/off pattern as the "Highlight
+    // all" badge (`.active` class + state flag flipped on click), instead of a one-way "open"
+    // action. Clicking again while the preview is open closes it; the pressed/active look uses
+    // the same amber accent as "Highlight all" so both toggles read consistently.
     var copyReportBtn = document.createElement('button');
     copyReportBtn.textContent = '📋';
-    copyReportBtn.title = 'Preview the full report (SEO + AEO findings) before copying it';
+    copyReportBtn.className = reportPreviewVisible ? 'active' : '';
+    copyReportBtn.title = reportPreviewVisible ? 'Hide the report preview' : 'Preview the full report (SEO + AEO findings) before copying it';
     copyReportBtn.onclick = function () {
-      reportPreviewText = buildReportText();
-      reportPreviewVisible = true;
-      renderReportPreview();
+      reportPreviewVisible = !reportPreviewVisible;
+      if (reportPreviewVisible) reportPreviewText = buildReportText();
+      renderPanel(); // full re-render so the button's active state AND the preview panel both update
     };
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
