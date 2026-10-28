@@ -722,6 +722,7 @@
       }
     });
 
+    ['img.alt', 'img.height', 'img.external', 'img.format', 'img.size'].forEach(function (id) { setCheckTotal(id, checkedImgCount); });
     if (checkedImgCount > 0 && goodAltCount > 0) {
       addSuccess({ category: 'Images', title: goodAltCount + ' of ' + checkedImgCount + ' visible images have descriptive (or deliberately decorative) alt text',
         description: '', element: null });
@@ -816,6 +817,7 @@
       }
     });
 
+    ['links.nowhere', 'links.noText', 'links.generic'].forEach(function (id) { setCheckTotal(id, checkedLinkCount); });
     if (checkedLinkCount > 0 && !emptyHrefFound) {
       addSuccess({ category: 'Links', title: 'There are no links that go nowhere (all href attributes are valid)', description: '', element: null });
     }
@@ -828,6 +830,7 @@
 
     // 404 / redirect chain check for internal links (best-effort, limited count)
     var toCheck = internalToCheck.slice(0, 25);
+    setCheckTotal('links.internal', toCheck.length);
     var linkCheckSettled = 0;
     var linkCheckProblemFound = false;
     function maybeReportLinkCheckSuccess() {
@@ -1474,32 +1477,165 @@
   var lastRenderedRows = []; // [{ item: <finding or success object>, el: <.item DOM element> }, ...]
   var selectedIndex = -1;
 
-  // Score badge (11.08.2026) — a quick "how bad is this page" number in the header, computed
-  // from error/warning/info counts across the WHOLE page (both tabs combined, using the raw
-  // `findings` array so a crossRelevant item — which appears in both tabs — is only counted
-  // once). This is a simple weighted heuristic for orientation, NOT an official/standardized
-  // score (documented as such via the badge's title/tooltip).
-  function computeScore() {
-    var score = 100;
+  // "Page optimized" progress bar (28.10.2026) — replaces the earlier A–F score badge (which
+  // first-time users found unintuitive). It's a WEIGHTED share of checks that pass:
+  //   * Every distinct check below has a weight by the worst severity it can report
+  //     (error = 4, warning = 2, info = 1), so one error costs more than several info items,
+  //     but info items still count a little — they do make a page "more optimized".
+  //   * Partial credit for checks that look at many elements (e.g. 200 images): the check loses
+  //     weight in proportion to how many elements are affected, so fixing images one by one makes
+  //     the number move instead of staying frozen until the very last one is fixed.
+  //   * "Preliminary check" items (redirect, staging link) are context, not optimizations, so
+  //     they're excluded from the calculation entirely.
+  //   * Only checks that actually ran on this page are counted (e.g. the FAQPage check only
+  //     applies if the page looks like a FAQ).
+  // Checks are identified by matching the finding/success TITLE against the registry below, so
+  // none of the ~120 addFinding()/addSuccess() call sites had to change. If you add a new check
+  // or reword a title, add/adjust its entry here — unmatched titles are listed in
+  // window.__SeoAuditorUnmatched for exactly that reason.
+  var SEVERITY_WEIGHT = { error: 4, warning: 2, info: 1 };
+  var checkTotals = {}; // check id -> number of elements that check looked at (for partial credit)
+  function setCheckTotal(id, n) { checkTotals[id] = n; }
+  function hasOutput(id, wantSuccessOnly) {
+    var i;
+    for (i = 0; i < successes.length; i++) if (successes[i].check === id) return true;
+    if (!wantSuccessOnly) for (i = 0; i < findings.length; i++) if (findings[i].check === id) return true;
+    return false;
+  }
+  // w = weight at the worst severity the check can report. always = the check has no "success"
+  // message, so it counts as evaluated whenever the audit ran. total = per-element check (needs
+  // checkTotals[id] > 0 to count). evalIfSuccessOf / evalIfAnyOf = conditional checks that only
+  // apply when a related check produced output.
+  var CHECK_REGISTRY = [
+    { id: 'meta.charset', w: 2, re: /^Meta charset/ },
+    { id: 'meta.dupTitle', w: 2, re: /^More than one <title>/, always: true },
+    { id: 'meta.dupDesc', w: 2, re: /^More than one meta description/, always: true },
+    { id: 'meta.title', w: 4, re: /^Title (tag|is|looks)/ },
+    { id: 'meta.desc', w: 4, re: /^Meta description is/ },
+    { id: 'og.title', w: 2, re: /^og:title is/ },
+    { id: 'og.desc', w: 2, re: /^og:description is/ },
+    { id: 'og.image', w: 2, re: /^og:image is/ },
+    { id: 'og.imageQuality', w: 4, re: /^OG image/, evalIfSuccessOf: ['og.image'] },
+    { id: 'twitter.card', w: 2, re: /^Twitter\/X Card/ },
+    { id: 'meta.canonical', w: 4, re: /^Canonical tag is missing/, always: true },
+    { id: 'meta.noindex', w: 4, re: /noindex/ },
+    { id: 'meta.nosnippet', w: 4, re: /^Robots directive/ },
+    { id: 'meta.lang', w: 2, re: /^lang attribute/ },
+    { id: 'meta.viewport', w: 4, re: /^Viewport meta tag/ },
+    { id: 'meta.zoom', w: 2, re: /^Viewport (prevents|allows)/ },
+    { id: 'fav.present', w: 2, re: /^Favicon is (missing or fails|present and loads)/ },
+    { id: 'fav.quality', w: 1, re: /^Favicon (is in an unusual|dimensions|is square)/, evalIfSuccessOf: ['fav.present'] },
+    { id: 'fav.robots', w: 2, re: /^Favicon is blocked/, evalIfSuccessOf: ['fav.present'] },
+    { id: 'url.canonical', w: 4, re: /^Canonical (points|tag is present)/ },
+    { id: 'url.slug', w: 4, re: /^URL slug/ },
+    { id: 'h.h1', w: 4, re: /^(H1 is missing|There is more than one H1|Exactly one H1)/ },
+    { id: 'h.skip', w: 2, re: /^Heading hierarchy/ },
+    { id: 'h.fake', w: 1, re: /^Text looks like a heading/, always: true },
+    { id: 'img.alt', w: 4, re: /^(Alt text is empty|Image: (alt|generic)|\d+ of \d+ visible images have descriptive)/, total: true },
+    { id: 'img.height', w: 4, re: /^(Image has no fixed height|\d+ image\(s\) have (both dimensions|a fixed height))/, total: true },
+    { id: 'img.external', w: 4, re: /^(Image is hosted|All images are hosted)/, total: true },
+    { id: 'img.format', w: 1, re: /^(Image is not in a modern|\d+ image\(s\) are already in a modern)/, total: true },
+    { id: 'img.size', w: 4, re: /^Image is larger than 500KB/, always: true, total: true },
+    { id: 'links.nowhere', w: 2, re: /^(Link doesn't go anywhere|There are no links that go nowhere)/, total: true },
+    { id: 'links.anchor', w: 4, re: /^(Anchor link points|All in-page anchor)/ },
+    { id: 'links.noText', w: 2, re: /^(Link with no text|All links have visible text)/, total: true },
+    { id: 'links.generic', w: 1, re: /^Generic anchor text/, always: true, total: true },
+    { id: 'links.internal', w: 4, re: /^(Internal link|All checked internal links)/, total: true },
+    { id: 'content.thin', w: 2, re: /^(Very little visible text|The page has enough visible text)/ },
+    { id: 'content.hidden', w: 1, re: /^Hidden content/, always: true },
+    { id: 'content.repeated', w: 2, re: /^(Repeated word|No repeated words)/ },
+    { id: 'content.placeholder', w: 4, re: /^(Placeholder\/Lorem|No placeholder)/ },
+    { id: 'content.br', w: 1, re: /^Manual <br>/, always: true },
+    { id: 'fonts.count', w: 2, re: /^The page uses/, always: true },
+    { id: 'fonts.google', w: 2, re: /^(The page dynamically loads Google Fonts|No dynamic loading of Google Fonts)/ },
+    { id: 'fonts.format', w: 1, re: /^(Font file in an older|All @font-face)/ },
+    { id: 'tech.dupId', w: 1, re: /^(Duplicate ID|No duplicate ID)/ },
+    { id: 'tech.dom', w: 1, re: /^(Large\/deeply nested DOM|DOM size\/depth)/ },
+    { id: 'tech.mixed', w: 4, re: /^(Mixed content|No mixed content)/ },
+    { id: 'tech.thirdParty', w: 4, re: /^(Third-party script|All third-party scripts)/ },
+    { id: 'cwv.ttfb', w: 4, re: /^(Slow TTFB|TTFB is good)/ },
+    { id: 'cwv.lcp', w: 4, re: /^(Slow LCP|LCP is good)/ },
+    { id: 'cwv.cls', w: 4, re: /^(High CLS|CLS is good)/ },
+    { id: 'aeo.jsonld', w: 4, re: /^(JSON-LD schema block|All JSON-LD schema blocks)/ },
+    { id: 'aeo.faq', w: 4, re: /^(Page looks like a FAQ|FAQPage schema|\d+ question\(s\) in the FAQPage)/ },
+    { id: 'aeo.article', w: 2, re: /^Page looks like an article/, evalIfAnyOf: ['aeo.articleDates', 'aeo.articleAuthor', 'aeo.authorLink'] },
+    { id: 'aeo.articleDates', w: 4, re: /^Article schema (has neither|has datePublished)/ },
+    { id: 'aeo.articleAuthor', w: 1, re: /^Article schema has (no )?author field/ },
+    { id: 'aeo.authorLink', w: 4, re: /^Author link in the Article schema/ },
+    { id: 'aeo.nap', w: 2, re: /^(Phone number in the Organization|Address from the Organization|NAP data)/ },
+    { id: 'aeo.breadcrumb', w: 1, re: /^(A visible breadcrumb UI|BreadcrumbList schema)/ },
+    { id: 'aeo.jsRender', w: 2, re: /^Most of the content only appears after JavaScript/, always: true }
+  ];
+  var CHECK_BY_ID = {};
+  CHECK_REGISTRY.forEach(function (c) { CHECK_BY_ID[c.id] = c; });
+  function matchCheckId(title) {
+    for (var i = 0; i < CHECK_REGISTRY.length; i++) {
+      if (CHECK_REGISTRY[i].re.test(title)) return CHECK_REGISTRY[i].id;
+    }
+    return null;
+  }
+
+  // Returns { pct, failedChecks, issues } — pct is 0–100 with one decimal.
+  function computeOptimization() {
+    window.__SeoAuditorUnmatched = [];
+    var perCheck = {}; // id -> { findings: [] }
+    function bucket(id) { return perCheck[id] || (perCheck[id] = { findings: [] }); }
+    var issues = 0;
     findings.forEach(function (f) {
-      if (f.severity === 'error') score -= 8;
-      else if (f.severity === 'warning') score -= 3;
-      else score -= 1; // info
+      if (f.category === 'Preliminary check') return; // context, not an optimization
+      issues++;
+      f.check = f.check || matchCheckId(f.title || '');
+      if (!f.check) { window.__SeoAuditorUnmatched.push(f.title); return; }
+      bucket(f.check).findings.push(f);
     });
-    return Math.max(0, Math.min(100, Math.round(score)));
+    successes.forEach(function (s) {
+      if (s.category === 'Preliminary check') return;
+      s.check = s.check || matchCheckId(s.title || '');
+      if (!s.check) window.__SeoAuditorUnmatched.push(s.title);
+    });
+
+    var totalW = 0, earned = 0, failedChecks = 0;
+    CHECK_REGISTRY.forEach(function (c) {
+      var fs = (perCheck[c.id] && perCheck[c.id].findings) || [];
+      var evaluated = fs.length > 0 || hasOutput(c.id);
+      if (!evaluated && c.always) evaluated = true;
+      if (!evaluated && c.evalIfSuccessOf) evaluated = c.evalIfSuccessOf.some(function (id) { return hasOutput(id, true); });
+      if (!evaluated && c.evalIfAnyOf) evaluated = c.evalIfAnyOf.some(function (id) { return hasOutput(id); });
+      var total = checkTotals[c.id];
+      if (c.total && !fs.length && !(total > 0)) evaluated = evaluated && total > 0; // per-element check with nothing to look at
+      if (!evaluated) return;
+      totalW += c.w;
+      if (!fs.length) { earned += c.w; return; }
+      failedChecks++;
+      var lost;
+      if (total > 0) {
+        // Partial credit: each affected element costs its severity weight, spread over all
+        // the elements the check looked at (3 bad images out of 40 ≈ 7.5% of the check lost).
+        var sum = 0;
+        fs.forEach(function (f) { sum += SEVERITY_WEIGHT[f.severity] || 1; });
+        lost = Math.min(c.w, sum / total);
+      } else {
+        var worst = 0;
+        fs.forEach(function (f) { worst = Math.max(worst, SEVERITY_WEIGHT[f.severity] || 1); });
+        lost = Math.min(c.w, worst); // binary: the check fails as a whole
+      }
+      earned += c.w - lost;
+    });
+    var pct = totalW > 0 ? Math.round((earned / totalW) * 1000) / 10 : 100;
+    return { pct: pct, failedChecks: failedChecks, issues: issues };
   }
-  function scoreGrade(score) {
-    if (score >= 90) return 'A';
-    if (score >= 80) return 'B';
-    if (score >= 70) return 'C';
-    if (score >= 60) return 'D';
-    return 'F';
-  }
-  function scoreColor(score) {
-    if (score >= 80) return '#4ade80';
-    if (score >= 60) return '#fbbf24';
+  function optimizedColor(pct) {
+    if (pct >= 80) return '#4ade80';
+    if (pct >= 60) return '#fbbf24';
     return '#f87171';
   }
+  function optimizedGradient(pct) {
+    if (pct >= 80) return 'linear-gradient(90deg,#22c55e,#4ade80)';
+    if (pct >= 60) return 'linear-gradient(90deg,#f59e0b,#fbbf24)';
+    return 'linear-gradient(90deg,#ef4444,#f87171)';
+  }
+  function fmtPct(pct) { return (pct >= 100 ? '100' : pct.toFixed(1)) + '%'; }
+  var lastShownPct = 0; // so the bar animates from where it last was, not from 0 on every re-render
 
   // Toast notification (11.08.2026) — a small, temporary, auto-dismissing message appended
   // directly to <html> (like highlightBox), NOT inside the shadow DOM panel, so it stays
@@ -1591,6 +1727,7 @@
     lines.push(DIVIDER);
     lines.push('SUMMARY');
     lines.push(DIVIDER);
+    lines.push('Page optimized : ' + fmtPct(computeOptimization().pct));
     lines.push('SEO tab   : ' + seoCounts.error + ' errors, ' + seoCounts.warning + ' warnings, ' + seoCounts.info + ' info');
     lines.push('AEO tab   : ' + aeoCounts.error + ' errors, ' + aeoCounts.warning + ' warnings, ' + aeoCounts.info + ' info');
     lines.push('Successes : ' + successes.length + ' total (' + soloSeoSuccesses + ' SEO-only, ' + soloAeoSuccesses + ' AEO-only, ' + sharedSuccesses + ' SEO+AEO)');
@@ -1641,7 +1778,7 @@
   }
   function saveCurrentRun() {
     try {
-      var data = { totalFindings: findings.length, successes: successes.length, timestamp: Date.now() };
+      var data = { totalFindings: findings.length, successes: successes.length, optimizedPct: computeOptimization().pct, timestamp: Date.now() };
       localStorage.setItem(HISTORY_KEY_PREFIX + location.href, JSON.stringify(data));
     } catch (e) {
       // Ignore — see comment above.
@@ -1993,7 +2130,15 @@
       '.resize-handle:hover::after{background:rgba(255,255,255,.28);}',
       // Score badge in the header (11.08.2026) — color is set inline per-render (green/amber/
       // red depending on the score), only the shape/spacing lives here.
-      '.score-badge{margin-left:8px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid;background:rgba(255,255,255,.04);white-space:nowrap;}',
+      // "Page optimized" progress bar (28.10.2026) — sits right under the header, above the tabs.
+      '.prog{flex:0 0 auto;padding:11px 14px 12px;border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.prog-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}',
+      '.prog-lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;font-weight:600;cursor:help;}',
+      '.prog-pct{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;}',
+      '.prog-track{height:9px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;}',
+      '.prog-fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.22,1,.36,1);}',
+      '.prog-sub{margin-top:8px;font-size:11.5px;color:#9ca3af;display:flex;justify-content:space-between;gap:10px;}',
+      '.prog-sub b{color:#e5e7eb;font-weight:600;}',
       // Generic small "Copy" button (11.08.2026) — used for the header's "Copy report" action
       // and the per-item "Copy fix" action. Deliberately subtle (not a full .badge) so it reads
       // as a secondary/utility action, not a primary control.
@@ -2166,17 +2311,9 @@
       panel.style.height = panelHeight + 'px';
     }
 
-    // Score badge (11.08.2026) — computed from ALL findings (both tabs combined via the raw
-    // `findings` array, so crossRelevant items aren't double-counted), shown right next to the
-    // tool name regardless of which tab is active.
-    var score = computeScore();
-    var scoreHtml = '<span class="score-badge" style="color:' + scoreColor(score) + ';border-color:' + scoreColor(score) + '55;" ' +
-      'title="Heuristic score (100 minus penalties for errors/warnings/info across the whole page). Not an official metric.">' +
-      score + ' (' + scoreGrade(score) + ')</span>';
-
     var hdr = document.createElement('div');
     hdr.className = 'hdr';
-    hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b>' + scoreHtml + '</div>';
+    hdr.innerHTML = '<div class="hdr-title">' + HEADER_ICON_SVG + '<b>SEO Page Auditor</b></div>';
     var hdrActions = document.createElement('div');
     hdrActions.style.cssText = 'display:flex;align-items:center;gap:2px;';
     // Toggle button (12.08.2026, per explicit request) — same on/off pattern as the "Highlight
@@ -2211,6 +2348,35 @@
       e.preventDefault();
     });
     panel.appendChild(hdr);
+
+    // "Page optimized" progress bar (28.10.2026) — see computeOptimization() for the logic. Always
+    // visible (whole-page figure, independent of the active tab). The fill starts at the width it
+    // had on the previous render and then animates to the new one, so it glides when async
+    // results arrive but doesn't replay from zero on every tab switch.
+    var opt = computeOptimization();
+    var prog = document.createElement('div');
+    prog.className = 'prog';
+    var optColor = optimizedColor(opt.pct);
+    var deltaHtml = '';
+    if (previousRun && typeof previousRun.optimizedPct === 'number') {
+      var dPct = Math.round((opt.pct - previousRun.optimizedPct) * 10) / 10;
+      deltaHtml = dPct === 0
+        ? '<span>no change since last run</span>'
+        : '<span style="color:' + (dPct > 0 ? '#4ade80' : '#f87171') + ';font-weight:700;">' + (dPct > 0 ? '▲ ' : '▼ ') + Math.abs(dPct).toFixed(1) + '%</span> since last run';
+    }
+    var leftHtml = opt.failedChecks === 0
+      ? '<b>All checks passed</b>'
+      : '<b>' + opt.failedChecks + '</b> check' + (opt.failedChecks === 1 ? '' : 's') + ' need attention · <b>' + opt.issues + '</b> issue' + (opt.issues === 1 ? '' : 's');
+    prog.innerHTML =
+      '<div class="prog-top"><span class="prog-lbl" title="Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.">Page optimized</span>' +
+      '<span class="prog-pct" style="color:' + optColor + ';">' + fmtPct(opt.pct) + '</span></div>' +
+      '<div class="prog-track" role="progressbar" aria-label="Page optimized" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(opt.pct) + '"><div class="prog-fill" style="width:' + lastShownPct + '%;background:' + optimizedGradient(opt.pct) + ';"></div></div>' +
+      '<div class="prog-sub"><span>' + leftHtml + '</span><span>' + deltaHtml + '</span></div>';
+    var progFill = prog.querySelector('.prog-fill');
+    var targetPct = opt.pct;
+    lastShownPct = targetPct;
+    (window.requestAnimationFrame || function (fn) { setTimeout(fn, 16); })(function () { progFill.style.width = targetPct + '%'; });
+    panel.appendChild(prog);
 
     // "Previous run vs. now" banner (11.08.2026, localStorage-backed) — shown right below the
     // header regardless of the active tab, since it's a whole-page comparison. Only appears once
