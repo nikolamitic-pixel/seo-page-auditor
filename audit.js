@@ -625,6 +625,8 @@
     var internalHostCount = 0;
     var modernFormatCount = 0;
     var checkedImgCount = 0;
+    var oversizeMeasured = 0, oversizeFound = 0;   // "image much larger than displayed" (28.10.2026)
+    var lazyConsidered = 0, lazyFound = 0;         // "below-the-fold image not lazy" (28.10.2026)
 
     imgs.forEach(function (img) {
       if (!isVisible(img)) return;
@@ -699,6 +701,40 @@
           element: img });
       }
 
+      // Oversized image + below-the-fold lazy-loading (28.10.2026). Both use the image that was
+      // ACTUALLY chosen by the browser (currentSrc / naturalWidth), so Webflow's responsive
+      // srcset variants are taken into account. SVGs/data URIs are skipped (vector / tiny).
+      var rectNow = img.getBoundingClientRect();
+      var shownW = Math.round(rectNow.width);
+      var natW = img.naturalWidth || 0;
+      var srcNow = img.currentSrc || img.src || '';
+      var skipSizing = /\.svg(\?|#|$)/i.test(srcNow) || /^data:/i.test(srcNow);
+      if (!skipSizing && natW > 0 && shownW >= 48) {
+        oversizeMeasured++;
+        var allowedW = shownW * 2; // up to 2x the displayed width is normal (retina screens)
+        if (natW > allowedW * 1.25 && natW - allowedW > 300) {
+          oversizeFound++;
+          addFinding({ category: 'Images', severity: natW > allowedW * 2 ? 'warning' : 'info',
+            title: 'Image is much larger than it is displayed (' + natW + 'px file shown at ' + shownW + 'px)',
+            description: srcNow.replace(/\?.*$/, '').slice(0, 120),
+            why: 'The browser downloads a ' + natW + 'px-wide file to draw it ' + shownW + 'px wide (even on a 2x retina screen only ~' + allowedW + 'px is useful). The extra bytes slow loading and hurt LCP, a Core Web Vital / ranking signal.',
+            fix: 'Upload a version closer to the displayed size (about 2x the width it is shown at), or let Webflow\'s responsive image variants do it by setting the image\'s size in the Designer.', element: img });
+        }
+      }
+      if (!skipSizing && shownW >= 64 && rectNow.height >= 64) {
+        var absTop = rectNow.top + (window.pageYOffset || 0);
+        if (absTop > window.innerHeight * 1.5) {
+          lazyConsidered++;
+          if ((img.getAttribute('loading') || '').toLowerCase() !== 'lazy') {
+            lazyFound++;
+            addFinding({ category: 'Images', severity: 'info', title: 'Image below the fold is not lazy-loaded',
+              description: srcNow.replace(/\?.*$/, '').slice(0, 120),
+              why: 'Images far below the first screen are downloaded immediately instead of when the visitor scrolls near them, competing with the content that matters for the first view (LCP).',
+              fix: 'In the Webflow Designer: select the image > Settings > Loading > "Lazy" (keep "Eager" only for the hero / above-the-fold images).', element: img });
+          }
+        }
+      }
+
       var src = img.currentSrc || img.src || '';
       var host = hostnameOf(src);
       var isExternal = host && host !== location.hostname && !isWebflowAssetHost(host);
@@ -733,6 +769,14 @@
     });
 
     ['img.alt', 'img.height', 'img.external', 'img.format', 'img.size'].forEach(function (id) { setCheckTotal(id, checkedImgCount); });
+    setCheckTotal('img.oversize', oversizeMeasured);
+    setCheckTotal('img.lazy', lazyConsidered);
+    if (oversizeMeasured > 0 && oversizeFound === 0) {
+      addSuccess({ category: 'Images', title: 'No image is much larger than its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
+    }
+    if (lazyConsidered > 0 && lazyFound === 0) {
+      addSuccess({ category: 'Images', title: 'All ' + lazyConsidered + ' below-the-fold images are lazy-loaded', description: '', element: null });
+    }
     if (checkedImgCount > 0 && goodAltCount > 0) {
       addSuccess({ category: 'Images', title: goodAltCount + ' of ' + checkedImgCount + ' visible images have descriptive (or deliberately decorative) alt text',
         description: '', element: null });
@@ -757,6 +801,99 @@
       addSuccess({ category: 'Images', title: modernFormatCount + ' image(s) are already in a modern format (WebP/AVIF)',
         description: '', element: null });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // 5.3b Page-level indexing signals (28.10.2026): X-Robots-Tag HTTP header + sitemap.xml
+  // ---------------------------------------------------------------------
+  // Both are PAGE questions ("is THIS page blocked / listed?"), answered with same-origin fetches
+  // (no CORS problem). If a request fails or the file doesn't exist, nothing is reported — a
+  // missing sitemap is a site-level matter, outside this page-by-page tool.
+
+  function checkIndexingSignals() {
+    var NOINDEX_NOTE = 'Relevant to both SEO and AEO — a page blocked from indexing won\'t appear in the sources AI answer engines (partly) rely on via the Google index either.';
+
+    // 1) X-Robots-Tag response header (can block indexing without anything visible in the HTML)
+    try {
+      var reqOpts = { cache: 'no-store', credentials: 'same-origin' };
+      fetch(location.href, Object.assign({ method: 'HEAD' }, reqOpts)).then(function (r) {
+        return (r.status === 405 || r.status === 501) ? fetch(location.href, Object.assign({ method: 'GET' }, reqOpts)) : r;
+      }).then(function (r) {
+        if (!r || r.status >= 400) return;
+        var raw = r.headers.get('x-robots-tag') || '';
+        var h = raw.toLowerCase();
+        if (/(^|[\s,:])(noindex|none)(\s|,|$)/.test(h)) {
+          addFinding({ category: 'Meta & head tags', severity: 'error', title: 'X-Robots-Tag header blocks indexing',
+            description: 'X-Robots-Tag: ' + raw,
+            why: 'The server sends an HTTP header that tells search engines not to index this page. It is invisible in the page\'s HTML and in the Designer, and it overrides what the page itself says.',
+            fix: 'Find where the header is set — it is not part of the Webflow project itself: a reverse proxy, Cloudflare rule, or hosting/CDN configuration.',
+            ownerNote: 'Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site (e.g. Cloudflare Transform Rules). It can\'t be changed in the Webflow Designer.',
+            element: null, crossRelevant: true, crossNote: NOINDEX_NOTE, crossNoteReverse: NOINDEX_NOTE });
+        } else if (/nosnippet|max-snippet:\s*0/.test(h)) {
+          addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'X-Robots-Tag header restricts snippets',
+            description: 'X-Robots-Tag: ' + raw,
+            why: 'The server tells search engines not to show a text snippet for this page, which hurts click-through and AI-answer citations.',
+            fix: 'Find where the header is set (reverse proxy / Cloudflare rule / hosting) and remove the snippet restriction if it is unintended.',
+            ownerNote: 'Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site.',
+            element: null, crossRelevant: true, crossNote: NOINDEX_NOTE, crossNoteReverse: NOINDEX_NOTE });
+        } else {
+          addSuccess({ category: 'Meta & head tags', title: 'No X-Robots-Tag header restricts indexing' + (raw ? ' (header: ' + raw.slice(0, 60) + ')' : ''), description: '', element: null });
+        }
+        renderPanel();
+      }).catch(function () { /* blocked / offline — stay silent */ });
+    } catch (e) {}
+
+    // 2) Is this page listed in sitemap.xml?
+    try {
+      if (/\.webflow\.io$/.test(location.hostname)) return; // staging: sitemap is normally off, the staging note already covers it
+      var norm = function (u) {
+        try {
+          var x = new URL(u, location.href);
+          return x.hostname.replace(/^www\./i, '').toLowerCase() + x.pathname.replace(/\/+$/, '');
+        } catch (e) { return null; }
+      };
+      var extractLocs = function (xml) {
+        var out = [], re = /<loc>\s*([^<\s]+)\s*<\/loc>/gi, m;
+        while ((m = re.exec(xml))) out.push(m[1]);
+        return out;
+      };
+      var sitemapPartial = false; // true when not every child sitemap could be read -> never claim "not listed"
+      fetch(location.origin + '/sitemap.xml', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+        return r.ok ? r.text() : null;
+      }).then(function (xml) {
+        if (!xml || !/<(urlset|sitemapindex)[\s>]/i.test(xml)) return null; // no sitemap here: not this tool's concern
+        var locs = extractLocs(xml);
+        if (!/<sitemapindex[\s>]/i.test(xml)) return locs;
+        // sitemap index: read up to 8 child sitemaps
+        if (locs.length > 8) sitemapPartial = true;
+        return Promise.all(locs.slice(0, 8).map(function (u) {
+          return fetch(u, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { if (!r.ok) sitemapPartial = true; return r.ok ? r.text() : ''; }).then(extractLocs).catch(function () { sitemapPartial = true; return []; });
+        })).then(function (lists) { return [].concat.apply([], lists); });
+      }).then(function (locs) {
+        if (!locs) return;
+        var set = {};
+        locs.forEach(function (u) { var n = norm(u); if (n != null) set[n] = true; });
+        var canon = document.querySelector('link[rel="canonical"]');
+        var me = norm(location.href);
+        var canonN = canon ? norm(canon.getAttribute('href')) : null;
+        if (set[me] || (canonN && set[canonN])) {
+          addSuccess({ category: 'Technical / crawlability', title: 'This page is listed in sitemap.xml', description: '', element: null });
+        } else if (sitemapPartial) {
+          return; // couldn't read the whole sitemap — don't claim the page is missing from it
+        } else {
+          var robotsMeta = getMeta('robots') || '';
+          var intentional = /noindex/i.test(robotsMeta) || (canonN && canonN !== me);
+          addFinding({ category: 'Technical / crawlability', severity: intentional ? 'info' : 'warning',
+            title: 'This page is not listed in sitemap.xml',
+            description: 'Checked ' + location.origin + '/sitemap.xml (' + locs.length + ' URLs)',
+            why: 'The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant.' +
+              (intentional ? ' This looks intentional here (the page is noindex or its canonical points elsewhere).' : ''),
+            fix: 'In the Webflow Designer: Pages > this page > Settings > SEO — make sure "Exclude this page from the sitemap" is off, then publish. Also check Project Settings > SEO > Sitemap is enabled (auto-generate).',
+            element: null });
+        }
+        renderPanel();
+      }).catch(function () { /* silent */ });
+    } catch (e) {}
   }
 
   // ---------------------------------------------------------------------
@@ -1618,6 +1755,8 @@
     { id: 'meta.canonical', w: 4, re: /^Canonical tag is missing/, always: true },
     { id: 'meta.noindex', w: 4, re: /noindex/ },
     { id: 'meta.nosnippet', w: 4, re: /^Robots directive/ },
+    { id: 'meta.xrobots', w: 4, re: /^(X-Robots-Tag|No X-Robots-Tag)/ },
+    { id: 'meta.sitemap', w: 2, re: /^This page is (not )?listed in sitemap/ },
     { id: 'meta.lang', w: 2, re: /^lang attribute/ },
     { id: 'meta.viewport', w: 4, re: /^Viewport meta tag/ },
     { id: 'meta.zoom', w: 2, re: /^Viewport (prevents|allows)/ },
@@ -1632,6 +1771,8 @@
     { id: 'img.alt', w: 4, re: /^(Alt text is empty|Image: (alt|generic)|\d+ of \d+ visible images have descriptive)/, total: true },
     { id: 'img.height', w: 4, re: /^(Image has no fixed height|\d+ image\(s\) have (both dimensions|a fixed height))/, total: true },
     { id: 'img.external', w: 4, re: /^(Image is hosted|All images are hosted)/, total: true },
+    { id: 'img.oversize', w: 2, re: /^(Image is much larger than it is displayed|No image is much larger)/, total: true },
+    { id: 'img.lazy', w: 2, re: /^(Image below the fold|All \d+ below-the-fold)/, total: true },
     { id: 'img.format', w: 1, re: /^(Image is not in a modern|\d+ image\(s\) are already in a modern)/, total: true },
     { id: 'img.size', w: 4, re: /^Image is larger than 500KB/, always: true, total: true },
     { id: 'links.nowhere', w: 2, re: /^(Link doesn't go anywhere|There are no links that go nowhere)/, total: true },
@@ -2377,7 +2518,18 @@
     return item.crossNote || 'Relevant to both SEO and AEO.';
   }
 
+  // Debounced "save this run" (28.10.2026): async results (link checks, header/sitemap fetches,
+  // image HEADs) can arrive AFTER the old single save at +1200ms, which made the next run's
+  // "since last run" delta show a small phantom change (e.g. ▼ 0.1%) on an unchanged page.
+  // Saving again a little after the LAST render keeps the stored % equal to the final one.
+  var runSaveTimer = null;
+  function scheduleRunSave() {
+    clearTimeout(runSaveTimer);
+    runSaveTimer = setTimeout(function () { try { saveCurrentRun(); } catch (e) {} }, 2500);
+  }
+
   function renderPanel() {
+    scheduleRunSave();
     ensurePanel();
     var old = shadow.querySelector('.panel');
     if (old) old.remove();
@@ -2833,6 +2985,7 @@
     checkSlug();
     checkMetaHead();
     checkFavicon();
+    checkIndexingSignals();
     checkHeadings();
     checkImages();
     checkLinks();
