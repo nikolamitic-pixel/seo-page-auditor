@@ -186,9 +186,9 @@
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is too long (' + title.length + ' characters)',
         description: 'Title: "' + title + '"', why: 'Google typically truncates the title after ~60 characters in search results.',
         fix: 'Shorten the title to 50-60 characters, put the most important words first.', element: document.head });
-    } else if (title.length < 15) {
+    } else if (title.length < 30) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is very short (' + title.length + ' characters)',
-        description: 'Title: "' + title + '"', why: 'A title that\'s too short usually isn\'t descriptive enough.',
+        description: 'Title: "' + title + '"', why: 'A title under ~30 characters usually isn\'t descriptive enough and wastes room in the search result (the ideal range is roughly 50-60 characters; Google actually measures pixel width, so this is an approximation).',
         fix: 'Expand the title to better describe the page content.', element: document.head });
     } else {
       titleLengthOk = true;
@@ -209,6 +209,10 @@
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Meta description is missing',
         description: 'There is no meta description tag, or it is empty.', why: 'Meta description influences CTR from search results even though it isn\'t a direct ranking factor.',
         fix: 'Add a meta description of 120-160 characters in Page Settings.', element: document.head });
+    } else if (desc.length < 70) {
+      addFinding({ category: 'Meta & head tags', severity: 'info', title: 'Meta description is short (' + desc.length + ' characters)',
+        description: desc, why: 'A very short description leaves room in the search result unused. Google often rewrites descriptions anyway, so this is a suggestion, not an error; the usual guideline is ~120-160 characters (an approximation — Google measures pixels).',
+        fix: 'Expand it to roughly 120-160 characters that describe the page and invite the click.', element: document.head });
     } else if (desc.length > 160) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta description is too long (' + desc.length + ' characters)',
         description: desc, why: 'Google truncates the description after ~155-160 characters.', fix: 'Shorten it to 120-160 characters.', element: document.head });
@@ -639,8 +643,14 @@
       var isDecorative = hasAltAttr && altText === '';
       var isMissing = !hasAltAttr;
       var isGeneric = hasAltAttr && altText !== '' && GENERIC_ALT_PATTERNS.test(altText);
+      // 28.10.2026: an SVG (icon/illustration) with alt="" is the standard decorative pattern —
+      // on honeybook.com ~90% of the "empty alt" notes were SVG icons, so they're treated as fine.
+      var imgSrcStr = img.currentSrc || img.src || '';
+      var isSvgImg = /\.svg(\?|#|$)/i.test(imgSrcStr) || /^data:image\/svg/i.test(imgSrcStr);
 
-      if (isDecorative) {
+      if (isDecorative && isSvgImg) {
+        goodAltCount++;
+      } else if (isDecorative) {
         addFinding({ category: 'Images', severity: 'info',
           title: 'Alt text is empty (alt="") — likely set to "Decorative" in Webflow',
           description: (img.currentSrc || img.src || '').slice(0, 120),
@@ -775,7 +785,7 @@
         addFinding({ category: 'Links', severity: 'warning', title: 'Link doesn\'t go anywhere (href="' + (href || '') + '")',
           description: '"' + text(a).slice(0, 60) + '"',
           why: 'If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role="tab", not an <a> link — a link semantically implies navigation.',
-          fix: 'If the element doesn\'t navigate anywhere, change it to a <button> (or add role="tab"/role="button" plus the corresponding ARIA attributes).', element: a });
+          fix: 'If the element doesn\'t navigate anywhere, change it to a <button> (or add role="tab"/role="button" plus the corresponding ARIA attributes). In Webflow, a link used only as an interaction trigger (e.g. closing a popup) is a very common pattern — if that is what this is, it is a minor note rather than a real problem.', element: a });
       }
 
       // In-page anchor targets
@@ -854,7 +864,8 @@
             linkCheckProblemFound = true;
             addFinding({ category: 'Links', severity: 'info', title: 'Internal link goes through a redirect',
               description: item.href, why: 'It isn\'t broken, but a redirect slows things down and dilutes the link signal.',
-              fix: 'If possible, update the link to point directly to the final URL.', element: item.el });
+              fix: 'If possible, update the link to point directly to the final URL.', element: item.el,
+              ownerNote: 'In Webflow you can only point the link straight at the final URL. If the redirect itself is configured at the reverse proxy / Cloudflare / app level (e.g. www → app subdomain), removing it needs access to that platform.' });
             renderPanel();
           }
           maybeReportLinkCheckSuccess();
@@ -889,21 +900,44 @@
         crossNoteReverse: 'Relevant to both SEO and AEO — a sufficient amount of quality content is a basic prerequisite for Google to consider the page worth ranking.' });
     }
 
-    // Hidden content (potential keyword stuffing)
-    var all = Array.prototype.slice.call(document.querySelectorAll('body *'));
-    var hiddenChecked = 0;
-    for (var i = 0; i < all.length && hiddenChecked < 800; i++) {
-      var el = all[i];
-      var style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden') {
-        var t = text(el);
-        if (t && t.length > 60) {
-          hiddenChecked++;
-          addFinding({ category: 'Content', severity: 'info', title: 'Hidden content with a substantial amount of text (display:none/visibility:hidden)',
-            description: '"' + t.slice(0, 80) + '..."', why: 'Hidden text with a lot of words can look like an attempt at keyword stuffing, even if unintentional (e.g. a forgotten tab panel).',
-            fix: 'Check whether this content should be visible, or remove it if it\'s leftover from development.', element: el });
-        }
-      }
+    // Hidden content (potential keyword stuffing) — reworked 28.10.2026 after testing on
+    // honeybook.com: <script>/<style>/<noscript>/<template> are display:none by default (so they
+    // always matched), and Webflow UI (nav dropdowns, popups, tabs, accordions, sliders) is hidden
+    // BY DESIGN. Now: skip those tags, skip anything inside typical UI containers, look only at the
+    // TOPMOST hidden element, and report everything as ONE merged finding instead of one per element.
+    var HIDDEN_SKIP_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|HEAD|META|LINK|TITLE|SVG|DEFS|SYMBOL)$/i;
+    var HIDDEN_UI_SELECTOR = [
+      'nav', 'details', '[role="dialog"]', '[role="menu"]', '[role="tabpanel"]', '[aria-modal="true"]',
+      '[class*="popup" i]', '[class*="modal" i]', '[class*="dropdown" i]', '[class*="accordion" i]',
+      '[class*="w-tab" i]', '[class*="tabs" i]', '[class*="faq" i]', '[class*="menu" i]', '[class*="lightbox" i]',
+      '[class*="w-slide" i]', '[class*="slider" i]', '[class*="navbar" i]', '[class*="w-nav" i]',
+      '[class*="tooltip" i]', '[class*="toast" i]', '[class*="overlay" i]', '[class*="cookie" i]', '[class*="consent" i]'
+    ].join(',');
+    var allBodyEls = Array.prototype.slice.call(document.querySelectorAll('body *'));
+    var hiddenBlocks = [];
+    var hiddenTexts = [];
+    for (var hi = 0; hi < allBodyEls.length; hi++) {
+      var hel = allBodyEls[hi];
+      if (HIDDEN_SKIP_TAGS.test(hel.tagName)) continue;
+      var hstyle = window.getComputedStyle(hel);
+      if (hstyle.display !== 'none' && hstyle.visibility !== 'hidden') continue;
+      if (hiddenBlocks.some(function (blk) { return blk.contains(hel); })) continue;
+      var inUi = false;
+      try { inUi = !!hel.closest(HIDDEN_UI_SELECTOR); } catch (e) {}
+      if (inUi) continue;
+      // Text WITHOUT <script>/<style>/<noscript>/<template> descendants: Webflow Embed elements
+      // (".w-embed" with display:none) are wrappers around inline CSS/JS, which is code, not content.
+      var hclone = hel.cloneNode(true);
+      Array.prototype.forEach.call(hclone.querySelectorAll('script,style,noscript,template'), function (n) { n.remove(); });
+      var htxt = (hclone.textContent || '').replace(/\s+/g, ' ').trim();
+      if (htxt.length > 60) { hiddenBlocks.push(hel); hiddenTexts.push(htxt); }
+    }
+    if (hiddenBlocks.length) {
+      addFinding({ category: 'Content', severity: 'info',
+        title: 'Hidden content with a substantial amount of text (' + hiddenBlocks.length + ' block' + (hiddenBlocks.length === 1 ? '' : 's') + ', display:none/visibility:hidden)',
+        description: 'First ' + Math.min(3, hiddenBlocks.length) + ':\n' + hiddenTexts.slice(0, 3).map(function (t) { return '"' + t.slice(0, 80) + '..."'; }).join('\n'),
+        why: 'Hidden text with a lot of words can look like an attempt at keyword stuffing, even if unintentional (e.g. a forgotten tab panel). Menus, popups, tabs, accordions and sliders are ignored, since they are hidden by design.',
+        fix: 'Check whether this content should be visible, or remove it if it\'s leftover from development.', element: hiddenBlocks[0] });
     }
 
     // Repeated consecutive word
@@ -1093,35 +1127,74 @@
       }
     }
 
-    // Third-party scripts without async/defer
+    // Third-party scripts without async/defer — reworked 28.10.2026 (honeybook.com audit):
+    //  - POSITION matters: in <head> a sync script blocks parsing (error); at the end of <body> it
+    //    blocks almost nothing (info);
+    //  - Webflow's OWN scripts (jQuery from Webflow's CDN, the generated site JS on website-files.com)
+    //    can't be changed in the Designer or in Custom Code -> info, excluded from the score;
+    //  - consent managers are usually loaded synchronously on purpose -> info;
+    //  - ownerNote says who can actually fix it (Cloudflare / tag manager / reverse proxy).
+    function isWebflowPlatformScript(host, src) {
+      return host === 'd3e54v103j8qbb.cloudfront.net' ||
+        (/(^|\.)website-files\.com$/.test(host) && /\/js\//.test(src)) ||
+        /(^|\.)webflow\.(com|io)$/.test(host);
+    }
+    var CONSENT_HOST_RE = /(osano|cookiebot|onetrust|cookielaw|usercentrics|cookieyes|iubenda|termly|trustarc|didomi|quantcast)/i;
     var scripts = Array.prototype.slice.call(document.querySelectorAll('head script[src], body script[src]'));
     var thirdPartyScriptCount = 0;
     var blockingScriptFound = false;
+    var platformScriptFlagged = false;
     scripts.forEach(function (s) {
       var src = s.getAttribute('src');
       var host = hostnameOf(src);
-      if (host && host !== location.hostname) {
-        thirdPartyScriptCount++;
-        if (!s.async && !s.defer) {
-          blockingScriptFound = true;
-          var current = '<script src="' + src + '"></script>';
-          var suggested = '<script src="' + src + '" defer></script>';
-          addFinding({ category: 'Technical / crawlability', severity: 'error',
-            title: 'Third-party script without async/defer (' + host + ')',
-            description: 'Current:\n' + current + '\n\nSuggested:\n' + suggested,
-            // Dedicated field (11.08.2026) for the "Copy suggested code" button — separate from
-            // `fix` (a prose recommendation) and from `description` (the human-readable
-            // Current/Suggested comparison shown in the panel), so the copy action grabs just
-            // the ready-to-paste <script> tag, not the "Current:"/"Suggested:" labels around it.
-            suggestedCode: suggested,
-            why: 'A script without async/defer blocks parsing/rendering of the page at that point until it\'s downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption.',
-            fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script into Page Settings > Custom Code > "Before </body> tag" instead of the <head>.',
-            element: s });
-        }
+      if (!host || host === location.hostname) return;
+      var isPlatform = isWebflowPlatformScript(host, src);
+      if (!isPlatform) thirdPartyScriptCount++;
+      if (s.async || s.defer) return;
+
+      var inHead = !!s.closest('head');
+      var isConsent = CONSENT_HOST_RE.test(host);
+      var isCloudflare = /(^|\.)cloudflareinsights\.com$/.test(host);
+      var current = '<script src="' + src + '"></script>';
+      var suggested = '<script src="' + src + '" defer></script>';
+      var finding = {
+        category: 'Technical / crawlability',
+        severity: (inHead && !isPlatform && !isConsent) ? 'error' : 'info',
+        title: 'Third-party script without async/defer (' + host + ')',
+        description: 'Current:\n' + current + '\n\nSuggested:\n' + suggested,
+        // Dedicated field (11.08.2026) for the "Copy suggested code" button — separate from
+        // `fix` (a prose recommendation) and from `description` (the human-readable
+        // Current/Suggested comparison shown in the panel), so the copy action grabs just
+        // the ready-to-paste <script> tag, not the "Current:"/"Suggested:" labels around it.
+        suggestedCode: suggested,
+        why: 'A script without async/defer blocks parsing/rendering of the page at that point until it\'s downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption.' +
+          (inHead ? '' : ' This one sits at the end of <body>, where it blocks very little (it mostly delays DOMContentLoaded), so it is only a minor note.'),
+        fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script into Page Settings > Custom Code > "Before </body> tag" instead of the <head>.',
+        element: s };
+      if (isPlatform) {
+        platformScriptFlagged = true;
+        finding.title = 'Webflow platform script without async/defer (' + host + ')';
+        finding.description = src.replace(/\?.*$/, '').slice(0, 140);
+        delete finding.suggestedCode;
+        finding.why = 'This script is added automatically by Webflow to every published page (jQuery / the generated site JavaScript) and sits at the end of <body>.';
+        finding.fix = 'No action needed — Webflow does not let you change its attributes.';
+        finding.ownerNote = 'Added by the Webflow platform itself — there is no option in the Designer or in Custom Code to change it. Not counted in the optimization score.';
+        finding.noScore = true;
+      } else if (isCloudflare) {
+        blockingScriptFound = true;
+        finding.ownerNote = 'Needs access to Cloudflare (or whoever manages the CDN / reverse proxy in front of the site) — it is not part of the Webflow project, so it can\'t be changed from there.';
+      } else if (isConsent) {
+        blockingScriptFound = true;
+        finding.why = 'Cookie-consent managers are usually loaded synchronously on purpose, so they can run before any tracking script. Check the provider\'s documentation before adding async/defer.';
+        finding.fix = 'Usually leave as is. Only change it if the provider\'s docs say deferring is supported.';
+      } else {
+        blockingScriptFound = true;
+        if (!inHead) finding.ownerNote = 'If this script is not in the project\'s Custom Code, it is most likely loaded by a tag manager (e.g. Google Tag Manager) or injected by a reverse proxy — then it has to be changed there, by whoever manages that platform.';
       }
+      addFinding(finding);
     });
     if (thirdPartyScriptCount > 0 && !blockingScriptFound) {
-      addSuccess({ category: 'Technical / crawlability', title: 'All third-party scripts (' + thirdPartyScriptCount + ') have async/defer', description: '', element: null });
+      addSuccess({ category: 'Technical / crawlability', title: 'All third-party scripts (' + thirdPartyScriptCount + ') have async/defer' + (platformScriptFlagged ? ' (not counting Webflow\'s own scripts)' : ''), description: '', element: null });
     }
   }
 
@@ -1191,6 +1264,25 @@
       addSuccess({ category: 'Performance (CWV)', title: 'LCP is good (' + cwv.lcp + 'ms, under Google\'s 2500ms threshold)', description: '', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
+    // LCP image lazy-loaded (28.10.2026): a hero/above-the-fold image with loading="lazy" is
+    // fetched late on purpose, which directly delays LCP. Only evaluated when the LCP element is an
+    // <img> (text/background LCP elements have nothing to check, so no result is shown for them).
+    try {
+      var lcpList = performance.getEntriesByType('largest-contentful-paint');
+      var lcpEl = lcpList.length ? lcpList[lcpList.length - 1].element : null;
+      if (lcpEl && lcpEl.tagName === 'IMG') {
+        if ((lcpEl.getAttribute('loading') || '').toLowerCase() === 'lazy') {
+          addFinding({ category: 'Performance (CWV)', severity: 'warning', title: 'The LCP image is lazy-loaded (loading="lazy")',
+            description: (lcpEl.currentSrc || lcpEl.src || '').replace(/\?.*$/, '').slice(0, 120),
+            why: 'The largest above-the-fold image is the LCP element. With loading="lazy" the browser postpones fetching it until layout is known, which delays LCP (a Core Web Vital / ranking signal).',
+            fix: 'In the Webflow Designer: select the image > Settings > Loading > "Eager". Optionally also add the custom attribute fetchpriority="high".', element: lcpEl,
+            crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
+        } else {
+          addSuccess({ category: 'Performance (CWV)', title: 'The LCP image is not lazy-loaded', description: '', element: lcpEl,
+            crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
+        }
+      }
+    } catch (e) {}
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
       addFinding({ category: 'Performance (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'High CLS (Cumulative Layout Shift): ' + cwv.cls,
@@ -1254,10 +1346,16 @@
   }
 
   function looksLikeArticle() {
-    if (document.querySelector('article')) return true;
+    // Narrowed 28.10.2026 (honeybook.com audit): the old rule "600+ words and 2+ subheadings"
+    // fired on every long marketing/product/pricing page. Now it needs a real signal: an
+    // <article> with substantial text (CMS cards have very little), og:type=article, or a
+    // blog-style URL with a decent amount of text.
+    var articles = Array.prototype.slice.call(document.querySelectorAll('article'));
+    if (articles.some(function (a) { return text(a).split(/\s+/).filter(Boolean).length >= 300; })) return true;
+    if (/^article$/i.test((getMeta('og:type', 'property') || '').trim())) return true;
     var main = document.querySelector('main') || document.body;
     var wordCount = text(main).split(/\s+/).filter(Boolean).length;
-    return wordCount > 600 && document.querySelectorAll('h2,h3').length >= 2;
+    return /^\/(blog|posts?|articles?|news|insights|learn|resources|stories)\/[^\/]+/i.test(location.pathname) && wordCount > 300;
   }
 
   function looksLikeBreadcrumbUI() {
@@ -1304,7 +1402,7 @@
     if (looksLikeArticle() && articleSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
         title: 'Page looks like an article/blog post but has no Article schema markup',
-        description: 'An <article> element or a long text (600+ words) with multiple subheadings was found, without a JSON-LD Article/BlogPosting schema.',
+        description: 'An <article> element with substantial text, og:type="article", or a blog-style URL was found, without a JSON-LD Article/BlogPosting schema.',
         why: 'Article schema helps AI answer engines and Google understand the author, publish/modified date, and topic of the page — all Tier-1 technical AEO signals.',
         fix: 'Add a JSON-LD Article schema with headline, author, datePublished, dateModified.', element: null });
     } else {
@@ -1556,6 +1654,7 @@
     { id: 'cwv.ttfb', w: 4, re: /^(Slow TTFB|TTFB is good)/ },
     { id: 'cwv.lcp', w: 4, re: /^(Slow LCP|LCP is good)/ },
     { id: 'cwv.cls', w: 4, re: /^(High CLS|CLS is good)/ },
+    { id: 'cwv.lcpLazy', w: 2, re: /^The LCP image/ },
     { id: 'aeo.jsonld', w: 4, re: /^(JSON-LD schema block|All JSON-LD schema blocks)/ },
     { id: 'aeo.faq', w: 4, re: /^(Page looks like a FAQ|FAQPage schema|\d+ question\(s\) in the FAQPage)/ },
     { id: 'aeo.article', w: 2, re: /^Page looks like an article/, evalIfAnyOf: ['aeo.articleDates', 'aeo.articleAuthor', 'aeo.authorLink'] },
@@ -1575,15 +1674,16 @@
     return null;
   }
 
-  // Returns { pct, failedChecks, issues } — pct is 0–100 with one decimal.
+  // Returns { pct, failedChecks, issues, notes } — pct is 0–100 with one decimal.
   function computeOptimization() {
     window.__SeoAuditorUnmatched = [];
     var perCheck = {}; // id -> { findings: [] }
     function bucket(id) { return perCheck[id] || (perCheck[id] = { findings: [] }); }
-    var issues = 0;
+    var issues = 0, notes = 0; // issues = errors + warnings; notes = info items (still listed, still in the %)
     findings.forEach(function (f) {
       if (f.category === 'Preliminary check') return; // context, not an optimization
-      issues++;
+      if (f.severity === 'info') notes++; else issues++;
+      if (f.noScore) return; // e.g. Webflow's own scripts — shown, but not the developer's to fix
       f.check = f.check || matchCheckId(f.title || '');
       if (!f.check) { window.__SeoAuditorUnmatched.push(f.title); return; }
       bucket(f.check).findings.push(f);
@@ -1622,7 +1722,7 @@
       earned += c.w - lost;
     });
     var pct = totalW > 0 ? Math.round((earned / totalW) * 1000) / 10 : 100;
-    return { pct: pct, failedChecks: failedChecks, issues: issues };
+    return { pct: pct, failedChecks: failedChecks, issues: issues, notes: notes };
   }
   function optimizedColor(pct) {
     if (pct >= 80) return '#4ade80';
@@ -1750,6 +1850,7 @@
         if (f.description) lines.push(indentLines(f.description, '   '));
         if (f.crossRelevant) lines.push('   (' + getCrossText(f, contextGroup) + ')');
         if (f.globalNote) lines.push('   Global element: ' + f.globalNote);
+        if (f.ownerNote) lines.push(indentLines('Who can fix: ' + f.ownerNote, '   '));
         if (f.why) lines.push(indentLines('Why it matters: ' + f.why, '   '));
         lines.push('');
       });
@@ -2120,6 +2221,7 @@
       // .list container handles scrolling for the whole list.
       '.item .desc{color:#c3c9d6;white-space:pre-wrap;font-size:12px;line-height:1.5;margin-top:4px;}',
       '.item .global{margin-top:6px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
+      '.item .owner{margin-top:6px;color:#fcd34d;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.item .cross{margin-top:6px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.empty{padding:32px 20px;color:#8b93a7;font-size:13px;text-align:center;line-height:1.5;}',
       '.tag{display:inline-block;margin-right:4px;}',
@@ -2364,9 +2466,13 @@
         ? '<span>no change since last run</span>'
         : '<span style="color:' + (dPct > 0 ? '#4ade80' : '#f87171') + ';font-weight:700;">' + (dPct > 0 ? '▲ ' : '▼ ') + Math.abs(dPct).toFixed(1) + '%</span> since last run';
     }
-    var leftHtml = opt.failedChecks === 0
+    // "issues" = errors + warnings, "notes" = info items (split 28.10.2026: lumping hundreds of
+    // info notes into one "issues" number made a decent page look far worse than it is).
+    var leftHtml = (opt.failedChecks === 0
       ? '<b>All checks passed</b>'
-      : '<b>' + opt.failedChecks + '</b> check' + (opt.failedChecks === 1 ? '' : 's') + ' need attention · <b>' + opt.issues + '</b> issue' + (opt.issues === 1 ? '' : 's');
+      : '<b>' + opt.failedChecks + '</b> check' + (opt.failedChecks === 1 ? '' : 's') + ' need attention') +
+      (opt.issues > 0 ? ' · <b>' + opt.issues + '</b> issue' + (opt.issues === 1 ? '' : 's') : '') +
+      (opt.notes > 0 ? ' · <b>' + opt.notes + '</b> note' + (opt.notes === 1 ? '' : 's') : '');
     prog.innerHTML =
       '<div class="prog-top"><span class="prog-lbl" title="Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.">Page optimized</span>' +
       '<span class="prog-pct" style="color:' + optColor + ';">' + fmtPct(opt.pct) + '</span></div>' +
@@ -2640,10 +2746,11 @@
         item.className = 'item';
         item.innerHTML =
           '<div class="cat">' + f.category + '</div>' +
-          '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + f.title + '</div>' +
+          '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + (f.crossRelevant ? '<span class="badge group-shared tag" title="Shown in both the SEO and AEO tabs (counted once in the totals)">SEO+AEO</span>' : '') + f.title + '</div>' +
           '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
           (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="Copy the suggested code to clipboard" style="margin:6px 0 0;">📋 Copy suggested code</button>' : '') +
           (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
+          (f.ownerNote ? '<div class="owner">🔑 <b>Who can fix:</b> ' + f.ownerNote + '</div>' : '') +
           (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
           (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Why:</b> ' + f.why + '</div>' : '') +
           (f.fix ? '<div class="desc fixrow" style="color:#86efac;margin-top:4px;"><b>Fix:</b> ' + f.fix + ' <button class="copybtn copy-fix-btn" title="Copy this fix suggestion to clipboard">Copy</button></div>' : '');
