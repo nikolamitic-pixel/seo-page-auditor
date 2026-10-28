@@ -78,6 +78,19 @@
   var WEBFLOW_ASSET_HOST_SUFFIXES = ['website-files.com'];
   var WEBFLOW_ASSET_HOSTS_EXACT = ['uploads-ssl.webflow.com', 'daks2k3a4ib2z.cloudfront.net'];
 
+  // Same site = same registrable domain (cdn.example.com / images.example.com are NOT "external"
+  // for example.com). Simple heuristic: last two labels, or last three for co.uk-style suffixes.
+  function rootDomain(h) {
+    var p = String(h || '').toLowerCase().split('.');
+    if (p.length <= 2) return p.join('.');
+    var sld = p[p.length - 2];
+    if (p[p.length - 1].length === 2 && ['co', 'com', 'org', 'net', 'gov', 'ac', 'edu'].indexOf(sld) !== -1) return p.slice(-3).join('.');
+    return p.slice(-2).join('.');
+  }
+  function isSameSite(host) {
+    return !!host && rootDomain(host) === rootDomain(location.hostname);
+  }
+
   function isWebflowAssetHost(host) {
     if (!host) return false;
     if (WEBFLOW_ASSET_HOSTS_EXACT.indexOf(host) !== -1) return true;
@@ -737,7 +750,7 @@
 
       var src = img.currentSrc || img.src || '';
       var host = hostnameOf(src);
-      var isExternal = host && host !== location.hostname && !isWebflowAssetHost(host);
+      var isExternal = host && host !== location.hostname && !isWebflowAssetHost(host) && !isSameSite(host);
 
       if (isExternal) {
         addFinding({ category: 'Images', severity: 'error', title: 'Image is hosted on an external server',
@@ -810,6 +823,22 @@
   // (no CORS problem). If a request fails or the file doesn't exist, nothing is reported — a
   // missing sitemap is a site-level matter, outside this page-by-page tool.
 
+  // When a check that needs a network request can't be completed, say so (and why) instead of
+  // silently showing nothing — the result is UNKNOWN, which is neither a pass nor a failure, so
+  // it's an info note that doesn't affect the score (noScore).
+  function reportCheckSkipped(what, reasons) {
+    var uniq = [];
+    (reasons || []).forEach(function (r) { if (uniq.indexOf(r) === -1) uniq.push(r); });
+    addFinding({ category: 'Technical / crawlability', severity: 'info', noScore: true,
+      title: what + ' could not be completed',
+      description: 'Reason: ' + (uniq.length ? uniq.join('; ') : 'unknown'),
+      why: 'This check has to request a file from the same site, and that request could not be completed — so the result is unknown. This is NOT a pass and NOT a failure, and it does not affect the score.',
+      fix: 'Nothing to fix on the page. If you need this result, check it manually: open the file in the browser (e.g. /sitemap.xml) or inspect the response headers in DevTools > Network.',
+      element: null });
+    renderPanel();
+  }
+  var CSP_OR_NETWORK = 'the browser blocked or failed the request (a network error, or the site\'s Content-Security-Policy "connect-src" rule)';
+
   function checkIndexingSignals() {
     var NOINDEX_NOTE = 'Relevant to both SEO and AEO — a page blocked from indexing won\'t appear in the sources AI answer engines (partly) rely on via the Google index either.';
 
@@ -819,7 +848,8 @@
       fetch(location.href, Object.assign({ method: 'HEAD' }, reqOpts)).then(function (r) {
         return (r.status === 405 || r.status === 501) ? fetch(location.href, Object.assign({ method: 'GET' }, reqOpts)) : r;
       }).then(function (r) {
-        if (!r || r.status >= 400) return;
+        if (!r) return;
+        if (r.status >= 400) { reportCheckSkipped('X-Robots-Tag header check', ['the server answered HTTP ' + r.status + ' to the header request']); return; }
         var raw = r.headers.get('x-robots-tag') || '';
         var h = raw.toLowerCase();
         if (/(^|[\s,:])(noindex|none)(\s|,|$)/.test(h)) {
@@ -840,7 +870,7 @@
           addSuccess({ category: 'Meta & head tags', title: 'No X-Robots-Tag header restricts indexing' + (raw ? ' (header: ' + raw.slice(0, 60) + ')' : ''), description: '', element: null });
         }
         renderPanel();
-      }).catch(function () { /* blocked / offline — stay silent */ });
+      }).catch(function () { reportCheckSkipped('X-Robots-Tag header check', [CSP_OR_NETWORK]); });
     } catch (e) {}
 
     // 2) Is this page listed in sitemap.xml?
@@ -857,20 +887,45 @@
         while ((m = re.exec(xml))) out.push(m[1]);
         return out;
       };
-      var sitemapPartial = false; // true when not every child sitemap could be read -> never claim "not listed"
-      fetch(location.origin + '/sitemap.xml', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
-        return r.ok ? r.text() : null;
-      }).then(function (xml) {
-        if (!xml || !/<(urlset|sitemapindex)[\s>]/i.test(xml)) return null; // no sitemap here: not this tool's concern
-        var locs = extractLocs(xml);
-        if (!/<sitemapindex[\s>]/i.test(xml)) return locs;
-        // sitemap index: read up to 8 child sitemaps
-        if (locs.length > 8) sitemapPartial = true;
-        return Promise.all(locs.slice(0, 8).map(function (u) {
-          return fetch(u, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { if (!r.ok) sitemapPartial = true; return r.ok ? r.text() : ''; }).then(extractLocs).catch(function () { sitemapPartial = true; return []; });
-        })).then(function (lists) { return [].concat.apply([], lists); });
-      }).then(function (locs) {
-        if (!locs) return;
+      var sitemapPartial = false; // true when not every (nested) sitemap could be read -> never claim "not listed"
+      var sitemapReasons = [];    // WHY it's partial/failed, shown to the user instead of staying silent
+      var sitemapRootError = null; // root sitemap.xml request failed for a reason other than "doesn't exist"
+      var sitemapFetches = 0;
+      // Reads a sitemap URL; a <sitemapindex> is followed recursively (nested indexes exist: e.g.
+      // honeybook.com's index points to /blog/sitemap-index.xml which points to /blog/sitemap.xml).
+      // Capped at 12 fetches / depth 3 — beyond that we stop and mark the result as partial.
+      var readSitemap = function (u, depth, isRoot) {
+        if (sitemapFetches >= 12 || depth > 3) {
+          sitemapPartial = true;
+          sitemapReasons.push('the sitemap has more nested files than this check reads (max 12 files, 3 levels deep), so it can\'t prove the page is missing');
+          return Promise.resolve([]);
+        }
+        sitemapFetches++;
+        return fetch(u, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+          if (!r.ok) {
+            if (!isRoot) { sitemapPartial = true; sitemapReasons.push('a sitemap file (' + u.replace(/^https?:\/\/[^\/]+/, '').slice(0, 60) + ') answered HTTP ' + r.status); }
+            return null;
+          }
+          return r.text();
+        }).then(function (xml) {
+          if (!xml || !/<(urlset|sitemapindex)[\s>]/i.test(xml)) {
+            if (!isRoot) { sitemapPartial = true; sitemapReasons.push('a sitemap file (' + u.replace(/^https?:\/\/[^\/]+/, '').slice(0, 60) + ') is not valid sitemap XML'); }
+            return isRoot ? null : [];
+          }
+          var locs = extractLocs(xml);
+          if (!/<sitemapindex[\s>]/i.test(xml)) return locs;
+          return Promise.all(locs.map(function (child) { return readSitemap(child, depth + 1, false); })).then(function (lists) { return [].concat.apply([], lists); });
+        }).catch(function () {
+          if (isRoot) sitemapRootError = CSP_OR_NETWORK;
+          else { sitemapPartial = true; sitemapReasons.push(CSP_OR_NETWORK); }
+          return isRoot ? null : [];
+        });
+      };
+      readSitemap(location.origin + '/sitemap.xml', 0, true).then(function (locs) {
+        if (!locs) {
+          if (sitemapRootError) reportCheckSkipped('Sitemap check', [sitemapRootError]); // a missing sitemap (404) stays silent: site-level matter
+          return;
+        }
         var set = {};
         locs.forEach(function (u) { var n = norm(u); if (n != null) set[n] = true; });
         var canon = document.querySelector('link[rel="canonical"]');
@@ -879,7 +934,9 @@
         if (set[me] || (canonN && set[canonN])) {
           addSuccess({ category: 'Technical / crawlability', title: 'This page is listed in sitemap.xml', description: '', element: null });
         } else if (sitemapPartial) {
-          return; // couldn't read the whole sitemap — don't claim the page is missing from it
+          // couldn't read the whole sitemap — don't claim the page is missing from it, but SAY why
+          reportCheckSkipped('Sitemap check (is this page listed?)', sitemapReasons);
+          return;
         } else {
           var robotsMeta = getMeta('robots') || '';
           var intentional = /noindex/i.test(robotsMeta) || (canonN && canonN !== me);
@@ -892,7 +949,7 @@
             element: null });
         }
         renderPanel();
-      }).catch(function () { /* silent */ });
+      }).catch(function () { /* unexpected error in the check itself */ });
     } catch (e) {}
   }
 
@@ -1273,10 +1330,10 @@
     //  - ownerNote says who can actually fix it (Cloudflare / tag manager / reverse proxy).
     function isWebflowPlatformScript(host, src) {
       return host === 'd3e54v103j8qbb.cloudfront.net' ||
-        (/(^|\.)website-files\.com$/.test(host) && /\/js\//.test(src)) ||
+        (/(^|\.)website-files\.com$/.test(host) && /\/(js|gsap)\//.test(src)) ||
         /(^|\.)webflow\.(com|io)$/.test(host);
     }
-    var CONSENT_HOST_RE = /(osano|cookiebot|onetrust|cookielaw|usercentrics|cookieyes|iubenda|termly|trustarc|didomi|quantcast)/i;
+    var CONSENT_HOST_RE = /(osano|consentpro|cookiebot|onetrust|cookielaw|usercentrics|cookieyes|iubenda|termly|trustarc|didomi|quantcast)/i;
     var scripts = Array.prototype.slice.call(document.querySelectorAll('head script[src], body script[src]'));
     var thirdPartyScriptCount = 0;
     var blockingScriptFound = false;
@@ -1800,7 +1857,7 @@
     { id: 'aeo.faq', w: 4, re: /^(Page looks like a FAQ|FAQPage schema|\d+ question\(s\) in the FAQPage)/ },
     { id: 'aeo.article', w: 2, re: /^Page looks like an article/, evalIfAnyOf: ['aeo.articleDates', 'aeo.articleAuthor', 'aeo.authorLink'] },
     { id: 'aeo.articleDates', w: 4, re: /^Article schema (has neither|has datePublished)/ },
-    { id: 'aeo.articleAuthor', w: 1, re: /^Article schema has (no )?author field/ },
+    { id: 'aeo.articleAuthor', w: 1, re: /^Article schema has (no |an )?author field/ },
     { id: 'aeo.authorLink', w: 4, re: /^Author link in the Article schema/ },
     { id: 'aeo.nap', w: 2, re: /^(Phone number in the Organization|Address from the Organization|NAP data)/ },
     { id: 'aeo.breadcrumb', w: 1, re: /^(A visible breadcrumb UI|BreadcrumbList schema)/ },
