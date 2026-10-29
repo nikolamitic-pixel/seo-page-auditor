@@ -1928,6 +1928,8 @@
     '</svg>';
   var activeTab = 'seo'; // 'seo' | 'aeo' | 'success'
   var activeSeverity = 'all'; // 'all' | 'error' | 'warning' | 'info'
+  var checksViewOpen = false; // the "N checks need attention" list (29.10.2026)
+  var activeCheckFilter = null; // check id: show only that check's findings
   var activeSuccessGroup = 'all'; // 'all' | 'seo' | 'aeo' | 'shared' — filter WITHIN the Success tab
                                // ('seo'/'aeo' = exclusively that domain, without crossRelevant; 'shared' =
                                // "SEO + AEO", crossRelevant items only — see the 10.08.2026 SPEC entry)
@@ -2052,6 +2054,28 @@
     { id: 'aeo.breadcrumb', w: 1, re: /^(A visible breadcrumb UI|BreadcrumbList schema)/ },
     { id: 'aeo.jsRender', w: 2, re: /^Most of the content only appears after JavaScript/, always: true }
   ];
+  // Human-readable names of the scored checks (shown in the "checks that need attention" list).
+  var CHECK_LABELS = {
+    'meta.charset': 'Meta charset', 'meta.dupTitle': 'Duplicate <title> tags', 'meta.dupDesc': 'Duplicate meta descriptions',
+    'meta.title': 'Title tag', 'meta.desc': 'Meta description', 'og.title': 'og:title', 'og.desc': 'og:description', 'og.image': 'og:image',
+    'og.imageQuality': 'OG image quality', 'twitter.card': 'Twitter/X Card', 'meta.canonical': 'Canonical tag present',
+    'meta.noindex': 'noindex directive', 'meta.nosnippet': 'Robots directives (nosnippet etc.)', 'meta.xrobots': 'X-Robots-Tag header',
+    'meta.sitemap': 'Page listed in sitemap.xml', 'meta.lang': 'lang attribute', 'meta.viewport': 'Viewport meta tag', 'meta.zoom': 'Viewport allows zoom',
+    'fav.present': 'Favicon present', 'fav.quality': 'Favicon quality', 'fav.robots': 'Favicon not blocked by robots',
+    'url.canonical': 'Canonical points to this page', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
+    'h.fake': 'Text styled as a heading', 'img.alt': 'Image alt text', 'img.height': 'Image height (layout shift)',
+    'img.external': 'Images hosted on the same domain', 'img.oversize': 'Image size vs displayed size',
+    'img.lazy': 'Below-the-fold images lazy-loaded', 'img.format': 'Modern image format', 'img.size': 'Image file size (up to 500KB)',
+    'links.nowhere': 'Links that go nowhere', 'links.anchor': 'In-page anchor links', 'links.noText': 'Links with visible text',
+    'links.generic': 'Generic anchor text', 'links.internal': 'Internal links working', 'content.thin': 'Enough visible text',
+    'content.hidden': 'Hidden content', 'content.repeated': 'Repeated words', 'content.placeholder': 'Placeholder / Lorem ipsum text',
+    'content.br': 'Manual <br> line breaks', 'fonts.count': 'Number of fonts', 'fonts.google': 'Google Fonts loading', 'fonts.format': 'Font file format',
+    'tech.dupId': 'Duplicate IDs', 'tech.dom': 'DOM size / depth', 'tech.mixed': 'Mixed content (HTTP on HTTPS)', 'tech.thirdParty': 'Third-party scripts',
+    'cwv.ttfb': 'TTFB (server response)', 'cwv.lcp': 'LCP (largest contentful paint)', 'cwv.cls': 'CLS (layout shift)', 'cwv.lcpLazy': 'LCP image not lazy-loaded',
+    'aeo.jsonld': 'JSON-LD schema validity', 'aeo.faq': 'FAQPage schema', 'aeo.article': 'Article schema', 'aeo.articleDates': 'Article dates',
+    'aeo.articleAuthor': 'Article author', 'aeo.authorLink': 'Author link', 'aeo.nap': 'NAP data (phone/address)', 'aeo.breadcrumb': 'Breadcrumbs',
+    'aeo.jsRender': 'Content visible without JavaScript'
+  };
   var CHECK_BY_ID = {};
   CHECK_REGISTRY.forEach(function (c) { CHECK_BY_ID[c.id] = c; });
   function matchCheckId(title) {
@@ -2082,6 +2106,7 @@
     });
 
     var totalW = 0, earned = 0, failedChecks = 0;
+    var failedRows = []; // for the clickable "checks that need attention" list
     CHECK_REGISTRY.forEach(function (c) {
       var fs = (perCheck[c.id] && perCheck[c.id].findings) || [];
       var evaluated = fs.length > 0 || hasOutput(c.id);
@@ -2107,9 +2132,15 @@
         lost = Math.min(c.w, worst); // binary: the check fails as a whole
       }
       earned += c.w - lost;
+      var worstSev = 'info';
+      fs.forEach(function (f) { if (f.severity === 'error') worstSev = 'error'; else if (f.severity === 'warning' && worstSev !== 'error') worstSev = 'warning'; });
+      failedRows.push({ id: c.id, label: CHECK_LABELS[c.id] || c.id, severity: worstSev, count: fs.length, lost: lost, findings: fs });
     });
     var pct = totalW > 0 ? Math.round((earned / totalW) * 1000) / 10 : 100;
-    return { pct: pct, failedChecks: failedChecks, issues: issues, notes: notes };
+    var sevRank = { error: 0, warning: 1, info: 2 };
+    failedRows.forEach(function (r) { r.lostPct = totalW > 0 ? Math.round((r.lost / totalW) * 1000) / 10 : 0; });
+    failedRows.sort(function (a, b) { return (b.lostPct - a.lostPct) || (sevRank[a.severity] - sevRank[b.severity]); });
+    return { pct: pct, failedChecks: failedChecks, issues: issues, notes: notes, failedList: failedRows };
   }
   function optimizedColor(pct) {
     if (pct >= 80) return '#4ade80';
@@ -2449,6 +2480,8 @@
     if (highlightBox) highlightBox.remove();
     clearAllHighlights();
     reportPreviewVisible = false;
+    checksViewOpen = false;
+    activeCheckFilter = null;
     clearPanelState(); // explicit ✕/Esc close = "forget where I was", unlike a mere page refresh
     window.__SeoAuditorRunning = false;
   }
@@ -2630,7 +2663,30 @@
       '.prog-pct{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;}',
       '.prog-track{height:9px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;}',
       '.prog-fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.22,1,.36,1);}',
-      '.prog-sub{margin-top:8px;font-size:11.5px;color:#9ca3af;display:flex;justify-content:space-between;gap:10px;}',
+      '.prog-sub{margin-top:8px;font-size:11.5px;color:#9ca3af;}',
+      // Each stat stays on one line (wraps BETWEEN stats, never inside one); the "vs last run" delta sits on its own line below.
+      '.prog-stats{display:flex;flex-wrap:wrap;gap:2px 0;}',
+      '.prog-stats .st{white-space:nowrap;}',
+      '.prog-stats .st+.st::before{content:"·";margin:0 7px;color:#4b5563;}',
+      '.prog-delta{margin-top:4px;font-size:11px;color:#6b7280;}',
+      '.prog-stats .st-link{cursor:pointer;text-decoration:underline dotted #6b7280;text-underline-offset:3px;}',
+      '.prog-stats .st-link:hover{color:#e5e7eb;text-decoration-color:#e5e7eb;}',
+      // "Checks that need attention" view + "showing only this check" chip (29.10.2026)
+      '.cv-hdr{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.cv-back{background:rgba(255,255,255,.06);border:none;color:#d1d5db;font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;}',
+      '.cv-back:hover{background:rgba(255,255,255,.12);color:#fff;}',
+      '.cv-title{font-size:12.5px;font-weight:700;color:#f3f4f6;}',
+      '.cv-note{padding:9px 14px;font-size:11.5px;line-height:1.5;color:#9ca3af;border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.chk-row{display:flex;align-items:center;gap:9px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer;}',
+      '.chk-row:hover{background:rgba(255,255,255,.05);}',
+      '.chk-row .badge{flex:0 0 auto;min-width:74px;justify-content:center;}',
+      '.chk-name{flex:1;min-width:0;font-size:12.5px;color:#e5e7eb;}',
+      '.chk-meta{flex:0 0 auto;font-size:11px;color:#9ca3af;white-space:nowrap;}',
+      '.chk-meta b{color:#f87171;font-weight:700;}',
+      '.filterchip{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 14px;font-size:11.5px;color:#c7d2fe;background:rgba(99,102,241,.1);border-bottom:1px solid rgba(99,102,241,.25);}',
+      '.filterchip b{color:#e0e7ff;}',
+      '.filterchip button{background:transparent;border:1px solid rgba(165,180,252,.4);color:#c7d2fe;font-size:11px;padding:2px 8px;border-radius:999px;cursor:pointer;white-space:nowrap;}',
+      '.filterchip button:hover{background:rgba(99,102,241,.25);}',
       '.prog-sub b{color:#e5e7eb;font-weight:600;}',
       // Generic small "Copy" button (11.08.2026) — used for the header's "Copy report" action
       // and the per-item "Copy fix" action. Deliberately subtle (not a full .badge) so it reads
@@ -2783,6 +2839,7 @@
     ensurePanel();
     var old = shadow.querySelector('.panel');
     if (old) old.remove();
+    var opt = computeOptimization(); // computed first: it also tags every finding with its check id (used by the check filter)
 
     // crossRelevant findings/successes (native SEO, but with documented AEO impact) are now
     // shown in BOTH tabs — once with the note "↔ Also relevant to AEO" (in the SEO tab, their
@@ -2791,6 +2848,12 @@
     // text per context.
     var seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; });
     var aeoFindings = findings.filter(function (f) { return f.group === 'aeo' || f.crossRelevant; });
+    if (activeCheckFilter) {
+      // "Show only this check" (clicked in the checks list). Drop the filter if the check no longer has findings.
+      seoFindings = seoFindings.filter(function (f) { return f.check === activeCheckFilter; });
+      aeoFindings = aeoFindings.filter(function (f) { return f.check === activeCheckFilter; });
+      if (!seoFindings.length && !aeoFindings.length) { activeCheckFilter = null; seoFindings = findings.filter(function (f) { return f.group !== 'aeo'; }); aeoFindings = findings.filter(function (f) { return f.group === 'aeo' || f.crossRelevant; }); }
+    }
     if (activeTab !== 'seo' && activeTab !== 'aeo' && activeTab !== 'success') activeTab = 'seo';
     var current = activeTab === 'aeo' ? aeoFindings : (activeTab === 'success' ? successes : seoFindings);
 
@@ -2813,6 +2876,24 @@
     }
     if (panelHeight) {
       panel.style.height = panelHeight + 'px';
+    }
+
+    function appendResizeHandle() {
+    var resizeHandle = document.createElement('div');
+    resizeHandle.className = 'resize-handle';
+    // The visual "grip" pill is now drawn via CSS (.resize-handle::after), not text — part of
+    // the redesign (10.08.2026), textContent deliberately left empty.
+    resizeHandle.title = tr('Drag to resize panel height');
+    resizeHandle.addEventListener('mousedown', function (e) {
+      isResizing = true;
+      var rect = panel.getBoundingClientRect();
+      resizeStartY = e.clientY;
+      resizeStartHeight = rect.height;
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    panel.appendChild(resizeHandle);
     }
 
     var hdr = document.createElement('div');
@@ -2869,7 +2950,6 @@
     // visible (whole-page figure, independent of the active tab). The fill starts at the width it
     // had on the previous render and then animates to the new one, so it glides when async
     // results arrive but doesn't replay from zero on every tab switch.
-    var opt = computeOptimization();
     var prog = document.createElement('div');
     prog.className = 'prog';
     var optColor = optimizedColor(opt.pct);
@@ -2897,7 +2977,16 @@
       '<div class="prog-top"><span class="prog-lbl" title="' + tr('Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.') + '">' + tr('Page optimized') + '</span>' +
       '<span class="prog-pct" style="color:' + optColor + ';">' + fmtPct(opt.pct) + '</span></div>' +
       '<div class="prog-track" role="progressbar" aria-label="' + tr('Page optimized') + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(opt.pct) + '"><div class="prog-fill" style="width:' + lastShownPct + '%;background:' + optimizedGradient(opt.pct) + ';"></div></div>' +
-      '<div class="prog-sub"><span>' + leftHtml + '</span><span>' + deltaHtml + '</span></div>';
+      '<div class="prog-sub"><div class="prog-stats">' + leftHtml.split(' · ').map(function (x, i) {
+        // 1st = checks (clickable -> opens the list of those checks), 2nd = issues, 3rd = notes (tooltips explain the difference)
+        var isChecks = i === 0 && opt.failedChecks > 0;
+        var tip = i === 0 ? (opt.failedChecks > 0 ? tr('Checks that did not fully pass (a check can fail because of an info note too). Click to see which ones and how much each costs.') : '')
+          : (x.indexOf('<b>' + opt.issues + '</b>') === 0 && opt.issues > 0 && i === 1 ? tr('Individual error + warning findings') : tr('Individual info findings (notes)'));
+        return '<span class="st' + (isChecks ? ' st-link' : '') + '"' + (tip ? ' title="' + tip.replace(/"/g, '&quot;') + '"' : '') + '>' + x + '</span>';
+      }).join('') + '</div>' +
+      (deltaHtml ? '<div class="prog-delta">' + deltaHtml + '</div>' : '') + '</div>';
+    var checksLink = prog.querySelector('.st-link');
+    if (checksLink) checksLink.onclick = function () { checksViewOpen = !checksViewOpen; renderPanel(); };
     var progFill = prog.querySelector('.prog-fill');
     var targetPct = opt.pct;
     lastShownPct = targetPct;
@@ -2918,6 +3007,55 @@
       prevBanner.innerHTML = trf('Last run ({0}): {1} findings → now: {2}', [when, previousRun.totalFindings, totalNow]) +
         ' <span style="color:' + diffColor + ';font-weight:700;">(' + diffLabel + ')</span>';
       panel.appendChild(prevBanner);
+    }
+
+    // "Checks that need attention" view (29.10.2026): opened by clicking "N checks need attention".
+    // Lists exactly the failed scored checks, biggest cost to the % first; clicking one returns to
+    // the findings list filtered to that check.
+    if (checksViewOpen) {
+      clearAllHighlights();
+      lastRenderedRows = [];
+      var cvHdr = document.createElement('div');
+      cvHdr.className = 'cv-hdr';
+      var cvBack = document.createElement('button');
+      cvBack.className = 'cv-back';
+      cvBack.textContent = tr('← Back to findings');
+      cvBack.onclick = function () { checksViewOpen = false; renderPanel(); };
+      var cvTitle = document.createElement('div');
+      cvTitle.className = 'cv-title';
+      cvTitle.textContent = trf('Checks that need attention ({0})', [opt.failedList.length]);
+      cvHdr.appendChild(cvBack);
+      cvHdr.appendChild(cvTitle);
+      panel.appendChild(cvHdr);
+      var cvList = document.createElement('div');
+      cvList.className = 'list';
+      var cvNote = document.createElement('div');
+      cvNote.className = 'cv-note';
+      cvNote.textContent = tr('Click a check to see its findings. "Issues" and "notes" count individual findings (errors + warnings / info), so they differ from the number of checks. The % is how much of the "Page optimized" score each check costs.');
+      cvList.appendChild(cvNote);
+      opt.failedList.forEach(function (r) {
+        var row = document.createElement('div');
+        row.className = 'chk-row';
+        row.title = trf('Show the {0} finding(s) of this check', [r.count]);
+        row.innerHTML = '<span class="badge ' + r.severity + ' tag">' + tr(r.severity) + '</span>' +
+          '<span class="chk-name">' + tr(r.label).replace(/</g, '&lt;') + '</span>' +
+          '<span class="chk-meta">' + (r.count > 1 ? '×' + r.count + ' · ' : '') + '<b>' + (r.lostPct > 0 ? '−' + r.lostPct.toFixed(1) + '%' : '0%') + '</b></span>';
+        row.onclick = function () {
+          var inSeo = r.findings.some(function (f) { return f.group !== 'aeo'; });
+          activeCheckFilter = r.id;
+          activeTab = inSeo ? 'seo' : 'aeo';
+          activeSeverity = 'all'; activeCategory = 'all'; activeCategoryOrigin = 'all';
+          checksViewOpen = false;
+          renderPanel();
+        };
+        cvList.appendChild(row);
+      });
+      panel.appendChild(cvList);
+      appendResizeHandle();
+      shadow.appendChild(panel);
+      renderReportPreview();
+      savePanelState();
+      return;
     }
 
     var tabs = document.createElement('div');
@@ -3119,6 +3257,19 @@
 
     // .list is the only scrolling part — prevents the hdr/tabs/summary from "jumping" and
     // replaces the earlier approach with position:sticky offsets that had to be guessed manually.
+    if (activeCheckFilter && activeTab !== 'success') {
+      var fChip = document.createElement('div');
+      fChip.className = 'filterchip';
+      var fLabel = document.createElement('span');
+      fLabel.innerHTML = tr('Showing only the check:') + ' <b>' + tr(CHECK_LABELS[activeCheckFilter] || activeCheckFilter).replace(/</g, '&lt;') + '</b>';
+      var fClear = document.createElement('button');
+      fClear.textContent = tr('Clear filter') + ' ✕';
+      fClear.onclick = function () { activeCheckFilter = null; renderPanel(); };
+      fChip.appendChild(fLabel);
+      fChip.appendChild(fClear);
+      panel.appendChild(fChip);
+    }
+
     var list = document.createElement('div');
     list.className = 'list';
 
@@ -3202,21 +3353,7 @@
 
     panel.appendChild(list);
 
-    var resizeHandle = document.createElement('div');
-    resizeHandle.className = 'resize-handle';
-    // The visual "grip" pill is now drawn via CSS (.resize-handle::after), not text — part of
-    // the redesign (10.08.2026), textContent deliberately left empty.
-    resizeHandle.title = tr('Drag to resize panel height');
-    resizeHandle.addEventListener('mousedown', function (e) {
-      isResizing = true;
-      var rect = panel.getBoundingClientRect();
-      resizeStartY = e.clientY;
-      resizeStartHeight = rect.height;
-      document.body.style.userSelect = 'none';
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    panel.appendChild(resizeHandle);
+    appendResizeHandle();
 
     shadow.appendChild(panel);
     renderReportPreview(); // re-append if it was open — persists across tab/filter re-renders
@@ -3773,7 +3910,79 @@
     "a sitemap file ({0}) is not valid sitemap XML": "sitemap fajl ({0}) nije validan sitemap XML",
     "Relevant to both SEO and AEO — a page blocked from indexing won't appear in the sources AI answer engines (partly) rely on via the Google index either.": "Relevantno i za SEO i za AEO — stranica blokirana za indeksiranje neće se pojaviti ni u izvorima na koje se AI answer engines (delimično) oslanjaju preko Google indeksa.",
     "Relevant to both SEO and AEO — Core Web Vitals are part of the Tier-1 technical signals that AEO research links to the likelihood of AI citation.": "Relevantno i za SEO i za AEO — Core Web Vitals su deo tehničkih signala Tier-1 koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.",
-    "Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).": "Relevantno i za SEO i za AEO — Core Web Vitals (TTFB, LCP, CLS) su zvanični Google signal rangiranja od 2021. (Page Experience update)."
+    "Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).": "Relevantno i za SEO i za AEO — Core Web Vitals (TTFB, LCP, CLS) su zvanični Google signal rangiranja od 2021. (Page Experience update).",
+    "Meta charset": "Meta charset",
+    "Duplicate <title> tags": "Duplirani <title> tagovi",
+    "Duplicate meta descriptions": "Duplirani meta description",
+    "Title tag": "Title tag",
+    "Meta description": "Meta description",
+    "og:title": "og:title",
+    "og:description": "og:description",
+    "og:image": "og:image",
+    "OG image quality": "Kvalitet OG slike",
+    "Twitter/X Card": "Twitter/X Card",
+    "Canonical tag present": "Canonical tag postoji",
+    "noindex directive": "noindex direktiva",
+    "Robots directives (nosnippet etc.)": "Robots direktive (nosnippet itd.)",
+    "X-Robots-Tag header": "X-Robots-Tag header",
+    "Page listed in sitemap.xml": "Stranica u sitemap.xml",
+    "lang attribute": "lang atribut",
+    "Viewport meta tag": "Viewport meta tag",
+    "Viewport allows zoom": "Viewport dozvoljava zumiranje",
+    "Favicon present": "Favicon postoji",
+    "Favicon quality": "Kvalitet favicon-a",
+    "Favicon not blocked by robots": "Favicon nije blokiran u robots",
+    "Canonical points to this page": "Canonical pokazuje na ovu stranicu",
+    "URL slug": "URL slug",
+    "Exactly one H1": "Tačno jedan H1",
+    "Heading hierarchy": "Hijerarhija naslova",
+    "Text styled as a heading": "Tekst stilizovan kao naslov",
+    "Image alt text": "Alt tekst slika",
+    "Image height (layout shift)": "Visina slike (layout shift)",
+    "Images hosted on the same domain": "Slike na istom domenu",
+    "Image size vs displayed size": "Veličina slike prema prikazanoj",
+    "Below-the-fold images lazy-loaded": "Slike ispod preloma sa lazy učitavanjem",
+    "Modern image format": "Moderan format slike",
+    "Image file size (up to 500KB)": "Težina slike (do 500KB)",
+    "Links that go nowhere": "Linkovi koji ne vode nigde",
+    "In-page anchor links": "Anchor linkovi na stranici",
+    "Links with visible text": "Linkovi sa vidljivim tekstom",
+    "Generic anchor text": "Generički anchor tekst",
+    "Internal links working": "Interni linkovi rade",
+    "Enough visible text": "Dovoljno vidljivog teksta",
+    "Hidden content": "Skriveni sadržaj",
+    "Repeated words": "Ponovljene reči",
+    "Placeholder / Lorem ipsum text": "Placeholder / Lorem ipsum tekst",
+    "Manual <br> line breaks": "Ručni <br> prelomi",
+    "Number of fonts": "Broj fontova",
+    "Google Fonts loading": "Učitavanje Google Fonts",
+    "Font file format": "Format font fajla",
+    "Duplicate IDs": "Duplirani ID-jevi",
+    "DOM size / depth": "Veličina / dubina DOM-a",
+    "Mixed content (HTTP on HTTPS)": "Mešoviti sadržaj (HTTP na HTTPS)",
+    "Third-party scripts": "Skripte trećih strana",
+    "TTFB (server response)": "TTFB (odgovor servera)",
+    "LCP (largest contentful paint)": "LCP (najveći element)",
+    "CLS (layout shift)": "CLS (pomeranje rasporeda)",
+    "LCP image not lazy-loaded": "LCP slika nije lazy",
+    "JSON-LD schema validity": "Validnost JSON-LD schema",
+    "FAQPage schema": "FAQPage schema",
+    "Article schema": "Article schema",
+    "Article dates": "Datumi članka",
+    "Article author": "Autor članka",
+    "Author link": "Link autora",
+    "NAP data (phone/address)": "NAP podaci (telefon/adresa)",
+    "Breadcrumbs": "Breadcrumbs",
+    "Content visible without JavaScript": "Sadržaj vidljiv bez JavaScript-a",
+    "Checks that did not fully pass (a check can fail because of an info note too). Click to see which ones and how much each costs.": "Provere koje nisu u potpunosti prošle (provera može da padne i zbog info napomene). Klikni da vidiš koje su i koliko svaka košta.",
+    "Individual error + warning findings": "Pojedinačni nalazi tipa greška + upozorenje",
+    "Individual info findings (notes)": "Pojedinačni info nalazi (napomene)",
+    "← Back to findings": "← Nazad na nalaze",
+    "Checks that need attention ({0})": "Provere koje zahtevaju pažnju ({0})",
+    "Click a check to see its findings. \"Issues\" and \"notes\" count individual findings (errors + warnings / info), so they differ from the number of checks. The % is how much of the \"Page optimized\" score each check costs.": "Klikni na proveru da vidiš njene nalaze. „Problemi“ i „napomene“ broje pojedinačne nalaze (greške + upozorenja / info), pa se razlikuju od broja provera. Procenat pokazuje koliko svaka provera košta u skoru „Stranica je optimizovana“.",
+    "Show the {0} finding(s) of this check": "Prikaži nalaze ove provere ({0})",
+    "Showing only the check:": "Prikazana samo provera:",
+    "Clear filter": "Ukloni filter"
     };
   }
 
