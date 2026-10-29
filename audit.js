@@ -768,6 +768,17 @@
     var oversizeMeasured = 0, oversizeFound = 0;   // "image much larger than displayed" (28.10.2026)
     var oversizeCandidates = [];                   // images that are oversized by pixel dimensions; severity decided by estimated wasted KB
     var lazyConsidered = 0, lazyFound = 0;         // "below-the-fold image not lazy" (28.10.2026)
+    // Thresholds of the "heavy file" and "no responsive versions" checks (29.10.2026, from the flowninja.com audit):
+    //   heavy file: >= 150 KB -> info; >= 300 KB, or >= 150 KB AND >= 500 bytes per displayed px of width -> warning; > 500 KB stays an error.
+    //   no srcset:  wasted on a 375px phone >= 50 KB -> info, >= 150 KB -> warning (needs a measured file size, else nothing is reported).
+    var HEAVY_INFO_BYTES = 150 * 1024, HEAVY_WARN_BYTES = 300 * 1024, HEAVY_BYTES_PER_PX = 500;
+    var PHONE_USEFUL_W = 750, NOSRCSET_INFO_BYTES = 50 * 1024, NOSRCSET_WARN_BYTES = 150 * 1024;
+    var lazyAboveList = [], lazyAboveConsidered = 0; // ABOVE-the-fold images that carry loading="lazy" (29.10.2026)
+    var lcpNowEl = null;                             // the LCP element is reported by its own check (cwv.lcpLazy) — skipped here
+    try {
+      var lcpNowList = performance.getEntriesByType('largest-contentful-paint');
+      lcpNowEl = lcpNowList.length ? lcpNowList[lcpNowList.length - 1].element : null;
+    } catch (e) {}
 
     imgs.forEach(function (img) {
       if (!isVisible(img)) return;
@@ -855,6 +866,7 @@
       var natW = img.naturalWidth || 0;
       var srcNow = img.currentSrc || img.src || '';
       var skipSizing = /\.svg(\?|#|$)/i.test(srcNow) || /^data:/i.test(srcNow);
+      var isOversizeCand = false;
       if (!skipSizing && natW > 0 && shownW >= 48) {
         oversizeMeasured++;
         var allowedW = shownW * 2; // up to 2x the displayed width is normal (retina screens)
@@ -862,6 +874,18 @@
           // Pixel dimensions alone say little about real impact (a 65KB image shown at 1/4 size is
           // harmless), so the severity is decided by the ESTIMATED WASTED BYTES — see resolveOversize().
           oversizeCandidates.push({ img: img, natW: natW, shownW: shownW, allowedW: allowedW, src: srcNow });
+          isOversizeCand = true;
+        }
+      }
+      // Above-the-fold image with loading="lazy" (29.10.2026): collected here, reported as ONE finding
+      // after the loop (a row of client logos would otherwise produce a dozen near-identical notes).
+      if (!skipSizing && shownW >= 64 && rectNow.height >= 64) {
+        var absTopAbove = rectNow.top + (window.pageYOffset || 0);
+        if (absTopAbove < window.innerHeight && img !== lcpNowEl) {
+          lazyAboveConsidered++;
+          if ((img.getAttribute('loading') || '').toLowerCase() === 'lazy') {
+            lazyAboveList.push({ img: img, area: rectNow.width * rectNow.height, src: srcNow });
+          }
         }
       }
       if (!skipSizing && shownW >= 64 && rectNow.height >= 64) {
@@ -897,14 +921,44 @@
           modernFormatCount++;
         }
 
+        var headShownW = Math.max(1, shownW), headNatW = natW, headOversize = isOversizeCand;
+        var headHasSrcset = img.hasAttribute('srcset') || !!img.closest('picture');
         try {
           fetch(src, { method: 'HEAD' }).then(function (r) {
             var len = r.headers.get('content-length');
-            if (len && parseInt(len, 10) > 500 * 1024) {
-              addFinding({ category: 'Images', severity: 'error', title: 'Image is larger than 500KB (' + fmtBytes(parseInt(len, 10)) + ')',
+            var bytes = len ? parseInt(len, 10) : 0;
+            if (bytes > 500 * 1024) {
+              addFinding({ category: 'Images', severity: 'error', title: 'Image is larger than 500KB (' + fmtBytes(bytes) + ')',
                 description: src, why: 'Large images slow down page loading and hurt LCP (Largest Contentful Paint) — an official Google Core Web Vital/ranking signal. The file size is directly measured (content-length header), not an assumption.',
                 fix: 'Compress the image (e.g. TinyPNG/Squoosh) or convert it to WebP/AVIF.', element: img });
               renderPanel();
+            } else if (bytes >= HEAVY_INFO_BYTES && !headOversize) {
+              // Heavy file for what it shows (29.10.2026). Images that are also much larger than displayed
+              // are reported by the oversize check (severity by wasted bytes), so they are skipped here.
+              var perPx = bytes / headShownW;
+              addFinding({ category: 'Images', severity: (bytes >= HEAVY_WARN_BYTES || perPx >= HEAVY_BYTES_PER_PX) ? 'warning' : 'info',
+                title: 'Image file is heavy (' + fmtBytes(bytes) + ' for a ' + headShownW + 'px-wide image)',
+                description: src.replace(/\?.*$/, '').slice(0, 120),
+                why: 'The file is large for what it shows. Every KB competes with the content of the first view and is paid again by every visitor — most noticeably on phones and slow connections. As a rule of thumb a content image shown about 350px wide should be well under 100 KB as WebP/AVIF, and even a full-width hero image rarely needs more than a few hundred KB. The size is measured (content-length header), not guessed.',
+                fix: 'Re-export the image at about 2x the displayed width and compress it (WebP/AVIF; Squoosh, TinyPNG), then Assets panel > ... > Replace — every place the image is used is updated. For many files at once: Assets panel > Select > Compress.',
+                element: img });
+              renderPanel();
+            }
+            // No responsive versions (29.10.2026): the same big file is served to every device, so a phone
+            // (375px, ~750px useful on a 2x screen) downloads far more than it can show. Only when the image
+            // has no srcset, is clearly bigger than a phone needs, and the wasted bytes are known and sizeable.
+            // Images that are oversized at THIS window width are already covered by the oversize check.
+            if (bytes > 0 && !headHasSrcset && !headOversize && headNatW > PHONE_USEFUL_W * 1.25) {
+              var phoneWaste = bytes * (1 - Math.pow(PHONE_USEFUL_W / headNatW, 2));
+              if (phoneWaste >= NOSRCSET_INFO_BYTES) {
+                addFinding({ category: 'Images', severity: phoneWaste >= NOSRCSET_WARN_BYTES ? 'warning' : 'info',
+                  title: 'Image has no responsive versions (phones download the full ' + headNatW + 'px file)',
+                  description: src.replace(/\?.*$/, '').slice(0, 120) + '\nFile size: ' + fmtBytes(bytes) + ' · estimated wasted on a phone (375px): ~' + fmtBytes(Math.round(phoneWaste)),
+                  why: 'This image has no srcset, so every device gets the same large file — a phone (375px wide, about 750px of useful resolution even on a 2x screen) downloads all of it for nothing. Webflow creates responsive versions automatically only for Image elements uploaded in Webflow; images in rich text, CMS/CSV imports, background images, or Image elements with "Disable responsiveness" turned on are served as one single file.',
+                  fix: '1) If it is an Image element: open Image settings, make sure "Disable responsiveness" is off, and publish. 2) If it sits in a rich text field or is a background image: replace it with an Image element, or upload a smaller version (about 1200px wide at most) compressed as WebP/AVIF. 3) Also run this tool with the window at phone width (375px) — the results depend on the window width.',
+                  element: img });
+                renderPanel();
+              }
             }
           }).catch(function () {});
         } catch (e) {}
@@ -966,9 +1020,24 @@
       } catch (e) { resolveOversize(c, null, true); }
     });
 
-    ['img.alt', 'img.height', 'img.external', 'img.format', 'img.size'].forEach(function (id) { setCheckTotal(id, checkedImgCount); });
+    ['img.alt', 'img.height', 'img.external', 'img.format', 'img.size', 'img.heavy', 'img.noSrcset'].forEach(function (id) { setCheckTotal(id, checkedImgCount); });
     setCheckTotal('img.oversize', oversizeMeasured);
     setCheckTotal('img.lazy', lazyConsidered);
+    // ONE finding for all above-the-fold lazy images (warning when one of them is big, otherwise info).
+    if (lazyAboveList.length) {
+      lazyAboveList.sort(function (a, b) { return b.area - a.area; });
+      var lazyAboveBig = lazyAboveList[0].area >= 0.25 * window.innerWidth * window.innerHeight;
+      var lazyAboveLines = lazyAboveList.slice(0, 3).map(function (x) { return x.src.replace(/\?.*$/, '').slice(0, 120); });
+      if (lazyAboveList.length > 3) lazyAboveLines.push('+' + (lazyAboveList.length - 3) + ' more');
+      addFinding({ category: 'Images', severity: lazyAboveBig ? 'warning' : 'info',
+        title: 'Above-the-fold images are lazy-loaded (' + lazyAboveList.length + ')',
+        description: lazyAboveLines.join('\n'),
+        why: 'These images are visible in the first screen, but loading="lazy" makes the browser fetch them later than it could: it first has to lay out the page and work out which images are on screen. That delays the first view (and the Largest Contentful Paint, a Core Web Vital, when one of them is the main image) and makes the images pop in. Lazy loading is meant for images far below the first screen. The first screen is measured at the current window width, so on a phone a different set of images can be above the fold.',
+        fix: 'In the Webflow Designer: select each image in the first screen (hero, logo, the first row of logos) > Settings > Loading > "Eager". Keep "Lazy" for everything further down the page.',
+        element: lazyAboveList[0].img });
+    } else if (lazyAboveConsidered > 0) {
+      addSuccess({ category: 'Images', title: 'None of the ' + lazyAboveConsidered + ' images in the first screen is lazy-loaded', description: '', element: null });
+    }
     if (oversizeMeasured > 0 && oversizeCandidates.length === 0) {
       addSuccess({ category: 'Images', title: 'No image is much larger than its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
     }
@@ -1140,6 +1209,82 @@
         renderPanel();
       }).catch(function () { /* unexpected error in the check itself */ });
     } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------------
+  // 5.3b Above-the-fold video poster + form field labels (29.10.2026, flowninja.com audit)
+  // ---------------------------------------------------------------------
+
+  // A big video in the first screen without a poster image: an empty box until enough data arrives.
+  // Geometry-based (not "is it the LCP element"), so it works on any page: a visible <video> that starts
+  // in the first screen and covers at least a quarter of the viewport.
+  function checkVideos() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var considered = 0, bad = [];
+    Array.prototype.slice.call(document.querySelectorAll('video')).forEach(function (v) {
+      if (!isVisible(v)) return;
+      var r = v.getBoundingClientRect();
+      if (r.top + (window.pageYOffset || 0) >= vh) return;           // starts below the first screen
+      if (r.width * r.height < 0.25 * vw * vh) return;               // small video — not a hero
+      considered++;
+      if (!(v.getAttribute('poster') || '').trim()) bad.push({ v: v, area: r.width * r.height });
+    });
+    if (bad.length) {
+      bad.sort(function (a, b) { return b.area - a.area; });
+      var video = bad[0].v;
+      var srcEl = video.currentSrc || video.getAttribute('src') || (video.querySelector('source') || {}).src || '';
+      // The LCP element being this video AND a slow LCP makes it a real problem; otherwise it is a recommendation.
+      var slowLcp = false;
+      try {
+        var l = performance.getEntriesByType('largest-contentful-paint');
+        var last = l.length ? l[l.length - 1] : null;
+        slowLcp = !!(last && last.element === video && last.startTime > 2500);
+      } catch (e) {}
+      addFinding({ category: 'Images', severity: slowLcp ? 'warning' : 'info',
+        title: 'Above-the-fold video has no poster image',
+        description: String(srcEl).replace(/\?.*$/, '').slice(0, 120),
+        why: 'A large video at the top of the page shows an empty box until enough of the file has downloaded. A poster image is shown instantly and replaced by the video when it starts, so it improves the first view and the Largest Contentful Paint (LCP, a Core Web Vital). Without it, how the video area looks while loading is left to the browser.',
+        fix: 'Add a poster attribute to the <video> tag (poster="https://…/poster.avif" — an AVIF/WebP of the first frame, ideally well under 50 KB). In Webflow this is a custom attribute on the video element or part of the embed code; if it is a Background Video element, check its settings for a poster/fallback image. Also provide an MP4 source next to a WebM one so every browser can play it.',
+        element: video });
+    } else if (considered > 0) {
+      addSuccess({ category: 'Images', title: 'The above-the-fold video has a poster image', description: '', element: null });
+    }
+  }
+
+  // Form fields need a label: a placeholder alone is not a reliable accessible name.
+  function checkForms() {
+    var fields = Array.prototype.slice.call(document.querySelectorAll('input, select, textarea')).filter(function (el) {
+      if (el.tagName === 'INPUT') {
+        var t = (el.getAttribute('type') || 'text').toLowerCase();
+        if (['hidden', 'submit', 'button', 'reset', 'image'].indexOf(t) !== -1) return false;
+      }
+      if (el.disabled || el.closest('[aria-hidden="true"]')) return false; // honeypots / decorative
+      if (el.getAttribute('tabindex') === '-1' && !isVisible(el)) return false;
+      return isVisible(el);
+    });
+    if (!fields.length) return;
+    var unlabeled = 0;
+    fields.forEach(function (el) {
+      var hasLabel = !!(el.labels && el.labels.length) || !!el.closest('label') ||
+        !!(el.getAttribute('aria-label') || '').trim() || !!(el.getAttribute('title') || '').trim();
+      if (!hasLabel) {
+        var by = (el.getAttribute('aria-labelledby') || '').trim();
+        if (by) hasLabel = by.split(/\s+/).some(function (id) { var t = document.getElementById(id); return t && text(t); });
+      }
+      if (hasLabel) return;
+      unlabeled++;
+      var ph = (el.getAttribute('placeholder') || '').trim();
+      addFinding({ category: 'Forms', severity: 'warning', title: 'Form field has no accessible label',
+        description: '<' + el.tagName.toLowerCase() + (el.getAttribute('type') ? ' type="' + el.getAttribute('type') + '"' : '') + (el.getAttribute('name') ? ' name="' + el.getAttribute('name') + '"' : '') + '>' +
+          (ph ? '\nplaceholder: "' + ph.slice(0, 60) + '"' : ''),
+        why: 'A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect.',
+        fix: 'In the Webflow Designer: add a Label element above the field (it can stay visually hidden with a utility class), or select the field > Settings > Custom attributes > aria-label = "what the field is for".',
+        element: el });
+    });
+    setCheckTotal('form.label', fields.length);
+    if (!unlabeled) {
+      addSuccess({ category: 'Forms', title: 'All ' + fields.length + ' form field(s) have a label', description: '', element: null });
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1908,6 +2053,70 @@
       }
     });
 
+    // Organization schema: official profiles (sameAs) + presence on the home page (29.10.2026, flowninja.com audit).
+    // sameAs ties the site to its official profiles, which is how search and answer engines recognise the
+    // business as ONE entity; the page's own social links are the evidence of which profiles exist.
+    var ORG_TYPES = ['Organization', 'Corporation', 'LocalBusiness', 'ProfessionalService', 'OnlineBusiness'];
+    var orgBlocks = [];
+    ORG_TYPES.forEach(function (t) { orgBlocks = orgBlocks.concat(findSchemaByType(blocks, t)); });
+    var SOCIAL_HOSTS = ['linkedin.com', 'facebook.com', 'x.com', 'twitter.com', 'instagram.com', 'youtube.com', 'tiktok.com', 'pinterest.com', 'github.com', 'threads.net'];
+    // Canonical host of a profile URL: www./m./country subdomains folded into the main domain, twitter.com -> x.com.
+    function canonProfileHost(url) {
+      var h = hostnameOf(url);
+      if (!h) return null;
+      h = h.replace(/^www\./, '');
+      for (var i = 0; i < SOCIAL_HOSTS.length; i++) {
+        var d = SOCIAL_HOSTS[i];
+        if (h === d || h.slice(-(d.length + 1)) === '.' + d) return d === 'twitter.com' ? 'x.com' : d;
+      }
+      return h;
+    }
+    function socialHostOf(url) {
+      var h = canonProfileHost(url);
+      return h && (SOCIAL_HOSTS.indexOf(h) !== -1) ? h : null;
+    }
+    if (orgBlocks.length) {
+      var orgB = orgBlocks[0];
+      var sameAsRaw = orgB.raw.sameAs;
+      var sameAsList = Array.isArray(sameAsRaw) ? sameAsRaw : (sameAsRaw ? [sameAsRaw] : []);
+      var sameAsHosts = {};
+      sameAsList.forEach(function (u) { var s = typeof u === 'string' ? u : (u && (u.url || u['@id'])) || ''; var h = canonProfileHost(s); if (h) sameAsHosts[h] = true; });
+      var pageSocial = [];
+      Array.prototype.slice.call(document.querySelectorAll('a[href]')).forEach(function (a) {
+        var href = a.getAttribute('href') || '';
+        if (!/^https?:\/\//i.test(href)) return;
+        var path = '';
+        try { path = new URL(href, location.href).pathname; } catch (e) {}
+        if (path.length <= 1 || /share|sharer|intent|dialog|plugins/i.test(href)) return; // not a profile link
+        var sh = socialHostOf(href);
+        if (sh && pageSocial.indexOf(sh) === -1) pageSocial.push(sh);
+      });
+      if (!sameAsList.length) {
+        addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
+          title: 'Organization schema has no sameAs (links to the official profiles)',
+          description: pageSocial.length ? 'Profiles linked on this page: ' + pageSocial.join(', ') : '',
+          why: 'sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...). It is how search and AI answer engines connect the website to those profiles and recognise them as one entity, which makes the brand easier to cite correctly.',
+          fix: 'Add a sameAs array with the full URLs of the official profiles to the Organization JSON-LD block (Pages > Home > Settings > Custom code in the head, or Site settings).', element: orgB.el });
+      } else {
+        var missingSocial = pageSocial.filter(function (h) { return !sameAsHosts[h]; });
+        if (missingSocial.length) {
+          addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
+            title: 'Organization schema sameAs does not include the social profiles linked on this page',
+            description: 'Missing: ' + missingSocial.join(', '),
+            why: 'The page links to these profiles, but the Organization schema does not list them in sameAs. Listing all official profiles helps search and AI answer engines recognise the business as one entity across the web.',
+            fix: 'Add the full profile URLs (the same ones the page links to) to the sameAs array of the Organization JSON-LD block.', element: orgB.el });
+        } else {
+          addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
+            title: 'Organization schema lists its official profiles (sameAs: ' + sameAsList.length + ')', description: '', element: orgB.el });
+        }
+      }
+    } else if (/^\/([a-z]{2}(-[a-z]{2})?\/?)?$/i.test(location.pathname)) {
+      addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
+        title: 'Home page has no Organization schema',
+        description: '', why: 'The home page is where search and AI answer engines learn who the business is: its name, logo and official profiles. Organization schema states that explicitly instead of leaving it to be guessed from the text.',
+        fix: 'Add a JSON-LD Organization block (name, url, logo, sameAs with the official profiles) in Pages > Home > Settings > Custom code (head).', element: null });
+    }
+
     // BreadcrumbList
     var breadcrumbSchemas = findSchemaByType(blocks, 'BreadcrumbList');
     if (looksLikeBreadcrumbUI() && breadcrumbSchemas.length === 0) {
@@ -2058,6 +2267,12 @@
     { id: 'img.lazy', w: 2, re: /^(Image below the fold|All \d+ below-the-fold)/, total: true },
     { id: 'img.format', w: 1, re: /^(Image is not in a modern|\d+ image\(s\) are already in a modern)/, total: true },
     { id: 'img.size', w: 4, re: /^Image is larger than 500KB/, always: true, total: true },
+    { id: 'img.heavy', w: 2, re: /^Image file is heavy/, always: true, total: true },
+    { id: 'img.noSrcset', w: 2, re: /^Image has no responsive versions/, always: true, total: true },
+    { id: 'img.lazyAbove', w: 2, re: /^(Above-the-fold images are lazy-loaded|None of the \d+ images in the first screen)/ },
+    { id: 'video.poster', w: 2, re: /^(Above-the-fold video has no poster|The above-the-fold video has a poster)/ },
+    { id: 'form.label', w: 2, re: /^(Form field has no accessible label|All \d+ form field)/, total: true },
+    { id: 'aeo.orgSameAs', w: 2, re: /^(Organization schema (has no sameAs|sameAs does not|lists its official)|Home page has no Organization schema)/ },
     { id: 'links.nowhere', w: 2, re: /^(Link doesn't go anywhere|There are no links that go nowhere)/, total: true },
     { id: 'links.anchor', w: 4, re: /^(Anchor link points|All in-page anchor)/ },
     { id: 'links.noText', w: 2, re: /^(Link with no text|All links have visible text)/, total: true },
@@ -2109,7 +2324,9 @@
     'cwv.ttfb': 'TTFB (server response)', 'cwv.lcp': 'LCP (largest contentful paint)', 'cwv.cls': 'CLS (layout shift)', 'cwv.lcpLazy': 'LCP image not lazy-loaded',
     'aeo.jsonld': 'JSON-LD schema validity', 'aeo.faq': 'FAQPage schema', 'aeo.article': 'Article schema', 'aeo.articleDates': 'Article dates',
     'aeo.articleAuthor': 'Article author', 'aeo.authorLink': 'Author link', 'aeo.nap': 'NAP data (phone/address)', 'aeo.breadcrumb': 'Breadcrumbs',
-    'aeo.jsRender': 'Content visible without JavaScript'
+    'aeo.jsRender': 'Content visible without JavaScript',
+    'img.heavy': 'Image file weight (150KB+)', 'img.noSrcset': 'Responsive image versions (srcset)', 'img.lazyAbove': 'Above-the-fold images not lazy-loaded',
+    'video.poster': 'Above-the-fold video poster', 'form.label': 'Form field labels', 'aeo.orgSameAs': 'Organization schema profiles (sameAs)'
   };
   var CHECK_BY_ID = {};
   CHECK_REGISTRY.forEach(function (c) { CHECK_BY_ID[c.id] = c; });
@@ -3438,6 +3655,8 @@
     checkIndexingSignals();
     checkHeadings();
     checkImages();
+    checkVideos();
+    checkForms();
     checkLinks();
     checkContent();
     checkFonts();
@@ -3675,6 +3894,46 @@
     "The browser downloads a {0}px-wide file to draw it {1}px wide (even on a 2x retina screen only ~{2}px is useful). Every byte that is downloaded but never used competes with the content that matters for the first view, so the page loads slower — especially on mobile connections — and a slow Largest Contentful Paint (LCP, a Core Web Vital and ranking signal) is the usual result when this is the hero / above-the-fold image. It matters most for large files (hundreds of KB or more), for images near the top of the page, and when many images on one page are affected.": "Pregledač preuzima fajl širine {0}px da bi ga nacrtao širine {1}px (čak i na 2x retina ekranu koristan je samo ~{2}px). Svaki bajt koji se preuzme a nikad ne iskoristi takmiči se sa sadržajem važnim za prvi prikaz, pa se stranica sporije učitava — naročito na mobilnim konekcijama — a spor Largest Contentful Paint (LCP, Core Web Vital i signal rangiranja) je uobičajen rezultat kada je ovo hero / slika iznad preloma. Najvažnije je kod velikih fajlova (stotine KB ili više), kod slika pri vrhu stranice i kada je pogođeno mnogo slika na jednoj stranici.",
     "1) Find out why the full-size file is served. An Image element normally gets smaller responsive versions from Webflow automatically (look for a variant such as \"-p-500\" in the file name); the full file is usually served when the image sits in a rich text field, is a background image, was imported (CSV/API), or has \"Disable responsiveness\" turned on in Image settings. 2) If it is an Image element: turn responsiveness back on (Image settings), then press Cmd/Ctrl+Shift+I to rescan, and publish. 3) Otherwise replace the file: Assets panel > download the image, resize it to about 2x the displayed width (~{0}px here) and compress it (Squoosh, TinyPNG; WebP/AVIF is best), then Assets panel > ... > Replace — every place the image is used is updated (the file URL changes, so update any direct links). You do not need the original design file for this. 4) For big batches, use Assets panel > Select > Compress to convert many JPG/PNG files to WebP/AVIF at once (it reduces KB, not pixel size).": "1) Utvrdi zašto se servira fajl pune veličine. Image element obično automatski dobija manje responsive verzije od Webflow-a (potraži varijantu poput \"-p-500\" u imenu fajla); pun fajl se obično servira kada je slika u rich text polju, kada je pozadinska slika, kada je uvezena (CSV/API) ili kada je u Image settings uključeno \"Disable responsiveness\". 2) Ako je u pitanju Image element: ponovo uključi responsiveness (Image settings), zatim pritisni Cmd/Ctrl+Shift+I da ponovo skeniraš i objavi. 3) U suprotnom zameni fajl: Assets panel > preuzmi sliku, smanji je na oko 2x prikazane širine (~{0}px ovde) i kompresuj (Squoosh, TinyPNG; WebP/AVIF je najbolji), zatim Assets panel > ... > Replace — ažurira se svako mesto gde se slika koristi (URL fajla se menja, pa ažuriraj sve direktne linkove). Za ovo ti nije potreban originalni dizajn fajl. 4) Za velike serije koristi Assets panel > Select > Compress da odjednom konvertuješ mnogo JPG/PNG fajlova u WebP/AVIF (smanjuje KB, ne dimenzije u pikselima).",
     "All {0} below-the-fold images are lazy-loaded": "Svih {0} slika ispod preloma je lazy-loaded",
+    "Image file is heavy ({0} for a {1}px-wide image)": "Fajl slike je težak ({0} za sliku širine {1}px)",
+    "The file is large for what it shows. Every KB competes with the content of the first view and is paid again by every visitor — most noticeably on phones and slow connections. As a rule of thumb a content image shown about 350px wide should be well under 100 KB as WebP/AVIF, and even a full-width hero image rarely needs more than a few hundred KB. The size is measured (content-length header), not guessed.": "Fajl je velik za ono što prikazuje. Svaki KB se takmiči sa sadržajem prvog prikaza i plaća ga svaki posetilac iznova — najviše na telefonima i sporim konekcijama. Okvirno, slika sadržaja široka oko 350px treba da bude znatno ispod 100 KB kao WebP/AVIF, a čak ni hero slika preko cele širine retko treba više od nekoliko stotina KB. Veličina je izmerena (content-length header), ne pretpostavljena.",
+    "Re-export the image at about 2x the displayed width and compress it (WebP/AVIF; Squoosh, TinyPNG), then Assets panel > ... > Replace — every place the image is used is updated. For many files at once: Assets panel > Select > Compress.": "Ponovo izvezi sliku na oko 2x prikazane širine i kompresuj je (WebP/AVIF; Squoosh, TinyPNG), zatim Assets panel > ... > Replace — ažurira se svako mesto gde se slika koristi. Za mnogo fajlova odjednom: Assets panel > Select > Compress.",
+    "Image has no responsive versions (phones download the full {0}px file)": "Slika nema responsive verzije (telefoni preuzimaju ceo fajl od {0}px)",
+    "File size: {0} · estimated wasted on a phone (375px): ~{1}": "Veličina fajla: {0} · procenjeno uzalud na telefonu (375px): ~{1}",
+    "This image has no srcset, so every device gets the same large file — a phone (375px wide, about 750px of useful resolution even on a 2x screen) downloads all of it for nothing. Webflow creates responsive versions automatically only for Image elements uploaded in Webflow; images in rich text, CMS/CSV imports, background images, or Image elements with \"Disable responsiveness\" turned on are served as one single file.": "Ova slika nema srcset, pa svaki uređaj dobija isti veliki fajl — telefon (širine 375px, oko 750px korisne rezolucije čak i na 2x ekranu) preuzima ceo fajl uzalud. Webflow automatski pravi responsive verzije samo za Image elemente otpremljene u Webflow-u; slike u rich text-u, CMS/CSV uvozi, pozadinske slike ili Image elementi sa uključenim \"Disable responsiveness\" se serviraju kao jedan jedini fajl.",
+    "1) If it is an Image element: open Image settings, make sure \"Disable responsiveness\" is off, and publish. 2) If it sits in a rich text field or is a background image: replace it with an Image element, or upload a smaller version (about 1200px wide at most) compressed as WebP/AVIF. 3) Also run this tool with the window at phone width (375px) — the results depend on the window width.": "1) Ako je Image element: otvori Image settings, proveri da je \"Disable responsiveness\" isključeno i objavi. 2) Ako je u rich text polju ili je pozadinska slika: zameni je Image elementom ili otpremi manju verziju (najviše oko 1200px širine) kompresovanu kao WebP/AVIF. 3) Pokreni alat i sa prozorom širine telefona (375px) — rezultati zavise od širine prozora.",
+    "Above-the-fold images are lazy-loaded ({0})": "Slike iznad preloma se učitavaju lazy ({0})",
+    "+{0} more": "+{0} još",
+    "These images are visible in the first screen, but loading=\"lazy\" makes the browser fetch them later than it could: it first has to lay out the page and work out which images are on screen. That delays the first view (and the Largest Contentful Paint, a Core Web Vital, when one of them is the main image) and makes the images pop in. Lazy loading is meant for images far below the first screen. The first screen is measured at the current window width, so on a phone a different set of images can be above the fold.": "Ove slike su vidljive na prvom ekranu, ali ih loading=\"lazy\" tera pregledač da preuzme kasnije nego što bi mogao: prvo mora da izračuna raspored stranice i utvrdi koje slike su na ekranu. To odlaže prvi prikaz (i Largest Contentful Paint, Core Web Vital, kada je jedna od njih glavna slika) i slike se pojavljuju naknadno. Lazy učitavanje je namenjeno slikama daleko ispod prvog ekrana. Prvi ekran se meri na trenutnoj širini prozora, pa na telefonu drugi skup slika može biti iznad preloma.",
+    "In the Webflow Designer: select each image in the first screen (hero, logo, the first row of logos) > Settings > Loading > \"Eager\". Keep \"Lazy\" for everything further down the page.": "U Webflow Designer-u: izaberi svaku sliku na prvom ekranu (hero, logo, prvi red logotipa) > Settings > Loading > \"Eager\". Zadrži \"Lazy\" za sve što je niže na stranici.",
+    "None of the {0} images in the first screen is lazy-loaded": "Nijedna od {0} slika na prvom ekranu nije lazy-loaded",
+    "Above-the-fold video has no poster image": "Video iznad preloma nema poster sliku",
+    "A large video at the top of the page shows an empty box until enough of the file has downloaded. A poster image is shown instantly and replaced by the video when it starts, so it improves the first view and the Largest Contentful Paint (LCP, a Core Web Vital). Without it, how the video area looks while loading is left to the browser.": "Veliki video pri vrhu stranice prikazuje prazan okvir dok se ne preuzme dovoljno fajla. Poster slika se prikazuje odmah i zamenjuje je video kada krene, pa poboljšava prvi prikaz i Largest Contentful Paint (LCP, Core Web Vital). Bez nje, kako video prostor izgleda tokom učitavanja prepušteno je pregledaču.",
+    "Add a poster attribute to the <video> tag (poster=\"https://…/poster.avif\" — an AVIF/WebP of the first frame, ideally well under 50 KB). In Webflow this is a custom attribute on the video element or part of the embed code; if it is a Background Video element, check its settings for a poster/fallback image. Also provide an MP4 source next to a WebM one so every browser can play it.": "Dodaj poster atribut na <video> tag (poster=\"https://…/poster.avif\" — AVIF/WebP prvog kadra, idealno znatno ispod 50 KB). U Webflow-u je to custom atribut na video elementu ili deo embed koda; ako je u pitanju Background Video element, proveri njegova podešavanja za poster/fallback sliku. Takođe obezbedi MP4 izvor pored WebM-a da ga svaki pregledač može reprodukovati.",
+    "The above-the-fold video has a poster image": "Video iznad preloma ima poster sliku",
+    "Forms": "Forme",
+    "Form field has no accessible label": "Polje forme nema pristupačnu labelu",
+    "placeholder: \"{0}\"": "placeholder: \"{0}\"",
+    "A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect.": "Placeholder nestaje čim posetilac počne da kuca i nije pouzdano pristupačno ime, pa čitači ekrana i glasovna kontrola mogu da najave polje bez ikakvog imena. <label> (ili aria-label) je standardno rešenje. Ovo je pre svega pitanje pristupačnosti i upotrebljivosti — nema direktan uticaj na rangiranje.",
+    "In the Webflow Designer: add a Label element above the field (it can stay visually hidden with a utility class), or select the field > Settings > Custom attributes > aria-label = \"what the field is for\".": "U Webflow Designer-u: dodaj Label element iznad polja (može ostati vizuelno sakriven preko utility klase) ili izaberi polje > Settings > Custom attributes > aria-label = \"čemu polje služi\".",
+    "All {0} form field(s) have a label": "Sva polja forme ({0}) imaju labelu",
+    "Organization schema has no sameAs (links to the official profiles)": "Organization schema nema sameAs (linkove ka zvaničnim profilima)",
+    "Profiles linked on this page: {0}": "Profili povezani na ovoj stranici: {0}",
+    "sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...). It is how search and AI answer engines connect the website to those profiles and recognise them as one entity, which makes the brand easier to cite correctly.": "sameAs navodi zvanične profile firme (LinkedIn, X, YouTube, Crunchbase, Clutch...). Tako pretraživači i AI answer engine-i povezuju sajt sa tim profilima i prepoznaju ih kao jedan entitet, što olakšava da se brend ispravno citira.",
+    "Add a sameAs array with the full URLs of the official profiles to the Organization JSON-LD block (Pages > Home > Settings > Custom code in the head, or Site settings).": "Dodaj sameAs niz sa punim URL-ovima zvaničnih profila u Organization JSON-LD blok (Pages > Home > Settings > Custom code u head-u, ili Site settings).",
+    "Organization schema sameAs does not include the social profiles linked on this page": "Organization schema sameAs ne uključuje društvene profile povezane na ovoj stranici",
+    "Missing: {0}": "Nedostaje: {0}",
+    "The page links to these profiles, but the Organization schema does not list them in sameAs. Listing all official profiles helps search and AI answer engines recognise the business as one entity across the web.": "Stranica linkuje ove profile, ali ih Organization schema ne navodi u sameAs. Navođenje svih zvaničnih profila pomaže pretraživačima i AI answer engine-ima da prepoznaju firmu kao jedan entitet na celom vebu.",
+    "Add the full profile URLs (the same ones the page links to) to the sameAs array of the Organization JSON-LD block.": "Dodaj pune URL-ove profila (iste na koje stranica linkuje) u sameAs niz Organization JSON-LD bloka.",
+    "Organization schema lists its official profiles (sameAs: {0})": "Organization schema navodi zvanične profile (sameAs: {0})",
+    "Home page has no Organization schema": "Početna stranica nema Organization schema",
+    "The home page is where search and AI answer engines learn who the business is: its name, logo and official profiles. Organization schema states that explicitly instead of leaving it to be guessed from the text.": "Početna stranica je mesto gde pretraživači i AI answer engine-i saznaju ko je firma: njen naziv, logo i zvanične profile. Organization schema to navodi eksplicitno umesto da se pogađa iz teksta.",
+    "Add a JSON-LD Organization block (name, url, logo, sameAs with the official profiles) in Pages > Home > Settings > Custom code (head).": "Dodaj JSON-LD Organization blok (name, url, logo, sameAs sa zvaničnim profilima) u Pages > Home > Settings > Custom code (head).",
+    "Image file weight (150KB+)": "Težina fajla slike (150KB+)",
+    "Responsive image versions (srcset)": "Responsive verzije slike (srcset)",
+    "Above-the-fold images not lazy-loaded": "Slike iznad preloma nisu lazy",
+    "Above-the-fold video poster": "Poster videa iznad preloma",
+    "Form field labels": "Labele polja forme",
+    "Organization schema profiles (sameAs)": "Profili u Organization schema (sameAs)",
     "{0} of {1} visible images have descriptive (or deliberately decorative) alt text": "{0} od {1} vidljivih slika ima opisni (ili namerno dekorativni) alt tekst",
     "{0} image(s) have both dimensions fixed (HTML attribute or CSS, any unit)": "Slika sa obe fiksne dimenzije (HTML atribut ili CSS, bilo koja jedinica): {0}",
     "{0} image(s) have a fixed height (width is auto — safe, does not cause CLS)": "Slika sa fiksnom visinom (širina je auto — bezbedno, ne izaziva CLS): {0}",
