@@ -2665,7 +2665,10 @@
       '.prog-fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.22,1,.36,1);}',
       '.prog-sub{margin-top:8px;font-size:11.5px;color:#9ca3af;}',
       // Each stat stays on one line (wraps BETWEEN stats, never inside one); the "vs last run" delta sits on its own line below.
-      '.prog-stats{display:flex;flex-wrap:wrap;gap:2px 0;}',
+      '.prog-stats{display:flex;flex-wrap:wrap;gap:2px 0;position:relative;}',
+      // Instant, readable hover tooltip for the checks / issues / notes counters (replaces the slow native title tooltip)
+      '.prog-stats .st[data-tip]{cursor:help;}',
+      '.prog-stats .st[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;white-space:normal;background:#1f2333;color:#e5e7eb;font-size:11.5px;line-height:1.5;font-weight:400;padding:9px 11px;border-radius:10px;box-shadow:0 10px 30px -6px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);pointer-events:none;}',
       '.prog-stats .st{white-space:nowrap;}',
       '.prog-stats .st+.st::before{content:"·";margin:0 7px;color:#4b5563;}',
       '.prog-delta{margin-top:4px;font-size:11px;color:#6b7280;}',
@@ -2981,8 +2984,10 @@
         // 1st = checks (clickable -> opens the list of those checks), 2nd = issues, 3rd = notes (tooltips explain the difference)
         var isChecks = i === 0 && opt.failedChecks > 0;
         var tip = i === 0 ? (opt.failedChecks > 0 ? tr('Checks that did not fully pass (a check can fail because of an info note too). Click to see which ones and how much each costs.') : '')
-          : (x.indexOf('<b>' + opt.issues + '</b>') === 0 && opt.issues > 0 && i === 1 ? tr('Individual error + warning findings') : tr('Individual info findings (notes)'));
-        return '<span class="st' + (isChecks ? ' st-link' : '') + '"' + (tip ? ' title="' + tip.replace(/"/g, '&quot;') + '"' : '') + '>' + x + '</span>';
+          : (x.indexOf('<b>' + opt.issues + '</b>') === 0 && opt.issues > 0 && i === 1
+            ? tr('Issues = errors + warnings. Every individual error-level and warning-level finding on this page is counted (info notes are not). These are the ones to fix first.')
+            : tr('Notes = info-level findings. Suggestions and things worth double-checking — they do not mean something is broken, but they still affect the score a little.'));
+        return '<span class="st' + (isChecks ? ' st-link' : '') + '"' + (tip ? ' data-tip="' + tip.replace(/"/g, '&quot;') + '"' : '') + '>' + x + '</span>';
       }).join('') + '</div>' +
       (deltaHtml ? '<div class="prog-delta">' + deltaHtml + '</div>' : '') + '</div>';
     var checksLink = prog.querySelector('.st-link');
@@ -3982,7 +3987,9 @@
     "Click a check to see its findings. \"Issues\" and \"notes\" count individual findings (errors + warnings / info), so they differ from the number of checks. The % is how much of the \"Page optimized\" score each check costs.": "Klikni na proveru da vidiš njene nalaze. „Problemi“ i „napomene“ broje pojedinačne nalaze (greške + upozorenja / info), pa se razlikuju od broja provera. Procenat pokazuje koliko svaka provera košta u skoru „Stranica je optimizovana“.",
     "Show the {0} finding(s) of this check": "Prikaži nalaze ove provere ({0})",
     "Showing only the check:": "Prikazana samo provera:",
-    "Clear filter": "Ukloni filter"
+    "Clear filter": "Ukloni filter",
+    "Issues = errors + warnings. Every individual error-level and warning-level finding on this page is counted (info notes are not). These are the ones to fix first.": "Problemi = greške + upozorenja. Broji se svaki pojedinačni nalaz tipa greška i upozorenje na ovoj stranici (info napomene se ne računaju). Ovo je ono što prvo treba ispraviti.",
+    "Notes = info-level findings. Suggestions and things worth double-checking — they do not mean something is broken, but they still affect the score a little.": "Napomene = info nalazi. Predlozi i stvari koje vredi dvaput proveriti — ne znače da je nešto pokvareno, ali ipak malo utiču na skor."
     };
   }
 
