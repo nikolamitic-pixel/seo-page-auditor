@@ -1148,8 +1148,28 @@
 
   var GENERIC_ANCHOR = /^(klikni ovde|click here|read more|saznaj vi[sš]e|vi[sš]e|ovde|here|link)$/i;
 
+  // True when an invisible element is hidden only because a NAVIGATION MENU / DROPDOWN container
+  // above it is collapsed (Webflow .w-nav-menu / .w-dropdown-list, role=menu, nav-like class
+  // names). Popups, modals, dialogs, lightboxes, tabs and sliders are hidden by design → false.
+  function isInCollapsedMenu(el) {
+    try {
+      if (el.closest('[role="dialog"], [aria-modal="true"], .w-lightbox-backdrop, .w-tab-pane, .w-slider, [class*="popup" i], [class*="modal" i], [class*="lightbox" i]')) return false;
+      var p = el.parentElement;
+      while (p && p !== document.documentElement) {
+        var st = window.getComputedStyle(p);
+        if (st.display === 'none' || st.visibility === 'hidden') {
+          if (p.matches('.w-nav-menu, .w-dropdown-list, [role="menu"], [role="menubar"], nav, [role="navigation"]')) return true;
+          var cls = (p.getAttribute('class') || '');
+          return /(^|[\s_-])(navbar|nav|menu|dropdown)([\s_-]|$)/i.test(cls);
+        }
+        p = p.parentElement;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function checkLinks() {
-    var links = Array.prototype.slice.call(document.querySelectorAll('a'));
+    var links =Array.prototype.slice.call(document.querySelectorAll('a'));
     var internalToCheck = [];
     var checkedLinkCount = 0;
     var emptyHrefFound = false;
@@ -1157,19 +1177,34 @@
     var noTextLinkFound = false;
 
     links.forEach(function (a) {
-      if (!isVisible(a)) return;
-      checkedLinkCount++;
+      var inCollapsedMenu = false;
+      if (!isVisible(a)) {
+        // Links inside a COLLAPSED navigation menu / dropdown (e.g. the mobile menu) are hidden
+        // only until the visitor opens it — they still get the "goes nowhere" check (added
+        // 29.10.2026 after social links with href="#" in a mobile nav menu were missed).
+        // Popups, modals, tabs and sliders stay skipped (hidden by design).
+        if (!isInCollapsedMenu(a)) return;
+        inCollapsedMenu = true;
+      } else {
+        checkedLinkCount++;
+      }
       var href = a.getAttribute('href');
       var isEmpty = !href || href.trim() === '' || href.trim() === '#' || /^javascript:/i.test(href.trim());
       var hasCompensatingRole = a.getAttribute('role') === 'tab' || a.getAttribute('role') === 'button';
 
       if (isEmpty && !hasCompensatingRole) {
         emptyHrefFound = true;
+        var linkLabel = (text(a) || (a.getAttribute('aria-label') || '').trim()).slice(0, 60);
         addFinding({ category: 'Links', severity: 'warning', title: 'Link doesn\'t go anywhere (href="' + (href || '') + '")',
-          description: '"' + text(a).slice(0, 60) + '"',
-          why: 'If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role="tab", not an <a> link — a link semantically implies navigation.',
-          fix: 'If the element doesn\'t navigate anywhere, change it to a <button> (or add role="tab"/role="button" plus the corresponding ARIA attributes). In Webflow, a link used only as an interaction trigger (e.g. closing a popup) is a very common pattern — if that is what this is, it is a minor note rather than a real problem.', element: a });
+          description: '"' + linkLabel + '"',
+          why: inCollapsedMenu
+            ? 'This link sits inside a collapsed menu (e.g. the mobile menu or a dropdown), so it is hidden until the menu is opened — but visitors still reach it with one click. With an empty href the click leads nowhere (with target="_blank" it just opens a new tab of the same page). This is typical for social icons or menu items whose real URL was never filled in.'
+            : 'If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role="tab", not an <a> link — a link semantically implies navigation.',
+          fix: inCollapsedMenu
+            ? 'Fill in the real URL (Webflow Designer: select the link > Settings panel > Link settings > URL) and publish. If the destination does not exist yet, remove the link until it does. The menu is collapsed at the current window width — open it (or widen the window) to find the element.'
+            : 'If the element doesn\'t navigate anywhere, change it to a <button> (or add role="tab"/role="button" plus the corresponding ARIA attributes). In Webflow, a link used only as an interaction trigger (e.g. closing a popup) is a very common pattern — if that is what this is, it is a minor note rather than a real problem.', element: a });
       }
+      if (inCollapsedMenu) return; // hidden-menu links: only the empty-href check applies
 
       // In-page anchor targets
       if (href && href.charAt(0) === '#' && href.length > 1) {
@@ -2787,6 +2822,11 @@
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setTimeout(function () {
       var r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) { // e.g. a link inside a collapsed menu
+        highlightBox.style.display = 'none';
+        showToast(tr('This element is hidden right now (e.g. inside a collapsed menu) — open the menu or widen the window to see it.'));
+        return;
+      }
       highlightBox.style.display = 'block';
       highlightBox.style.top = (r.top - 4) + 'px';
       highlightBox.style.left = (r.left - 4) + 'px';
@@ -3669,6 +3709,9 @@
     "Links": "Linkovi",
     "Link doesn't go anywhere (href=\"{0}\")": "Link ne vodi nigde (href=\"{0}\")",
     "Link doesn't go anywhere (href=\"\")": "Link ne vodi nigde (href=\"\")",
+    "This element is hidden right now (e.g. inside a collapsed menu) — open the menu or widen the window to see it.": "Ovaj element je trenutno skriven (npr. u sklopljenom meniju) — otvori meni ili proširi prozor da ga vidiš.",
+    "This link sits inside a collapsed menu (e.g. the mobile menu or a dropdown), so it is hidden until the menu is opened — but visitors still reach it with one click. With an empty href the click leads nowhere (with target=\"_blank\" it just opens a new tab of the same page). This is typical for social icons or menu items whose real URL was never filled in.": "Ovaj link se nalazi u sklopljenom meniju (npr. mobilni meni ili dropdown), pa je skriven dok se meni ne otvori — ali posetioci do njega stižu jednim klikom. Sa praznim href-om klik ne vodi nigde (uz target=\"_blank\" samo otvori novi tab iste stranice). Tipično za social ikonice ili stavke menija kojima pravi URL nikad nije upisan.",
+    "Fill in the real URL (Webflow Designer: select the link > Settings panel > Link settings > URL) and publish. If the destination does not exist yet, remove the link until it does. The menu is collapsed at the current window width — open it (or widen the window) to find the element.": "Upiši pravi URL (Webflow Designer: selektuj link > Settings panel > Link settings > URL) i objavi sajt. Ako odredište još ne postoji, ukloni link dok ne bude gotovo. Meni je sklopljen pri trenutnoj širini prozora — otvori ga (ili proširi prozor) da pronađeš element.",
     "If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role=\"tab\", not an <a> link — a link semantically implies navigation.": "Ako ovo predstavlja tab/accordion koji samo menja prikaz na istoj stranici, ispravan pristup prema WAI-ARIA Tabs obrascu je <button> sa role=\"tab\", a ne <a> link — link semantički podrazumeva navigaciju.",
     "If the element doesn't navigate anywhere, change it to a <button> (or add role=\"tab\"/role=\"button\" plus the corresponding ARIA attributes). In Webflow, a link used only as an interaction trigger (e.g. closing a popup) is a very common pattern — if that is what this is, it is a minor note rather than a real problem.": "Ako element ne vodi nigde, promeni ga u <button> (ili dodaj role=\"tab\"/role=\"button\" plus odgovarajuće ARIA atribute). U Webflow-u je link korišćen samo kao okidač interakcije (npr. zatvaranje popup-a) veoma čest obrazac — ako je ovo to, reč je o maloj napomeni, a ne pravom problemu.",
     "Anchor link points to an ID that doesn't exist (#{0})": "Anchor link pokazuje na ID koji ne postoji (#{0})",
