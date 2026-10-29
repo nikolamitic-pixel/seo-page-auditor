@@ -44,6 +44,84 @@
     return f;
   }
 
+  // ---------------------------------------------------------------------
+  // i18n (EN / SR) — added 29.10.2026
+  // ---------------------------------------------------------------------
+  // English is the SOURCE language: every check writes its English text exactly as before (the
+  // scoring registry matches on the English titles). Serbian is applied ONLY when rendering the
+  // panel / report, by looking the English text up in a dictionary (srDictData(), at the bottom of
+  // the file). Dictionary keys with {0},{1}... are templates for strings that contain runtime
+  // values (numbers, URLs, tag names) — they are matched with a regex and the captured values
+  // are put back into the Serbian text. A line that has no translation is shown in English and
+  // listed in window.__SeoAuditorUntranslated (so gaps are visible, never silent).
+  var LANG_KEY = 'seoAuditorLang';
+  var LANG = 'en';
+  try { LANG = localStorage.getItem(LANG_KEY) === 'sr' ? 'sr' : 'en'; } catch (e) { LANG = 'en'; }
+  var SR_EXACT = null, SR_TPL = null;
+  window.__SeoAuditorUntranslated = [];
+
+  function buildSr() {
+    if (SR_EXACT) return;
+    var d = srDictData();
+    SR_EXACT = {}; SR_TPL = [];
+    Object.keys(d).forEach(function (k) {
+      if (!/\{\d+\}/.test(k)) { SR_EXACT[k] = d[k]; return; }
+      var order = [];
+      var src = k.split(/(\{\d+\})/).map(function (part) {
+        var m = /^\{(\d+)\}$/.exec(part);
+        if (m) { order.push(parseInt(m[1], 10)); return '([\\s\\S]*?)'; }
+        return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }).join('');
+      SR_TPL.push({ key: k, re: new RegExp('^' + src + '$'), order: order, sr: d[k], lit: k.replace(/\{\d+\}/g, '').length });
+    });
+    SR_TPL.sort(function (a, b) { return b.lit - a.lit; }); // most specific template first
+  }
+  function srLookup(s, quiet) {
+    if (Object.prototype.hasOwnProperty.call(SR_EXACT, s)) return SR_EXACT[s];
+    if (s.indexOf('\n') !== -1) return s.split('\n').map(function (l) { return srLookup(l, quiet); }).join('\n');
+    for (var i = 0; i < SR_TPL.length; i++) {
+      var t = SR_TPL[i], m = t.re.exec(s);
+      if (!m) continue;
+      return t.sr.replace(/\{(\d+)\}/g, function (x, n) {
+        var idx = t.order.indexOf(parseInt(n, 10));
+        return idx === -1 ? x : srLookup(m[idx + 1], !window.__SeoAuditorI18nStrict); // captured values may themselves be English phrases
+      });
+    }
+    if (s.indexOf('; ') !== -1) { // several reasons joined with "; " (see reportCheckSkipped)
+      var parts = s.split('; ').map(function (x) { return srLookup(x, quiet); });
+      return parts.join('; ');
+    }
+    if (!quiet && /[A-Za-z]{3,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(s) && !/^https?:\/\//.test(s) && window.__SeoAuditorUntranslated.indexOf(s) === -1) {
+      window.__SeoAuditorUntranslated.push(s);
+    }
+    return s;
+  }
+  // Translate a (possibly multi-line) English string for display; returns it unchanged in EN mode.
+  function tr(s) {
+    if (LANG !== 'sr' || !s || typeof s !== 'string') return s;
+    buildSr();
+    return srLookup(s, false);
+  }
+  // Translate a UI template with {0},{1}... placeholders and fill in the values.
+  function trf(key, vals) {
+    var base = key;
+    if (LANG === 'sr') { buildSr(); if (Object.prototype.hasOwnProperty.call(SR_EXACT, key)) base = SR_EXACT[key]; else { var hit = SR_TPL.filter(function (t) { return t.key === key; })[0]; if (hit) base = hit.sr; } }
+    return base.replace(/\{(\d+)\}/g, function (x, n) { var v = vals[parseInt(n, 10)]; return v === undefined ? x : v; });
+  }
+  // Serbian noun forms for counts: 1 / 2-4 / 5+ (11-14 take the "many" form).
+  function srPlural(n, one, few, many) {
+    var a = n % 10, b = n % 100;
+    if (a === 1 && b !== 11) return one;
+    if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return few;
+    return many;
+  }
+  function setLang(l) {
+    LANG = l === 'sr' ? 'sr' : 'en';
+    try { localStorage.setItem(LANG_KEY, LANG); } catch (e) {}
+    if (reportPreviewVisible) reportPreviewText = buildReportText();
+    renderPanel();
+  }
+
   function text(el) {
     return (el && (el.innerText || el.textContent) || '').trim();
   }
@@ -583,14 +661,20 @@
   // for specificity/!important, nor whether an @media block is currently active (best-effort
   // heuristic, same as the other CSS-parsing checks in this file).
   function getDeclaredCssSize(el) {
-    var declared = { width: null, height: null };
+    var declared = { width: null, height: null, aspectRatio: null, minHeight: null, paddingBottom: null };
 
     function applyDecl(styleDecl) {
       if (!styleDecl || !styleDecl.getPropertyValue) return;
       var w = styleDecl.getPropertyValue('width');
       var h = styleDecl.getPropertyValue('height');
+      var ar = styleDecl.getPropertyValue('aspect-ratio');
+      var mh = styleDecl.getPropertyValue('min-height');
+      var pb = styleDecl.getPropertyValue('padding-bottom');
       if (w) declared.width = w.trim();
       if (h) declared.height = h.trim();
+      if (ar) declared.aspectRatio = ar.trim();
+      if (mh) declared.minHeight = mh.trim();
+      if (pb) declared.paddingBottom = pb.trim();
     }
 
     function scanRules(rules) {
@@ -630,15 +714,59 @@
     return !!v && v !== 'auto' && v !== 'initial' && v !== 'inherit' && v !== 'unset';
   }
 
+  // 29.10.2026 — an image with no height of its own is often fine because a WRAPPER reserves the
+  // space (fixed height, aspect-ratio, min-height, or the old padding-bottom:% "ratio box" trick):
+  // the wrapper keeps its size while the image loads, so nothing below it shifts. This looks up to
+  // 5 ancestors for such a reservation. A percentage height (height:100%) only counts if some
+  // ancestor above it really has a fixed size — on its own it reserves nothing.
+  var heightReserveCache = null;
+  function elLabel(el) {
+    var c = (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/)[0] : '';
+    return el.tagName.toLowerCase() + (c ? '.' + c : '');
+  }
+  function reservesHeight(d, el, selfLabel) {
+    var pct = function (v) { return /%\s*$/.test(v || ''); };
+    var intrinsic = function (v) { return /^(fit-content|max-content|min-content|stretch)/.test(v || ''); };
+    if (isLengthFixed(d.height) && !pct(d.height) && !intrinsic(d.height)) return 'a fixed height (' + d.height + ') on ' + selfLabel;
+    if (d.aspectRatio && d.aspectRatio !== 'auto') return 'aspect-ratio (' + d.aspectRatio + ') on ' + selfLabel;
+    if (d.minHeight && isLengthFixed(d.minHeight) && !pct(d.minHeight) && !intrinsic(d.minHeight) && !/^0(px|rem|em|vh)?$/.test(d.minHeight)) return 'a min-height (' + d.minHeight + ') on ' + selfLabel;
+    if (pct(d.paddingBottom) && parseFloat(d.paddingBottom) > 0) return 'a padding-bottom ratio box (' + d.paddingBottom + ') on ' + selfLabel;
+    try {
+      var ar = getComputedStyle(el).aspectRatio;
+      if (ar && ar !== 'auto') return 'aspect-ratio (' + ar + ') on ' + selfLabel;
+    } catch (e) {}
+    return null;
+  }
+  function findHeightReserver(img, ownDecl) {
+    var own = reservesHeight({ height: null, aspectRatio: ownDecl.aspectRatio, minHeight: ownDecl.minHeight, paddingBottom: null }, img, 'the image');
+    if (own) return own;
+    if (!heightReserveCache) heightReserveCache = typeof Map === 'function' ? new Map() : null;
+    var el = img.parentElement, depth = 0;
+    while (el && el !== document.body && el !== document.documentElement && depth < 5) {
+      var hit;
+      if (heightReserveCache && heightReserveCache.has(el)) hit = heightReserveCache.get(el);
+      else {
+        hit = reservesHeight(getDeclaredCssSize(el), el, 'the wrapper <' + elLabel(el) + '>');
+        if (heightReserveCache) heightReserveCache.set(el, hit);
+      }
+      if (hit) return hit;
+      el = el.parentElement; depth++;
+    }
+    return null;
+  }
+
   function checkImages() {
+    heightReserveCache = null;
     var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
     var bothDimsFixedCount = 0;
     var heightOnlyFixedCount = 0;
+    var wrapperHeightCount = 0;   // no own height, but a wrapper / aspect-ratio reserves the space (29.10.2026)
     var goodAltCount = 0;
     var internalHostCount = 0;
     var modernFormatCount = 0;
     var checkedImgCount = 0;
     var oversizeMeasured = 0, oversizeFound = 0;   // "image much larger than displayed" (28.10.2026)
+    var oversizeCandidates = [];                   // images that are oversized by pixel dimensions; severity decided by estimated wasted KB
     var lazyConsidered = 0, lazyFound = 0;         // "below-the-fold image not lazy" (28.10.2026)
 
     imgs.forEach(function (img) {
@@ -694,7 +822,9 @@
       // "safe", and such images are not reported either as a warning/error or as an info note;
       // they go straight into the Success tab.
       var declared = getDeclaredCssSize(img);
-      var heightFixed = img.hasAttribute('height') || isLengthFixed(declared.height);
+      var ownHeightPct = /%\s*$/.test(declared.height || '');
+      var heightFixed = img.hasAttribute('height') || (isLengthFixed(declared.height) && !ownHeightPct);
+      var heightReserver = heightFixed ? null : findHeightReserver(img, declared);
       var widthFixed = img.hasAttribute('width') || isLengthFixed(declared.width);
 
       if (heightFixed) {
@@ -703,12 +833,15 @@
         } else {
           heightOnlyFixedCount++;
         }
+      } else if (heightReserver) {
+        wrapperHeightCount++;
       } else {
         addFinding({ category: 'Images', severity: 'error',
           title: 'Image has no fixed height (neither HTML attribute nor CSS)',
           description: (img.currentSrc || img.src || '').slice(0, 120) +
             '\nCSS width: ' + (declared.width || 'not found/defined') +
-            ' | CSS height: ' + (declared.height || 'not found/defined'),
+            ' | CSS height: ' + (declared.height || 'not found/defined') +
+            (ownHeightPct ? '\nThe height is a percentage, but no parent (up to 5 levels checked) has a fixed height, aspect-ratio or min-height, so nothing reserves the space.' : '\nChecked the image and up to 5 parent elements for a fixed height, aspect-ratio, min-height or padding-bottom ratio box — none found.'),
           why: 'Neither the HTML height attribute nor CSS fixes the height (the value is "auto" or not defined at all) — the browser can\'t reserve vertical space for the image in advance, which genuinely causes layout shift (CLS) while the image loads. CLS is an official Google Core Web Vital/ranking signal, so this is a verified cause of a concrete problem with a measurable SEO impact, not just a theoretical risk. Width isn\'t a factor here — a fixed width alone doesn\'t reserve vertical space.',
           fix: 'Add an explicit height (an HTML height attribute, or CSS height in any unit — px, rem, vw...) directly on the <img> tag or in the Style panel. Width can stay auto.',
           element: img });
@@ -726,12 +859,9 @@
         oversizeMeasured++;
         var allowedW = shownW * 2; // up to 2x the displayed width is normal (retina screens)
         if (natW > allowedW * 1.25 && natW - allowedW > 300) {
-          oversizeFound++;
-          addFinding({ category: 'Images', severity: natW > allowedW * 2 ? 'warning' : 'info',
-            title: 'Image is much larger than it is displayed (' + natW + 'px file shown at ' + shownW + 'px)',
-            description: srcNow.replace(/\?.*$/, '').slice(0, 120),
-            why: 'The browser downloads a ' + natW + 'px-wide file to draw it ' + shownW + 'px wide (even on a 2x retina screen only ~' + allowedW + 'px is useful). The extra bytes slow loading and hurt LCP, a Core Web Vital / ranking signal.',
-            fix: 'Upload a version closer to the displayed size (about 2x the width it is shown at), or let Webflow\'s responsive image variants do it by setting the image\'s size in the Designer.', element: img });
+          // Pixel dimensions alone say little about real impact (a 65KB image shown at 1/4 size is
+          // harmless), so the severity is decided by the ESTIMATED WASTED BYTES — see resolveOversize().
+          oversizeCandidates.push({ img: img, natW: natW, shownW: shownW, allowedW: allowedW, src: srcNow });
         }
       }
       if (!skipSizing && shownW >= 64 && rectNow.height >= 64) {
@@ -781,10 +911,65 @@
       }
     });
 
+    // ---- Oversized images: severity by estimated wasted bytes (thresholds agreed with the user, 29.10.2026) ----
+    // wasted ≈ fileBytes × (1 − (usefulWidth / fileWidth)²)  (area ratio; "useful" = 2× the displayed width)
+    //   >= 100 KB  -> warning   |   20–100 KB -> info   |   < 20 KB -> not reported (not worth the effort)
+    //   file size unknown (cross-origin without Timing-Allow-Origin / blocked HEAD) -> at most info, never a warning
+    var OVERSIZE_WARN_BYTES = 100 * 1024, OVERSIZE_INFO_BYTES = 20 * 1024;
+    var oversizePending = oversizeCandidates.length;
+    function oversizeKnownBytes(src) {
+      try {
+        var es = performance.getEntriesByName(src);
+        for (var i = es.length - 1; i >= 0; i--) { var b = es[i].encodedBodySize || es[i].transferSize; if (b > 0) return b; }
+      } catch (e) {}
+      return null;
+    }
+    function oversizeDone(isAsync) {
+      oversizePending--;
+      if (oversizePending > 0) return;
+      if (oversizeMeasured > 0 && oversizeFound === 0) {
+        addSuccess({ category: 'Images', title: 'No image is much larger than its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
+      }
+      if (isAsync) renderPanel();
+    }
+    function resolveOversize(c, bytes, isAsync) {
+      var wasted = bytes != null ? bytes * (1 - Math.pow(c.allowedW / c.natW, 2)) : null;
+      var severity = null;
+      if (wasted == null) severity = 'info';
+      else if (wasted >= OVERSIZE_WARN_BYTES) severity = 'warning';
+      else if (wasted >= OVERSIZE_INFO_BYTES) severity = 'info';
+      if (severity) {
+        oversizeFound++;
+        addFinding({ category: 'Images', severity: severity,
+          title: 'Image is much larger than it is displayed (' + c.natW + 'px file shown at ' + c.shownW + 'px)',
+          description: c.src.replace(/\?.*$/, '').slice(0, 120) + '\n' +
+            (bytes != null ? 'File size: ' + fmtBytes(bytes) + ' · estimated wasted: ~' + fmtBytes(Math.round(wasted)) : 'File size could not be read (the image server does not expose it)'),
+          why: 'The browser downloads a ' + c.natW + 'px-wide file to draw it ' + c.shownW + 'px wide (even on a 2x retina screen only ~' + c.allowedW + 'px is useful). ' +
+            'Every byte that is downloaded but never used competes with the content that matters for the first view, so the page loads slower — especially on mobile connections — and a slow Largest Contentful Paint (LCP, a Core Web Vital and ranking signal) is the usual result when this is the hero / above-the-fold image. ' +
+            'It matters most for large files (hundreds of KB or more), for images near the top of the page, and when many images on one page are affected.',
+          fix: '1) Find out why the full-size file is served. An Image element normally gets smaller responsive versions from Webflow automatically (look for a variant such as "-p-500" in the file name); the full file is usually served when the image sits in a rich text field, is a background image, was imported (CSV/API), or has "Disable responsiveness" turned on in Image settings. ' +
+            '2) If it is an Image element: turn responsiveness back on (Image settings), then press Cmd/Ctrl+Shift+I to rescan, and publish. ' +
+            '3) Otherwise replace the file: Assets panel > download the image, resize it to about 2x the displayed width (~' + c.allowedW + 'px here) and compress it (Squoosh, TinyPNG; WebP/AVIF is best), then Assets panel > ... > Replace — every place the image is used is updated (the file URL changes, so update any direct links). You do not need the original design file for this. ' +
+            '4) For big batches, use Assets panel > Select > Compress to convert many JPG/PNG files to WebP/AVIF at once (it reduces KB, not pixel size).',
+          element: c.img });
+      }
+      oversizeDone(isAsync);
+    }
+    oversizeCandidates.forEach(function (c) {
+      var known = oversizeKnownBytes(c.src);
+      if (known != null) { resolveOversize(c, known, false); return; }
+      try {
+        fetch(c.src, { method: 'HEAD' }).then(function (r) {
+          var len = parseInt(r.headers.get('content-length'), 10);
+          resolveOversize(c, len > 0 ? len : null, true);
+        }).catch(function () { resolveOversize(c, null, true); });
+      } catch (e) { resolveOversize(c, null, true); }
+    });
+
     ['img.alt', 'img.height', 'img.external', 'img.format', 'img.size'].forEach(function (id) { setCheckTotal(id, checkedImgCount); });
     setCheckTotal('img.oversize', oversizeMeasured);
     setCheckTotal('img.lazy', lazyConsidered);
-    if (oversizeMeasured > 0 && oversizeFound === 0) {
+    if (oversizeMeasured > 0 && oversizeCandidates.length === 0) {
       addSuccess({ category: 'Images', title: 'No image is much larger than its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
     }
     if (lazyConsidered > 0 && lazyFound === 0) {
@@ -805,6 +990,10 @@
     if (heightOnlyFixedCount > 0) {
       addSuccess({ category: 'Images', title: heightOnlyFixedCount + ' image(s) have a fixed height (width is auto — safe, does not cause CLS)',
         description: '', why: 'A fixed height alone reserves vertical space regardless of the width, which is enough to prevent layout shift.', element: null });
+    }
+    if (wrapperHeightCount > 0) {
+      addSuccess({ category: 'Images', title: wrapperHeightCount + ' image(s) have no height of their own, but a wrapper reserves the space (safe, does not cause CLS)',
+        description: '', why: 'A parent element with a fixed height, an aspect-ratio, a min-height or a padding-bottom ratio box keeps its size while the image loads, so the content below does not shift.', element: null });
     }
     if (checkedImgCount > 0 && internalHostCount === checkedImgCount) {
       addSuccess({ category: 'Images', title: 'All images are hosted on the same domain/Webflow Assets (no external hosts)',
@@ -1826,7 +2015,7 @@
     { id: 'h.skip', w: 2, re: /^Heading hierarchy/ },
     { id: 'h.fake', w: 1, re: /^Text looks like a heading/, always: true },
     { id: 'img.alt', w: 4, re: /^(Alt text is empty|Image: (alt|generic)|\d+ of \d+ visible images have descriptive)/, total: true },
-    { id: 'img.height', w: 4, re: /^(Image has no fixed height|\d+ image\(s\) have (both dimensions|a fixed height))/, total: true },
+    { id: 'img.height', w: 4, re: /^(Image has no fixed height|\d+ image\(s\) have (both dimensions|a fixed height|no height of their own))/, total: true },
     { id: 'img.external', w: 4, re: /^(Image is hosted|All images are hosted)/, total: true },
     { id: 'img.oversize', w: 2, re: /^(Image is much larger than it is displayed|No image is much larger)/, total: true },
     { id: 'img.lazy', w: 2, re: /^(Image below the fold|All \d+ below-the-fold)/, total: true },
@@ -1964,7 +2153,7 @@
   // permission policies) — either way, the user gets a toast confirming success or failure.
   function copyToClipboard(str, successMessage) {
     function done(ok) {
-      showToast(ok ? (successMessage || 'Copied to clipboard.') : 'Could not copy to clipboard — your browser may be blocking it.');
+      showToast(ok ? (successMessage || tr('Copied to clipboard.')) : tr('Could not copy to clipboard — your browser may be blocking it.'));
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(str).then(function () { done(true); }).catch(function () { done(false); });
@@ -2018,38 +2207,38 @@
     var DIVIDER = '============================================================';
 
     var lines = [];
-    lines.push('SEO PAGE AUDITOR — Report');
+    lines.push(tr('SEO PAGE AUDITOR — Report'));
     lines.push(location.href);
     lines.push(new Date().toLocaleString());
     lines.push('');
     lines.push(DIVIDER);
-    lines.push('SUMMARY');
+    lines.push(tr('SUMMARY'));
     lines.push(DIVIDER);
-    lines.push('Page optimized : ' + fmtPct(computeOptimization().pct));
-    lines.push('SEO tab   : ' + seoCounts.error + ' errors, ' + seoCounts.warning + ' warnings, ' + seoCounts.info + ' info');
-    lines.push('AEO tab   : ' + aeoCounts.error + ' errors, ' + aeoCounts.warning + ' warnings, ' + aeoCounts.info + ' info');
-    lines.push('Successes : ' + successes.length + ' total (' + soloSeoSuccesses + ' SEO-only, ' + soloAeoSuccesses + ' AEO-only, ' + sharedSuccesses + ' SEO+AEO)');
+    lines.push(tr('Page optimized :') + ' ' + fmtPct(computeOptimization().pct));
+    lines.push(tr('SEO tab') + ': ' + seoCounts.error + ' ' + tr('errors') + ', ' + seoCounts.warning + ' ' + tr('warnings') + ', ' + seoCounts.info + ' ' + tr('info'));
+    lines.push(tr('AEO tab') + ': ' + aeoCounts.error + ' ' + tr('errors') + ', ' + aeoCounts.warning + ' ' + tr('warnings') + ', ' + aeoCounts.info + ' ' + tr('info'));
+    lines.push(tr('Successes :') + ' ' + successes.length + ' ' + tr('total') + ' (' + soloSeoSuccesses + ' ' + tr('SEO-only') + ', ' + soloAeoSuccesses + ' ' + tr('AEO-only') + ', ' + sharedSuccesses + ' SEO+AEO)');
     lines.push('');
 
     var order = { error: 0, warning: 1, info: 2 };
     function pushSection(title, list, contextGroup) {
       lines.push(DIVIDER);
-      lines.push(title + ' (' + list.length + ')');
+      lines.push(tr(title) + ' (' + list.length + ')');
       lines.push(DIVIDER);
       lines.push('');
       if (!list.length) {
-        lines.push('(no findings)');
+        lines.push(tr('(no findings)'));
         lines.push('');
         return;
       }
       var sorted = list.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
       sorted.forEach(function (f, idx) {
-        lines.push((idx + 1) + '. [' + f.severity.toUpperCase() + '] ' + f.category + ' — ' + f.title);
-        if (f.description) lines.push(indentLines(f.description, '   '));
-        if (f.crossRelevant) lines.push('   (' + getCrossText(f, contextGroup) + ')');
-        if (f.globalNote) lines.push('   Global element: ' + f.globalNote);
-        if (f.ownerNote) lines.push(indentLines('Who can fix: ' + f.ownerNote, '   '));
-        if (f.why) lines.push(indentLines('Why it matters: ' + f.why, '   '));
+        lines.push((idx + 1) + '. [' + tr(f.severity).toUpperCase() + '] ' + tr(f.category) + ' — ' + tr(f.title));
+        if (f.description) lines.push(indentLines(tr(f.description), '   '));
+        if (f.crossRelevant) lines.push('   (' + tr(getCrossText(f, contextGroup)) + ')');
+        if (f.globalNote) lines.push('   ' + tr('Global element:') + ' ' + tr(f.globalNote));
+        if (f.ownerNote) lines.push(indentLines(tr('Who can fix:') + ' ' + tr(f.ownerNote), '   '));
+        if (f.why) lines.push(indentLines(tr('Why it matters:') + ' ' + tr(f.why), '   '));
         lines.push('');
       });
     }
@@ -2149,10 +2338,10 @@
 
     var pHdr = document.createElement('div');
     pHdr.className = 'report-preview-hdr';
-    pHdr.innerHTML = '<b>Report preview</b>';
+    pHdr.innerHTML = '<b>' + tr('Report preview') + '</b>';
     var pClose = document.createElement('button');
     pClose.textContent = '✕';
-    pClose.title = 'Close preview';
+    pClose.title = tr('Close preview');
     // Full renderPanel() (not just renderReportPreview()) so the header toggle button also loses
     // its "active" state when the preview is closed from here — keeps both entry points (the
     // header toggle and this ✕) in sync (12.08.2026).
@@ -2164,8 +2353,8 @@
     pActions.className = 'report-preview-actions';
     var pCopyBtn = document.createElement('button');
     pCopyBtn.className = 'copybtn report-preview-copybtn';
-    pCopyBtn.textContent = '📋 Copy to clipboard';
-    pCopyBtn.onclick = function () { copyToClipboard(reportPreviewText, 'Report copied to clipboard.'); };
+    pCopyBtn.textContent = tr('📋 Copy to clipboard');
+    pCopyBtn.onclick = function () { copyToClipboard(reportPreviewText, tr('Report copied to clipboard.')); };
     pActions.appendChild(pCopyBtn);
     box.appendChild(pActions);
 
@@ -2340,6 +2529,10 @@
       // on/off control.
       '.hdr button.active{background:rgba(245,158,11,.16);color:#fbbf24;box-shadow:inset 0 0 0 1px rgba(245,158,11,.4);}',
       '.hdr button.active:hover{background:rgba(245,158,11,.24);color:#fbbf24;}',
+      // EN / SR language switch (29.10.2026)
+      '.langsw{display:flex;align-items:center;gap:1px;margin-right:4px;background:rgba(255,255,255,.06);border-radius:8px;padding:2px;}',
+      '.hdr .langsw button{width:auto;height:22px;padding:0 7px;font-size:10.5px;font-weight:700;letter-spacing:.04em;border-radius:6px;}',
+      '.hdr .langsw button.on{background:rgba(99,102,241,.4);color:#e0e7ff;}',
       '.tabs{flex:0 0 auto;display:flex;gap:2px;padding:6px 8px 0;background:transparent;}',
       '.tabbtn{flex:1;padding:8px 6px;background:transparent;border:none;color:#8b93a7;font-size:12px;font-weight:600;cursor:pointer;border-radius:8px 8px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background-color .15s ease,color .15s ease;position:relative;}',
       '.tabbtn:hover{color:#e5e7eb;background:rgba(255,255,255,.04);}',
@@ -2549,7 +2742,7 @@
       if (panelEl) {
         var panelRect = panelEl.getBoundingClientRect();
         if (rectsOverlap(panelRect, r)) {
-          showToast('The panel is covering this element — drag the panel (by its header) to another part of the screen to see it.');
+          showToast(tr('The panel is covering this element — drag the panel (by its header) to another part of the screen to see it.'));
         }
       }
     }, 350);
@@ -2634,7 +2827,7 @@
     var copyReportBtn = document.createElement('button');
     copyReportBtn.textContent = '📋';
     copyReportBtn.className = reportPreviewVisible ? 'active' : '';
-    copyReportBtn.title = reportPreviewVisible ? 'Hide the report preview' : 'Preview the full report (SEO + AEO findings) before copying it';
+    copyReportBtn.title = tr(reportPreviewVisible ? 'Hide the report preview' : 'Preview the full report (SEO + AEO findings) before copying it');
     copyReportBtn.onclick = function () {
       reportPreviewVisible = !reportPreviewVisible;
       if (reportPreviewVisible) reportPreviewText = buildReportText();
@@ -2642,13 +2835,25 @@
     };
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
-    closeBtn.title = 'Close';
+    closeBtn.title = tr('Close');
     closeBtn.onclick = closePanel;
+    // Language switch (EN / SR) — English is the original, Serbian is a display translation.
+    var langSw = document.createElement('div');
+    langSw.className = 'langsw';
+    langSw.title = tr('Switch the panel and report language (EN / SR)');
+    ['en', 'sr'].forEach(function (code) {
+      var b = document.createElement('button');
+      b.textContent = code.toUpperCase();
+      b.className = LANG === code ? 'on' : '';
+      b.onclick = function () { if (LANG !== code) setLang(code); };
+      langSw.appendChild(b);
+    });
+    hdrActions.appendChild(langSw);
     hdrActions.appendChild(copyReportBtn);
     hdrActions.appendChild(closeBtn);
     hdr.appendChild(hdrActions);
     hdr.addEventListener('mousedown', function (e) {
-      if (e.target === closeBtn || e.target === copyReportBtn) return; // don't start dragging when a header button is clicked
+      if (e.target === closeBtn || e.target === copyReportBtn || (e.target.closest && e.target.closest('.langsw'))) return; // don't start dragging when a header button is clicked
       isDragging = true;
       var rect = panel.getBoundingClientRect();
       dragStartX = e.clientX;
@@ -2672,20 +2877,26 @@
     if (previousRun && typeof previousRun.optimizedPct === 'number') {
       var dPct = Math.round((opt.pct - previousRun.optimizedPct) * 10) / 10;
       deltaHtml = dPct === 0
-        ? '<span>no change since last run</span>'
-        : '<span style="color:' + (dPct > 0 ? '#4ade80' : '#f87171') + ';font-weight:700;">' + (dPct > 0 ? '▲ ' : '▼ ') + Math.abs(dPct).toFixed(1) + '%</span> since last run';
+        ? '<span>' + tr('no change since last run') + '</span>'
+        : '<span style="color:' + (dPct > 0 ? '#4ade80' : '#f87171') + ';font-weight:700;">' + (dPct > 0 ? '▲ ' : '▼ ') + Math.abs(dPct).toFixed(1) + '%</span> ' + tr('since last run');
     }
     // "issues" = errors + warnings, "notes" = info items (split 28.10.2026: lumping hundreds of
     // info notes into one "issues" number made a decent page look far worse than it is).
-    var leftHtml = (opt.failedChecks === 0
-      ? '<b>All checks passed</b>'
-      : '<b>' + opt.failedChecks + '</b> check' + (opt.failedChecks === 1 ? '' : 's') + ' need attention') +
-      (opt.issues > 0 ? ' · <b>' + opt.issues + '</b> issue' + (opt.issues === 1 ? '' : 's') : '') +
-      (opt.notes > 0 ? ' · <b>' + opt.notes + '</b> note' + (opt.notes === 1 ? '' : 's') : '');
+    var leftHtml = LANG === 'sr'
+      ? ((opt.failedChecks === 0
+        ? '<b>Sve provere su prošle</b>'
+        : '<b>' + opt.failedChecks + '</b> ' + srPlural(opt.failedChecks, 'provera zahteva', 'provere zahtevaju', 'provera zahteva') + ' pažnju') +
+        (opt.issues > 0 ? ' · <b>' + opt.issues + '</b> ' + srPlural(opt.issues, 'problem', 'problema', 'problema') : '') +
+        (opt.notes > 0 ? ' · <b>' + opt.notes + '</b> ' + srPlural(opt.notes, 'napomena', 'napomene', 'napomena') : ''))
+      : ((opt.failedChecks === 0
+        ? '<b>All checks passed</b>'
+        : '<b>' + opt.failedChecks + '</b> check' + (opt.failedChecks === 1 ? '' : 's') + ' need attention') +
+        (opt.issues > 0 ? ' · <b>' + opt.issues + '</b> issue' + (opt.issues === 1 ? '' : 's') : '') +
+        (opt.notes > 0 ? ' · <b>' + opt.notes + '</b> note' + (opt.notes === 1 ? '' : 's') : ''));
     prog.innerHTML =
-      '<div class="prog-top"><span class="prog-lbl" title="Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.">Page optimized</span>' +
+      '<div class="prog-top"><span class="prog-lbl" title="' + tr('Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.') + '">' + tr('Page optimized') + '</span>' +
       '<span class="prog-pct" style="color:' + optColor + ';">' + fmtPct(opt.pct) + '</span></div>' +
-      '<div class="prog-track" role="progressbar" aria-label="Page optimized" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(opt.pct) + '"><div class="prog-fill" style="width:' + lastShownPct + '%;background:' + optimizedGradient(opt.pct) + ';"></div></div>' +
+      '<div class="prog-track" role="progressbar" aria-label="' + tr('Page optimized') + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(opt.pct) + '"><div class="prog-fill" style="width:' + lastShownPct + '%;background:' + optimizedGradient(opt.pct) + ';"></div></div>' +
       '<div class="prog-sub"><span>' + leftHtml + '</span><span>' + deltaHtml + '</span></div>';
     var progFill = prog.querySelector('.prog-fill');
     var targetPct = opt.pct;
@@ -2699,12 +2910,12 @@
     if (previousRun) {
       var totalNow = findings.length;
       var diff = totalNow - previousRun.totalFindings;
-      var diffLabel = diff === 0 ? 'no change' : (diff < 0 ? ('−' + Math.abs(diff)) : ('+' + diff));
+      var diffLabel = diff === 0 ? tr('no change') : (diff < 0 ? ('−' + Math.abs(diff)) : ('+' + diff));
       var diffColor = diff < 0 ? '#4ade80' : (diff > 0 ? '#f87171' : '#9ca3af');
       var when = new Date(previousRun.timestamp).toLocaleString();
       var prevBanner = document.createElement('div');
       prevBanner.className = 'prevrun';
-      prevBanner.innerHTML = 'Last run (' + when + '): ' + previousRun.totalFindings + ' findings → now: ' + totalNow +
+      prevBanner.innerHTML = trf('Last run ({0}): {1} findings → now: {2}', [when, previousRun.totalFindings, totalNow]) +
         ' <span style="color:' + diffColor + ';font-weight:700;">(' + diffLabel + ')</span>';
       panel.appendChild(prevBanner);
     }
@@ -2722,7 +2933,7 @@
     var successTab = document.createElement('button');
     successTab.className = 'tabbtn success-tab' + (activeTab === 'success' ? ' active' : '');
     successTab.style.color = activeTab === 'success' ? '#4ade80' : '#166534';
-    successTab.textContent = '✓ Success (' + successes.length + ')';
+    successTab.textContent = '✓ ' + tr('Success') + ' (' + successes.length + ')';
     successTab.onclick = function () { activeTab = 'success'; renderPanel(); };
     tabs.appendChild(seoTab);
     tabs.appendChild(aeoTab);
@@ -2761,7 +2972,7 @@
         span.onclick = function () { activeSuccessGroup = grp; renderPanel(); };
         return span;
       }
-      summary.appendChild(makeSuccessGroupBadge('all', 'All', successes.length));
+      summary.appendChild(makeSuccessGroupBadge('all', tr('All'), successes.length));
       summary.appendChild(makeSuccessGroupBadge('seo', 'SEO', soloSeoSuccesses.length));
       summary.appendChild(makeSuccessGroupBadge('aeo', 'AEO', soloAeoSuccesses.length));
       summary.appendChild(makeSuccessGroupBadge('shared', 'SEO + AEO', sharedSuccesses.length));
@@ -2781,10 +2992,10 @@
         span.onclick = function () { activeSeverity = sev; renderPanel(); };
         return span;
       }
-      summary.appendChild(makeSeverityBadge('all', 'All', current.length));
-      summary.appendChild(makeSeverityBadge('error', 'error', counts.error));
-      summary.appendChild(makeSeverityBadge('warning', 'warning', counts.warning));
-      summary.appendChild(makeSeverityBadge('info', 'info', counts.info));
+      summary.appendChild(makeSeverityBadge('all', tr('All'), current.length));
+      summary.appendChild(makeSeverityBadge('error', tr('error'), counts.error));
+      summary.appendChild(makeSeverityBadge('warning', tr('warning'), counts.warning));
+      summary.appendChild(makeSeverityBadge('info', tr('info'), counts.info));
       panel.appendChild(summary);
 
       var filtered = current.filter(function (f) { return activeSeverity === 'all' || f.severity === activeSeverity; });
@@ -2831,7 +3042,7 @@
         select.className = 'cat-select';
         var allOpt = document.createElement('option');
         allOpt.value = 'all::all';
-        allOpt.textContent = 'All categories (' + filtered.length + ')';
+        allOpt.textContent = trf('All categories ({0})', [filtered.length]);
         select.appendChild(allOpt);
         var soloLabel = activeTab === 'aeo' ? 'AEO' : 'SEO';
         categoryNames.forEach(function (cat) {
@@ -2845,24 +3056,24 @@
             // the "SEO/AEO only items" sub-option simply shows (0), rather than treating the
             // category differently depending on the tab (agreed 10.08.2026, see SPEC).
             var group = document.createElement('optgroup');
-            group.label = cat;
+            group.label = tr(cat);
             var optAll = document.createElement('option');
             optAll.value = cat + '::all';
-            optAll.textContent = 'All (' + total + ')';
+            optAll.textContent = trf('All ({0})', [total]);
             group.appendChild(optAll);
             var optShared = document.createElement('option');
             optShared.value = cat + '::shared';
-            optShared.textContent = 'AEO + SEO items (' + sharedCount + ')';
+            optShared.textContent = trf('AEO + SEO items ({0})', [sharedCount]);
             group.appendChild(optShared);
             var optSolo = document.createElement('option');
             optSolo.value = cat + '::solo';
-            optSolo.textContent = soloLabel + ' only items (' + soloCount + ')';
+            optSolo.textContent = trf('{0} only items ({1})', [soloLabel, soloCount]);
             group.appendChild(optSolo);
             select.appendChild(group);
           } else {
             var opt = document.createElement('option');
             opt.value = cat + '::all';
-            opt.textContent = cat + ' (' + total + ')';
+            opt.textContent = tr(cat) + ' (' + total + ')';
             select.appendChild(opt);
           }
         });
@@ -2894,8 +3105,8 @@
       if (highlightableCount > 0) {
         var haBtn = document.createElement('span');
         haBtn.className = 'badge highlightall' + (highlightAllActive ? ' active' : '');
-        haBtn.textContent = (highlightAllActive ? '◼' : '◻') + ' Highlight all (' + highlightableCount + ')';
-        haBtn.title = 'Draw a box around every listed finding at once, instead of one at a time.';
+        haBtn.textContent = (highlightAllActive ? '◼' : '◻') + ' ' + trf('Highlight all ({0})', [highlightableCount]);
+        haBtn.title = tr('Draw a box around every listed finding at once, instead of one at a time.');
         haBtn.onclick = function () { highlightAllActive = !highlightAllActive; renderPanel(); };
         summary.appendChild(haBtn);
       }
@@ -2916,14 +3127,14 @@
       empty.className = 'empty';
       if (activeTab === 'success') {
         empty.textContent = successes.length
-          ? 'No successful checks for the selected group ("' + activeSuccessGroup + '") in this tab.'
-          : 'No successful checks recorded yet (or the page is still being analyzed).';
+          ? trf('No successful checks for the selected group ("{0}") in this tab.', [activeSuccessGroup])
+          : tr('No successful checks recorded yet (or the page is still being analyzed).');
       } else if (!current.length) {
-        empty.textContent = activeTab === 'aeo' ? 'No AEO findings on this page. 🎉' : 'No SEO findings on this page. 🎉';
+        empty.textContent = tr(activeTab === 'aeo' ? 'No AEO findings on this page. 🎉' : 'No SEO findings on this page. 🎉');
       } else if (activeCategory !== 'all') {
-        empty.textContent = 'No findings for filter severity="' + activeSeverity + '" + category="' + activeCategory + '".';
+        empty.textContent = trf('No findings for filter severity="{0}" + category="{1}".', [activeSeverity, tr(activeCategory)]);
       } else {
-        empty.textContent = 'No findings for the selected filter ("' + activeSeverity + '") in this tab.';
+        empty.textContent = trf('No findings for the selected filter ("{0}") in this tab.', [activeSeverity]);
       }
       list.appendChild(empty);
     }
@@ -2938,10 +3149,10 @@
         var item = document.createElement('div');
         item.className = 'item success-item';
         item.innerHTML =
-          '<div class="cat">' + s.category + '</div>' +
-          '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grpLabel + '</span>' + s.title + '</div>' +
-          (s.description ? '<div class="desc">' + (s.description || '').replace(/</g, '&lt;') + '</div>' : '') +
-          (s.crossRelevant ? '<div class="cross">↔ ' + getCrossText(s, activeSuccessGroup) + '</div>' : '');
+          '<div class="cat">' + tr(s.category) + '</div>' +
+          '<div class="title"><span class="badge success tag">✓</span><span class="badge group-' + grp + ' tag">' + grpLabel + '</span>' + tr(s.title) + '</div>' +
+          (s.description ? '<div class="desc">' + tr(s.description || '').replace(/</g, '&lt;') + '</div>' : '') +
+          (s.crossRelevant ? '<div class="cross">↔ ' + tr(getCrossText(s, activeSuccessGroup)) + '</div>' : '');
         if (s.element) {
           item.style.cursor = 'pointer';
           item.onclick = function () { highlightElement(s.element); };
@@ -2954,22 +3165,22 @@
         var item = document.createElement('div');
         item.className = 'item';
         item.innerHTML =
-          '<div class="cat">' + f.category + '</div>' +
-          '<div class="title"><span class="badge ' + f.severity + ' tag">' + f.severity + '</span>' + (f.crossRelevant ? '<span class="badge group-shared tag" title="Shown in both the SEO and AEO tabs (counted once in the totals)">SEO+AEO</span>' : '') + f.title + '</div>' +
-          '<div class="desc">' + (f.description || '').replace(/</g, '&lt;') + '</div>' +
-          (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="Copy the suggested code to clipboard" style="margin:6px 0 0;">📋 Copy suggested code</button>' : '') +
-          (f.globalNote ? '<div class="global">🌐 ' + f.globalNote + '</div>' : '') +
-          (f.ownerNote ? '<div class="owner">🔑 <b>Who can fix:</b> ' + f.ownerNote + '</div>' : '') +
-          (f.crossRelevant ? '<div class="cross">↔ ' + getCrossText(f, activeTab) + '</div>' : '') +
-          (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>Why:</b> ' + f.why + '</div>' : '') +
-          (f.fix ? '<div class="desc fixrow" style="color:#86efac;margin-top:4px;"><b>Fix:</b> ' + f.fix + ' <button class="copybtn copy-fix-btn" title="Copy this fix suggestion to clipboard">Copy</button></div>' : '');
+          '<div class="cat">' + tr(f.category) + '</div>' +
+          '<div class="title"><span class="badge ' + f.severity + ' tag">' + tr(f.severity) + '</span>' + (f.crossRelevant ? '<span class="badge group-shared tag" title="' + tr('Shown in both the SEO and AEO tabs (counted once in the totals)') + '">SEO+AEO</span>' : '') + tr(f.title) + '</div>' +
+          '<div class="desc">' + tr(f.description || '').replace(/</g, '&lt;') + '</div>' +
+          (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="' + tr('Copy the suggested code to clipboard') + '" style="margin:6px 0 0;">' + tr('📋 Copy suggested code') + '</button>' : '') +
+          (f.globalNote ? '<div class="global">🌐 ' + tr(f.globalNote) + '</div>' : '') +
+          (f.ownerNote ? '<div class="owner">🔑 <b>' + tr('Who can fix:') + '</b> ' + tr(f.ownerNote) + '</div>' : '') +
+          (f.crossRelevant ? '<div class="cross">↔ ' + tr(getCrossText(f, activeTab)) + '</div>' : '') +
+          (f.why ? '<div class="desc" style="color:#93c5fd;margin-top:4px;"><b>' + tr('Why:') + '</b> ' + tr(f.why) + '</div>' : '') +
+          (f.fix ? '<div class="desc fixrow" style="color:#86efac;margin-top:4px;"><b>' + tr('Fix:') + '</b> ' + tr(f.fix) + ' <button class="copybtn copy-fix-btn" title="' + tr('Copy this fix suggestion to clipboard') + '">' + tr('Copy') + '</button></div>' : '');
         item.onclick = function () { highlightElement(f.element); };
         if (f.fix) {
           var fixBtn = item.querySelector('.copy-fix-btn');
           if (fixBtn) {
             fixBtn.onclick = function (e) {
               e.stopPropagation(); // don't also trigger the item's own highlight click
-              copyToClipboard(f.fix, 'Fix copied to clipboard.');
+              copyToClipboard(tr(f.fix), tr('Fix copied to clipboard.'));
             };
           }
         }
@@ -2978,7 +3189,7 @@
           if (codeBtn) {
             codeBtn.onclick = function (e) {
               e.stopPropagation();
-              copyToClipboard(f.suggestedCode, 'Suggested code copied to clipboard.');
+              copyToClipboard(f.suggestedCode, tr('Suggested code copied to clipboard.'));
             };
           }
         }
@@ -2995,7 +3206,7 @@
     resizeHandle.className = 'resize-handle';
     // The visual "grip" pill is now drawn via CSS (.resize-handle::after), not text — part of
     // the redesign (10.08.2026), textContent deliberately left empty.
-    resizeHandle.title = 'Drag to resize panel height';
+    resizeHandle.title = tr('Drag to resize panel height');
     resizeHandle.addEventListener('mousedown', function (e) {
       isResizing = true;
       var rect = panel.getBoundingClientRect();
@@ -3060,6 +3271,510 @@
       // finished audit (including CWV-related findings), not the mid-run synchronous snapshot.
       saveCurrentRun();
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Serbian dictionary (29.10.2026) — English source text -> Serbian. {0},{1}... = runtime values.
+  // Used only by tr()/trf() above; English remains the original. Keep keys EXACTLY equal to the
+  // English strings written in the checks (a missing key just shows English + is logged in
+  // window.__SeoAuditorUntranslated).
+  // ---------------------------------------------------------------------
+  function srDictData() {
+    return {
+    "Preliminary check": "Preliminarna provera",
+    "Page was loaded via a redirect": "Stranica je učitana preko preusmeravanja",
+    "The browser followed {0} redirect(s) before arriving at: {1}": "Browser je pratio preusmeravanja ({0}) pre dolaska na: {1}",
+    "If this is unexpected, the results reflect the final page, not the URL you may have originally opened.": "Ako ovo nije očekivano, rezultati se odnose na krajnju stranicu, a ne na URL koji je možda prvobitno otvoren.",
+    "Check whether the redirect is intentional.": "Proveri da li je preusmeravanje namerno.",
+    "This is a Webflow staging link": "Ovo je Webflow staging link",
+    "The domain {0} is a Webflow staging subdomain.": "Domen {0} je Webflow staging poddomen.",
+    "Findings here do not affect the score, but it is recommended to also check the live domain before publishing.": "Nalazi ovde ne utiču na ocenu, ali se preporučuje da proveriš i live domen pre objavljivanja.",
+    "Run the audit on the live domain once it is ready.": "Pokreni audit na live domenu kada bude spreman.",
+    "Meta & head tags": "Meta & head tagovi",
+    "Meta charset declaration is missing": "Meta charset deklaracija nedostaje",
+    "There is no <meta charset=\"...\"> in the head.": "U head-u nema <meta charset=\"...\">.",
+    "Without an explicit charset, the browser may misdetect the encoding before it receives the HTTP header, which rarely — but genuinely — causes characters to render incorrectly on first paint.": "Bez eksplicitnog charset-a, browser može pogrešno da prepozna enkoding pre nego što primi HTTP header, što retko — ali realno — izaziva pogrešan prikaz karaktera pri prvom iscrtavanju.",
+    "Webflow adds this automatically — check that custom code in the <head> hasn't accidentally removed or moved the tag.": "Webflow ovo dodaje automatski — proveri da custom kod u <head> nije slučajno uklonio ili premestio tag.",
+    "Meta charset is not UTF-8": "Meta charset nije UTF-8",
+    "Value found: \"{0}\".": "Pronađena vrednost: \"{0}\".",
+    "UTF-8 is the universal standard that covers all languages and characters — anything else carries a real risk of characters rendering incorrectly.": "UTF-8 je univerzalni standard koji pokriva sve jezike i karaktere — bilo šta drugo nosi realan rizik pogrešnog prikaza karaktera.",
+    "Set the charset to UTF-8.": "Postavi charset na UTF-8.",
+    "Meta charset is present and set to UTF-8": "Meta charset postoji i postavljen je na UTF-8",
+    "More than one <title> tag in the head ({0})": "Više od jednog <title> taga u head-u ({0})",
+    "Browsers and Google usually only take the first <title> tag, but this behavior isn't universally guaranteed across all parsers/bots — a duplicate most often signals a mistake in the Custom Code section (e.g. a manually added <title> alongside Webflow's own).": "Browseri i Google obično uzimaju samo prvi <title> tag, ali ovo ponašanje nije univerzalno zagarantovano za sve parsere/botove — duplikat najčešće ukazuje na grešku u Custom Code sekciji (npr. ručno dodat <title> pored Webflow-ovog).",
+    "Remove all but one <title> tag — set the title via Page Settings, not manually in Custom Code.": "Ukloni sve <title> tagove osim jednog — postavi title preko Page Settings, a ne ručno u Custom Code.",
+    "More than one meta description tag ({0})": "Više od jednog meta description taga ({0})",
+    "When multiple meta description tags exist, which one Google picks isn't guaranteed — this usually means a duplicate was entered both via Page Settings and manually via Custom Code.": "Kada postoji više meta description tagova, nije zagarantovano koji će Google izabrati — ovo obično znači da je duplikat unet i preko Page Settings i ručno preko Custom Code.",
+    "Remove all but one meta description tag.": "Ukloni sve meta description tagove osim jednog.",
+    "Title tag is missing or empty": "Title tag nedostaje ili je prazan",
+    "The <title> is empty.": "<title> je prazan.",
+    "Title is one of the strongest on-page SEO signals and the text users see in search results.": "Title je jedan od najjačih on-page SEO signala i tekst koji korisnici vide u rezultatima pretrage.",
+    "Add a unique, descriptive title (ideally 50-60 characters) in Page Settings.": "Dodaj jedinstven, opisan title (idealno 50-60 karaktera) u Page Settings.",
+    "Title is too long ({0} characters)": "Title je predugačak (karaktera: {0})",
+    "Title: \"{0}\"": "Title: \"{0}\"",
+    "Google typically truncates the title after ~60 characters in search results.": "Google obično skraćuje title posle ~60 karaktera u rezultatima pretrage.",
+    "Shorten the title to 50-60 characters, put the most important words first.": "Skrati title na 50-60 karaktera, najvažnije reči stavi na početak.",
+    "Title is very short ({0} characters)": "Title je veoma kratak (karaktera: {0})",
+    "A title under ~30 characters usually isn't descriptive enough and wastes room in the search result (the ideal range is roughly 50-60 characters; Google actually measures pixel width, so this is an approximation).": "Title kraći od ~30 karaktera obično nije dovoljno opisan i troši prostor u rezultatu pretrage (idealan opseg je otprilike 50-60 karaktera; Google zapravo meri širinu u pikselima, pa je ovo aproksimacija).",
+    "Expand the title to better describe the page content.": "Proširi title da bolje opisuje sadržaj stranice.",
+    "Title looks like a placeholder": "Title izgleda kao placeholder",
+    "This looks like a Webflow default value that hasn't been replaced.": "Ovo izgleda kao Webflow podrazumevana vrednost koja nije zamenjena.",
+    "Set a real, descriptive title.": "Postavi pravi, opisni title.",
+    "Title tag is present and of optimal length ({0} characters)": "Title tag postoji i optimalne je dužine (karaktera: {0})",
+    "Meta description is missing": "Meta description nedostaje",
+    "There is no meta description tag, or it is empty.": "Nema meta description taga, ili je prazan.",
+    "Meta description influences CTR from search results even though it isn't a direct ranking factor.": "Meta description utiče na CTR iz rezultata pretrage iako nije direktan faktor rangiranja.",
+    "Add a meta description of 120-160 characters in Page Settings.": "Dodaj meta description od 120-160 karaktera u Page Settings.",
+    "Meta description is short ({0} characters)": "Meta description je kratak (karaktera: {0})",
+    "A very short description leaves room in the search result unused. Google often rewrites descriptions anyway, so this is a suggestion, not an error; the usual guideline is ~120-160 characters (an approximation — Google measures pixels).": "Veoma kratak opis ostavlja deo prostora u rezultatu pretrage neiskorišćenim. Google ionako često prepisuje opise, pa je ovo predlog, a ne greška; uobičajena smernica je ~120-160 karaktera (aproksimacija — Google meri piksele).",
+    "Expand it to roughly 120-160 characters that describe the page and invite the click.": "Proširi ga na otprilike 120-160 karaktera koji opisuju stranicu i podstiču klik.",
+    "Meta description is too long ({0} characters)": "Meta description je predugačak (karaktera: {0})",
+    "Google truncates the description after ~155-160 characters.": "Google skraćuje opis posle ~155-160 karaktera.",
+    "Shorten it to 120-160 characters.": "Skrati ga na 120-160 karaktera.",
+    "Meta description is present and of appropriate length ({0} characters)": "Meta description postoji i odgovarajuće je dužine (karaktera: {0})",
+    "og:title is missing": "og:title nedostaje",
+    "There is no Open Graph title tag.": "Nema Open Graph title taga.",
+    "Without it, sharing the link on social media falls back to a (often poor) default title.": "Bez njega, deljenje linka na društvenim mrežama koristi (često loš) podrazumevani title.",
+    "Add og:title in Page Settings > Open Graph.": "Dodaj og:title u Page Settings > Open Graph.",
+    "og:title is present": "og:title postoji",
+    "og:description is missing": "og:description nedostaje",
+    "There is no Open Graph description tag.": "Nema Open Graph description taga.",
+    "Without it, the link preview on social media has no description.": "Bez njega, pregled linka na društvenim mrežama nema opis.",
+    "Add og:description in Page Settings.": "Dodaj og:description u Page Settings.",
+    "og:description is present": "og:description postoji",
+    "og:image is missing": "og:image nedostaje",
+    "There is no Open Graph image.": "Nema Open Graph slike.",
+    "Links without an OG image look bare when shared on social media.": "Linkovi bez OG slike izgledaju prazno kada se dele na društvenim mrežama.",
+    "Add og:image (1200x630px, JPG/PNG) in Page Settings.": "Dodaj og:image (1200x630px, JPG/PNG) u Page Settings.",
+    "og:image is present": "og:image postoji",
+    "Twitter/X Card meta tag (twitter:card) is missing": "Twitter/X Card meta tag (twitter:card) nedostaje",
+    "There is no <meta name=\"twitter:card\">.": "Nema <meta name=\"twitter:card\">.",
+    "Twitter/X Card tags are technically separate from Open Graph tags — without an explicit twitter:card, X sometimes fails to reliably pull the OG fallback, so a shared link can end up with no preview at all specifically on that platform.": "Twitter/X Card tagovi su tehnički odvojeni od Open Graph tagova — bez eksplicitnog twitter:card, X ponekad ne uspeva pouzdano da preuzme OG fallback, pa podeljeni link može da ostane potpuno bez pregleda upravo na toj platformi.",
+    "Add <meta name=\"twitter:card\" content=\"summary_large_image\"> (and ideally twitter:title/twitter:image) via Custom Code in the head section.": "Dodaj <meta name=\"twitter:card\" content=\"summary_large_image\"> (i idealno twitter:title/twitter:image) preko Custom Code u head sekciji.",
+    "Twitter/X Card meta tag is present ({0})": "Twitter/X Card meta tag postoji ({0})",
+    "Canonical tag is missing": "Canonical tag nedostaje",
+    "There is no <link rel=\"canonical\">.": "Nema <link rel=\"canonical\">.",
+    "Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a \"nice to have\".": "Bez canonical-a, Google sam bira koju verziju URL-a smatra primarnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira na to da li trenutno postoji duplikat. Ovo treba dodati pre objavljivanja; nije \"nice to have\".",
+    "Add a canonical tag pointing to this page.": "Dodaj canonical tag koji pokazuje na ovu stranicu.",
+    "Relevant to both SEO and AEO — an unclear \"primary\" URL makes it harder for AI answer engines to know which version of the page to cite.": "Relevantno i za SEO i za AEO — nejasan \"primarni\" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.",
+    "Relevant to both SEO and AEO — a canonical prevents duplicate content issues and consolidates ranking signals onto a single URL in the Google index.": "Relevantno i za SEO i za AEO — canonical sprečava probleme sa duplim sadržajem i objedinjuje signale rangiranja na jedan URL u Google indeksu.",
+    "Page is marked as noindex": "Stranica je označena kao noindex",
+    "meta robots = \"{0}\"": "meta robots = \"{0}\"",
+    "This page will not be indexed by Google as long as this remains in place.": "Google neće indeksirati ovu stranicu dok god ovo ostaje na snazi.",
+    "If the page should be visible in search, remove noindex in Page Settings > SEO > \"Exclude from search results\".": "Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > \"Exclude from search results\".",
+    "Relevant to both SEO and AEO — a noindex page won't appear in the sources AI answer engines (partly) rely on via the Google index either.": "Relevantno i za SEO i za AEO — noindex stranica neće se pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.",
+    "Relevant to both SEO and AEO — a noindex directive completely removes the page from Google search, which is the most direct possible SEO problem.": "Relevantno i za SEO i za AEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.",
+    "Page is not marked as noindex": "Stranica nije označena kao noindex",
+    "Relevant to both SEO and AEO — a noindex page wouldn't appear in the sources AI answer engines (partly) rely on via the Google index either.": "Relevantno i za SEO i za AEO — noindex stranica se ne bi pojavila ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.",
+    "Relevant to both SEO and AEO — the page is indexable and can appear in Google search.": "Relevantno i za SEO i za AEO — stranica može da se indeksira i da se pojavi u Google pretrazi.",
+    "Robots directive blocks the content snippet (nosnippet/max-snippet:0)": "Robots direktiva blokira snippet sadržaja (nosnippet/max-snippet:0)",
+    "This directive explicitly forbids Google (and any AI answer engine that partly relies on Google's index) from showing ANY text snippet from the page — the page can't appear in AI Overviews or featured snippets, nor get a description in classic search results. This is a direct, documented, binary visibility blocker, not a heuristic.": "Ova direktiva eksplicitno zabranjuje Google-u (i svakom AI answer engine-u koji se delimično oslanja na Google indeks) da prikaže BILO KAKAV tekstualni snippet sa stranice — stranica ne može da se pojavi u AI Overviews ili featured snippet-ima, niti da dobije opis u klasičnim rezultatima pretrage. Ovo je direktna, dokumentovana, binarna blokada vidljivosti, a ne heuristika.",
+    "Remove \"nosnippet\" and \"max-snippet:0\" from the meta robots tag, unless it's intentional (e.g. a page with sensitive content).": "Ukloni \"nosnippet\" i \"max-snippet:0\" iz meta robots taga, osim ako je namerno (npr. stranica sa osetljivim sadržajem).",
+    "Relevant to both SEO and AEO — this directly prevents AI answer engines from citing any part of the page's content.": "Relevantno i za SEO i za AEO — ovo direktno sprečava AI answer engine-e da citiraju bilo koji deo sadržaja stranice.",
+    "Relevant to both SEO and AEO — without a snippet, the Google result for this page has no description, which drastically reduces CTR even if the page ranks well.": "Relevantno i za SEO i za AEO — bez snippet-a, Google rezultat za ovu stranicu nema opis, što drastično smanjuje CTR čak i ako se stranica dobro rangira.",
+    "Robots directive does not block the content snippet": "Robots direktiva ne blokira snippet sadržaja",
+    "Relevant to both SEO and AEO — Google and AI answer engines are free to display a snippet of this page's content.": "Relevantno i za SEO i za AEO — Google i AI answer engine-i mogu slobodno da prikažu snippet sadržaja ove stranice.",
+    "Relevant to both SEO and AEO — the page can have a normal description/snippet in Google search results.": "Relevantno i za SEO i za AEO — stranica može imati normalan opis/snippet u Google rezultatima pretrage.",
+    "lang attribute is missing on <html>": "lang atribut nedostaje na <html>",
+    "<html> has no lang attribute.": "<html> nema lang atribut.",
+    "It helps both search engines and screen readers know what language the content is in.": "Pomaže i pretraživačima i screen reader-ima da znaju na kom jeziku je sadržaj.",
+    "Set the site language in Webflow Site Settings.": "Postavi jezik sajta u Webflow Site Settings.",
+    "lang attribute is present on <html> ({0})": "lang atribut postoji na <html> ({0})",
+    "Viewport meta tag is missing": "Viewport meta tag nedostaje",
+    "There is no <meta name=\"viewport\">.": "Nema <meta name=\"viewport\">.",
+    "Without this the page isn't mobile-friendly, which directly affects mobile-first indexing.": "Bez ovoga stranica nije prilagođena mobilnim uređajima, što direktno utiče na mobile-first indeksiranje.",
+    "Webflow usually adds this automatically — check that custom code hasn't removed the tag.": "Webflow ovo obično dodaje automatski — proveri da custom kod nije uklonio tag.",
+    "Viewport meta tag is present": "Viewport meta tag postoji",
+    "Viewport prevents the user from zooming": "Viewport sprečava korisnika da zumira",
+    "viewport = \"{0}\"": "viewport = \"{0}\"",
+    "Google Search Console explicitly flags \"user-scalable=no\"/\"maximum-scale=1\" as a mobile usability problem — it prevents users with reduced vision from zooming in on content on mobile.": "Google Search Console eksplicitno označava \"user-scalable=no\"/\"maximum-scale=1\" kao problem mobilne upotrebljivosti — sprečava korisnike slabijeg vida da zumiraju sadržaj na mobilnom.",
+    "Remove user-scalable=no and maximum-scale=1 from the viewport tag (allow zooming up to at least maximum-scale=5).": "Ukloni user-scalable=no i maximum-scale=1 iz viewport taga (dozvoli zumiranje do najmanje maximum-scale=5).",
+    "Viewport allows the user to zoom the page": "Viewport dozvoljava korisniku da zumira stranicu",
+    "OG image is in a format social platforms render unreliably ({0})": "OG slika je u formatu koji društvene platforme prikazuju nepouzdano ({0})",
+    "og:image: {0}": "og:image: {0}",
+    "Unlike regular images on the page, the OG image is fetched by each social platform's bot — many of them don't render WebP/AVIF reliably, so the preview can end up blank or broken.": "Za razliku od običnih slika na stranici, OG sliku preuzima bot svake društvene platforme — mnogi od njih ne prikazuju pouzdano WebP/AVIF, pa pregled može ostati prazan ili pokvaren.",
+    "Use JPG or PNG for the OG image (1200x630px, under 300KB).": "Koristi JPG ili PNG za OG sliku (1200x630px, ispod 300KB).",
+    "OG image is too small ({0}x{1})": "OG slika je premala ({0}x{1})",
+    "The recommended minimum for a good preview is 600x315px, ideally 1200x630px (1.91:1).": "Preporučeni minimum za dobar pregled je 600x315px, idealno 1200x630px (1.91:1).",
+    "Replace it with an image at least 1200x630px.": "Zameni je slikom od najmanje 1200x630px.",
+    "OG image fails to load": "OG slika se ne učitava",
+    "og:image URL returns an error: {0}": "og:image URL vraća grešku: {0}",
+    "A broken OG image means an empty preview on social media.": "Pokvarena OG slika znači prazan pregled na društvenim mrežama.",
+    "Check that the URL is correct and that the file exists.": "Proveri da li je URL ispravan i da li fajl postoji.",
+    "OG image is larger than the recommended 300KB ({0})": "OG slika je veća od preporučenih 300KB ({0})",
+    "Some platforms (e.g. WhatsApp) aggressively compress large images, which can degrade preview quality.": "Neke platforme (npr. WhatsApp) agresivno kompresuju velike slike, što može pogoršati kvalitet pregleda.",
+    "Compress the image to under 300KB.": "Kompresuj sliku na manje od 300KB.",
+    "Favicon": "Favicon",
+    "Favicon is missing or fails to load": "Favicon nedostaje ili se ne učitava",
+    "A <link> tag was found, but the resource ({0}) does not load.": "Pronađen je <link> tag, ali se resurs ({0}) ne učitava.",
+    "There is no <link rel=\"icon\"> in the head, and no fallback /favicon.ico exists either.": "U head-u nema <link rel=\"icon\">, a ne postoji ni fallback /favicon.ico.",
+    "Google Search Central explicitly documents favicon requirements so a site shows up with its own icon in mobile search results and in Chrome tabs/bookmarks — without it a generic icon is shown, which reduces brand recognition and CTR in the SERP.": "Google Search Central eksplicitno dokumentuje zahteve za favicon kako bi se sajt prikazivao sa sopstvenom ikonicom u mobilnim rezultatima pretrage i u Chrome tabovima/bookmarkovima — bez nje se prikazuje generička ikonica, što smanjuje prepoznatljivost brenda i CTR u SERP-u.",
+    "Add a favicon in Webflow Site Settings > Icons (square, minimum 48x48px, .ico/.png/.svg).": "Dodaj favicon u Webflow Site Settings > Icons (kvadratni, minimum 48x48px, .ico/.png/.svg).",
+    "Favicon is in an unusual format ({0})": "Favicon je u neuobičajenom formatu ({0})",
+    "The widest support (browsers, Google Search) is for .ico, .png and .svg formats — other formats can behave unpredictably in browser UI.": "Najšira podrška (browseri, Google Search) je za .ico, .png i .svg formate — drugi formati mogu se ponašati nepredvidivo u browser UI-ju.",
+    "Use the .ico, .png or .svg format for the favicon.": "Koristi .ico, .png ili .svg format za favicon.",
+    "Favicon dimensions are not ideal ({0})": "Dimenzije favicon-a nisu idealne ({0})",
+    "Google recommends a square favicon, minimum 48x48px (in a multiple of that size), so it renders cleanly in search results and browser UI at all resolutions.": "Google preporučuje kvadratni favicon, minimum 48x48px (u umnošku te veličine), kako bi se čisto prikazivao u rezultatima pretrage i browser UI-ju na svim rezolucijama.",
+    "Replace the favicon with a square image at least 48x48px (ideally 128x128px for retina screens).": "Zameni favicon kvadratnom slikom od najmanje 48x48px (idealno 128x128px za retina ekrane).",
+    "Favicon is square and an appropriate size ({0}x{1})": "Favicon je kvadratni i odgovarajuće veličine ({0}x{1})",
+    "Favicon is blocked in robots.txt": "Favicon je blokiran u robots.txt",
+    "The path \"{0}\" is covered by a Disallow rule in /robots.txt (User-agent: *).": "Putanja \"{0}\" je pokrivena Disallow pravilom u /robots.txt (User-agent: *).",
+    "If Googlebot can't access the favicon file, it can't display it in mobile search results either — Google Search Central explicitly requires the favicon URL to be crawlable.": "Ako Googlebot ne može da pristupi favicon fajlu, ne može ga ni prikazati u mobilnim rezultatima pretrage — Google Search Central eksplicitno zahteva da favicon URL bude dostupan za indeksiranje.",
+    "Add an Allow rule for the favicon path in robots.txt, or narrow the Disallow rule so it doesn't cover it.": "Dodaj Allow pravilo za putanju favicon-a u robots.txt, ili suzi Disallow pravilo da je ne pokriva.",
+    "Favicon is present and loads successfully": "Favicon postoji i uspešno se učitava",
+    "URL & page duplication": "URL & dupliranje stranica",
+    "Canonical points to a different path on the same site": "Canonical pokazuje na drugu putanju na istom sajtu",
+    "Current page: {0} | Canonical: {1}": "Trenutna stranica: {0} | Canonical: {1}",
+    "A common cause: the page was duplicated in Webflow and the canonical was left pointing at the original — Google then ignores this page in favor of that other one.": "Čest uzrok: stranica je duplirana u Webflow-u, a canonical je ostao da pokazuje na original — Google tada ignoriše ovu stranicu u korist one druge.",
+    "Check whether this is intentional. If not, fix the canonical in Page Settings to point to this page.": "Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings tako da pokazuje na ovu stranicu.",
+    "Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the \"real\" version of the page to cite.": "Relevantno i za SEO i za AEO — pogrešan canonical takođe zbunjuje AI answer engine-e oko toga koja je \"prava\" verzija stranice za citiranje.",
+    "Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.": "Relevantno i za SEO i za AEO — pogrešan canonical deli signale rangiranja (linkove, autoritet) na više URL-ova umesto da ih objedini na jednoj stranici.",
+    "Canonical tag is present and points to this page": "Canonical tag postoji i pokazuje na ovu stranicu",
+    "Canonical: {0}": "Canonical: {0}",
+    "Relevant to both SEO and AEO — a clear \"primary\" URL helps AI answer engines know which version of the page to cite.": "Relevantno i za SEO i za AEO — jasan \"primarni\" URL pomaže AI answer engine-ima da znaju koju verziju stranice da citiraju.",
+    "Relevant to both SEO and AEO — a correct canonical consolidates ranking signals onto one, precisely defined URL.": "Relevantno i za SEO i za AEO — ispravan canonical objedinjuje signale rangiranja na jedan, precizno definisan URL.",
+    "URL slug ends with a suffix resembling \"-2\" ({0})": "URL slug se završava sufiksom nalik na \"-2\" ({0})",
+    "Path: {0}": "Putanja: {0}",
+    "Webflow automatically appends \"-2\", \"-3\", etc. to the slug when a page is duplicated. This is concrete, verified evidence that the page was created via duplication and the slug was left untouched before publishing — a direct risk of duplicate content and a non-descriptive URL in search.": "Webflow automatski dodaje \"-2\", \"-3\" itd. na slug kada se stranica duplira. Ovo je konkretan, proveren dokaz da je stranica nastala dupliranjem i da slug nije izmenjen pre objavljivanja — direktan rizik od dupliranog sadržaja i neopisnog URL-a u pretrazi.",
+    "Rename the slug in Page Settings to something descriptive, and set up a 301 redirect from the old one if it's already indexed.": "Preimenuj slug u Page Settings u nešto opisno, i podesi 301 redirekt sa starog ako je već indeksiran.",
+    "URL slug does not contain a Webflow duplication suffix (e.g. \"-2\")": "URL slug ne sadrži Webflow sufiks dupliranja (npr. \"-2\")",
+    "Heading structure": "Struktura naslova",
+    "H1 is missing on the page": "H1 nedostaje na stranici",
+    "No visible H1 element was found.": "Nije pronađen nijedan vidljiv H1 element.",
+    "H1 helps both users and Google immediately understand the topic of the page.": "H1 pomaže i korisnicima i Google-u da odmah razumeju temu stranice.",
+    "Add exactly one H1 describing the page's main topic.": "Dodaj tačno jedan H1 koji opisuje glavnu temu stranice.",
+    "There is more than one H1 on the page ({0} total)": "Na stranici ima više od jednog H1 (ukupno: {0})",
+    "Extra H1: \"{0}\"": "Dodatni H1: \"{0}\"",
+    "Multiple H1 tags dilute the signal of the page's main topic.": "Više H1 tagova razvodnjava signal glavne teme stranice.",
+    "Keep only one H1, change the others to H2/H3 as needed.": "Zadrži samo jedan H1, ostale po potrebi promeni u H2/H3.",
+    "Exactly one H1 found on the page": "Na stranici je pronađen tačno jedan H1",
+    "Heading hierarchy skips a level (H{0} → H{1})": "Hijerarhija naslova preskače nivo (H{0} → H{1})",
+    "Skipping levels (e.g. H1 then straight to H3) breaks the document's logical structure for screen readers and crawlers.": "Preskakanje nivoa (npr. H1 pa odmah H3) narušava logičku strukturu dokumenta za screen reader-e i crawlere.",
+    "Use heading levels in order, without skipping.": "Koristi nivoe naslova redom, bez preskakanja.",
+    "Heading hierarchy has no skipped levels": "Hijerarhija naslova nema preskočenih nivoa",
+    "{0} heading elements on the page.": "Elemenata naslova na stranici: {0}.",
+    "Text looks like a heading but isn't marked up as one": "Tekst izgleda kao naslov, ali nije označen kao naslov",
+    "\"{0}\" (font-size: {1}px)": "\"{0}\" (font-size: {1}px)",
+    "Visually large/bold text outside a heading tag carries no semantic meaning for crawlers and screen readers.": "Vizuelno veliki/podebljani tekst van taga za naslov nema semantičko značenje za pretraživače i čitače ekrana.",
+    "If this is actually a section title, mark it up with the appropriate heading tag (H2/H3...).": "Ako je ovo zapravo naslov sekcije, označi ga odgovarajućim tagom za naslov (H2/H3...).",
+    "Images": "Slike",
+    "Alt text is empty (alt=\"\") — likely set to \"Decorative\" in Webflow": "Alt tekst je prazan (alt=\"\") — verovatno postavljen na \"Decorative\" u Webflow-u",
+    "An empty but PRESENT alt=\"\" is the correct ARIA pattern when an image has been CONSCIOUSLY marked as decorative in Webflow (the screen reader then skips it). We CANNOT determine with certainty from the HTML alone whether this was done deliberately or the Alt Text field was simply left untouched/forgotten — both cases can look identical in the rendered code.": "Prazan, ali PRISUTAN alt=\"\" je ispravan ARIA obrazac kada je slika NAMERNO označena kao dekorativna u Webflow-u (čitač ekrana je tada preskače). Samo iz HTML-a NE MOŽEMO sa sigurnošću utvrditi da li je to urađeno namerno ili je polje Alt Text jednostavno ostalo netaknuto/zaboravljeno — oba slučaja mogu izgledati identično u renderovanom kodu.",
+    "Check directly in the Webflow Designer (Image Settings) whether the Alt Text field really shows \"Decorative\". If so — no action needed. If the image should actually have descriptive alt text, add it.": "Proveri direktno u Webflow Designer-u (Image Settings) da li polje Alt Text zaista prikazuje \"Decorative\". Ako je tako — nije potrebna nikakva radnja. Ako slika zapravo treba da ima opisni alt tekst, dodaj ga.",
+    "Image: alt attribute is missing": "Slika: nedostaje alt atribut",
+    "Image: generic alt text (\"{0}\")": "Slika: generički alt tekst (\"{0}\")",
+    "Alt text describes the image to search engines and screen readers; without descriptive alt text, the image is \"invisible\" for SEO and accessibility.": "Alt tekst opisuje sliku pretraživačima i čitačima ekrana; bez opisnog alt teksta slika je \"nevidljiva\" za SEO i pristupačnost.",
+    "Add descriptive alt text in the Webflow Asset Manager (or deliberately set it to \"Decorative\" if the image is truly purely decorative).": "Dodaj opisni alt tekst u Webflow Asset Manager-u (ili ga namerno postavi na \"Decorative\" ako je slika zaista isključivo dekorativna).",
+    "Image has no fixed height (neither HTML attribute nor CSS)": "Slika nema fiksnu visinu (ni HTML atribut ni CSS)",
+    "CSS width: {0} | CSS height: {1}": "CSS width: {0} | CSS height: {1}",
+    "The height is a percentage, but no parent (up to 5 levels checked) has a fixed height, aspect-ratio or min-height, so nothing reserves the space.": "Visina je u procentima, ali nijedan roditeljski element (provereno do 5 nivoa) nema fiksnu visinu, aspect-ratio ili min-height, pa ništa ne rezerviše prostor.",
+    "Checked the image and up to 5 parent elements for a fixed height, aspect-ratio, min-height or padding-bottom ratio box — none found.": "Provereni su slika i do 5 roditeljskih elemenata za fiksnu visinu, aspect-ratio, min-height ili padding-bottom ratio box — ništa nije pronađeno.",
+    "CSS width: {0} | CSS height: not found/defined": "CSS width: {0} | CSS height: nije pronađena/definisana",
+    "CSS width: not found/defined | CSS height: {0}": "CSS width: nije pronađena/definisana | CSS height: {0}",
+    "CSS width: not found/defined | CSS height: not found/defined": "CSS width: nije pronađena/definisana | CSS height: nije pronađena/definisana",
+    "Neither the HTML height attribute nor CSS fixes the height (the value is \"auto\" or not defined at all) — the browser can't reserve vertical space for the image in advance, which genuinely causes layout shift (CLS) while the image loads. CLS is an official Google Core Web Vital/ranking signal, so this is a verified cause of a concrete problem with a measurable SEO impact, not just a theoretical risk. Width isn't a factor here — a fixed width alone doesn't reserve vertical space.": "Ni HTML height atribut ni CSS ne fiksiraju visinu (vrednost je \"auto\" ili uopšte nije definisana) — pregledač ne može unapred da rezerviše vertikalni prostor za sliku, što zaista izaziva pomeranje rasporeda (CLS) dok se slika učitava. CLS je zvanični Google Core Web Vital/signal rangiranja, pa je ovo potvrđen uzrok konkretnog problema sa merljivim uticajem na SEO, a ne samo teorijski rizik. Širina ovde nije faktor — sama fiksna širina ne rezerviše vertikalni prostor.",
+    "Add an explicit height (an HTML height attribute, or CSS height in any unit — px, rem, vw...) directly on the <img> tag or in the Style panel. Width can stay auto.": "Dodaj eksplicitnu visinu (HTML height atribut ili CSS height u bilo kojoj jedinici — px, rem, vw...) direktno na <img> tag ili u Style panel. Širina može ostati auto.",
+    "Image below the fold is not lazy-loaded": "Slika ispod preloma stranice nije lazy-loaded",
+    "Images far below the first screen are downloaded immediately instead of when the visitor scrolls near them, competing with the content that matters for the first view (LCP).": "Slike daleko ispod prvog ekrana se preuzimaju odmah, umesto kada posetilac skroluje blizu njih, i takmiče se sa sadržajem koji je važan za prvi prikaz (LCP).",
+    "In the Webflow Designer: select the image > Settings > Loading > \"Lazy\" (keep \"Eager\" only for the hero / above-the-fold images).": "U Webflow Designer-u: izaberi sliku > Settings > Loading > \"Lazy\" (zadrži \"Eager\" samo za hero / slike iznad preloma).",
+    "Image is hosted on an external server": "Slika je hostovana na spoljnom serveru",
+    "If that external server/project goes offline (a common case with WordPress or other migration leftovers), the image disappears from the page. File size isn't measured here since the server is outside our control.": "Ako taj spoljni server/projekat prestane da radi (čest slučaj kod ostataka migracije sa WordPress-a ili drugih platformi), slika nestaje sa stranice. Veličina fajla se ovde ne meri jer je server van naše kontrole.",
+    "Download the image and upload it directly to Webflow Assets.": "Preuzmi sliku i otpremi je direktno u Webflow Assets.",
+    "Image is not in a modern format (currently: {0})": "Slika nije u modernom formatu (trenutno: {0})",
+    "AVIF/WebP produce a significantly smaller file size at the same quality, which speeds up page loading.": "AVIF/WebP daju znatno manju veličinu fajla pri istom kvalitetu, što ubrzava učitavanje stranice.",
+    "Convert it to WebP or AVIF (Webflow has an automatic image optimization option in the Asset Manager).": "Konvertuj je u WebP ili AVIF (Webflow ima opciju automatske optimizacije slika u Asset Manager-u).",
+    "Image is larger than 500KB ({0})": "Slika je veća od 500KB ({0})",
+    "Large images slow down page loading and hurt LCP (Largest Contentful Paint) — an official Google Core Web Vital/ranking signal. The file size is directly measured (content-length header), not an assumption.": "Velike slike usporavaju učitavanje stranice i štete LCP-u (Largest Contentful Paint) — zvaničnom Google Core Web Vital/signalu rangiranja. Veličina fajla se direktno meri (content-length header), nije pretpostavka.",
+    "Compress the image (e.g. TinyPNG/Squoosh) or convert it to WebP/AVIF.": "Kompresuj sliku (npr. TinyPNG/Squoosh) ili je konvertuj u WebP/AVIF.",
+    "No image is much larger than its displayed size ({0} measured)": "Nijedna slika nije mnogo veća od prikazane veličine (izmereno: {0})",
+    "Image is much larger than it is displayed ({0}px file shown at {1}px)": "Slika je mnogo veća nego što je prikazana (fajl {0}px prikazan na {1}px)",
+    "File size: {0} · estimated wasted: ~{1}": "Veličina fajla: {0} · procenjeno uzaludno: ~{1}",
+    "File size could not be read (the image server does not expose it)": "Veličina fajla nije mogla da se pročita (server slika je ne izlaže)",
+    "The browser downloads a {0}px-wide file to draw it {1}px wide (even on a 2x retina screen only ~{2}px is useful). Every byte that is downloaded but never used competes with the content that matters for the first view, so the page loads slower — especially on mobile connections — and a slow Largest Contentful Paint (LCP, a Core Web Vital and ranking signal) is the usual result when this is the hero / above-the-fold image. It matters most for large files (hundreds of KB or more), for images near the top of the page, and when many images on one page are affected.": "Pregledač preuzima fajl širine {0}px da bi ga nacrtao širine {1}px (čak i na 2x retina ekranu koristan je samo ~{2}px). Svaki bajt koji se preuzme a nikad ne iskoristi takmiči se sa sadržajem važnim za prvi prikaz, pa se stranica sporije učitava — naročito na mobilnim konekcijama — a spor Largest Contentful Paint (LCP, Core Web Vital i signal rangiranja) je uobičajen rezultat kada je ovo hero / slika iznad preloma. Najvažnije je kod velikih fajlova (stotine KB ili više), kod slika pri vrhu stranice i kada je pogođeno mnogo slika na jednoj stranici.",
+    "1) Find out why the full-size file is served. An Image element normally gets smaller responsive versions from Webflow automatically (look for a variant such as \"-p-500\" in the file name); the full file is usually served when the image sits in a rich text field, is a background image, was imported (CSV/API), or has \"Disable responsiveness\" turned on in Image settings. 2) If it is an Image element: turn responsiveness back on (Image settings), then press Cmd/Ctrl+Shift+I to rescan, and publish. 3) Otherwise replace the file: Assets panel > download the image, resize it to about 2x the displayed width (~{0}px here) and compress it (Squoosh, TinyPNG; WebP/AVIF is best), then Assets panel > ... > Replace — every place the image is used is updated (the file URL changes, so update any direct links). You do not need the original design file for this. 4) For big batches, use Assets panel > Select > Compress to convert many JPG/PNG files to WebP/AVIF at once (it reduces KB, not pixel size).": "1) Utvrdi zašto se servira fajl pune veličine. Image element obično automatski dobija manje responsive verzije od Webflow-a (potraži varijantu poput \"-p-500\" u imenu fajla); pun fajl se obično servira kada je slika u rich text polju, kada je pozadinska slika, kada je uvezena (CSV/API) ili kada je u Image settings uključeno \"Disable responsiveness\". 2) Ako je u pitanju Image element: ponovo uključi responsiveness (Image settings), zatim pritisni Cmd/Ctrl+Shift+I da ponovo skeniraš i objavi. 3) U suprotnom zameni fajl: Assets panel > preuzmi sliku, smanji je na oko 2x prikazane širine (~{0}px ovde) i kompresuj (Squoosh, TinyPNG; WebP/AVIF je najbolji), zatim Assets panel > ... > Replace — ažurira se svako mesto gde se slika koristi (URL fajla se menja, pa ažuriraj sve direktne linkove). Za ovo ti nije potreban originalni dizajn fajl. 4) Za velike serije koristi Assets panel > Select > Compress da odjednom konvertuješ mnogo JPG/PNG fajlova u WebP/AVIF (smanjuje KB, ne dimenzije u pikselima).",
+    "All {0} below-the-fold images are lazy-loaded": "Svih {0} slika ispod preloma je lazy-loaded",
+    "{0} of {1} visible images have descriptive (or deliberately decorative) alt text": "{0} od {1} vidljivih slika ima opisni (ili namerno dekorativni) alt tekst",
+    "{0} image(s) have both dimensions fixed (HTML attribute or CSS, any unit)": "Slika sa obe fiksne dimenzije (HTML atribut ili CSS, bilo koja jedinica): {0}",
+    "{0} image(s) have a fixed height (width is auto — safe, does not cause CLS)": "Slika sa fiksnom visinom (širina je auto — bezbedno, ne izaziva CLS): {0}",
+    "A fixed height alone reserves vertical space regardless of the width, which is enough to prevent layout shift.": "Sama fiksna visina rezerviše vertikalni prostor bez obzira na širinu, što je dovoljno da se spreči pomeranje rasporeda.",
+    "{0} image(s) have no height of their own, but a wrapper reserves the space (safe, does not cause CLS)": "Slika bez sopstvene visine, ali wrapper rezerviše prostor (bezbedno, ne izaziva CLS): {0}",
+    "A parent element with a fixed height, an aspect-ratio, a min-height or a padding-bottom ratio box keeps its size while the image loads, so the content below does not shift.": "Roditeljski element sa fiksnom visinom, aspect-ratio, min-height ili padding-bottom ratio box zadržava veličinu dok se slika učitava, pa se sadržaj ispod ne pomera.",
+    "All images are hosted on the same domain/Webflow Assets (no external hosts)": "Sve slike su hostovane na istom domenu/Webflow Assets (nema spoljnih hostova)",
+    "{0} image(s) are already in a modern format (WebP/AVIF)": "Slika već u modernom formatu (WebP/AVIF): {0}",
+    "Technical / crawlability": "Tehničko / indeksiranje",
+    "{0} could not be completed": "{0} nije mogla da se završi",
+    "Reason: {0}": "Razlog: {0}",
+    "Reason: unknown": "Razlog: nepoznat",
+    "This check has to request a file from the same site, and that request could not be completed — so the result is unknown. This is NOT a pass and NOT a failure, and it does not affect the score.": "Ova provera mora da zatraži fajl sa istog sajta, a taj zahtev nije mogao da se završi — pa je rezultat nepoznat. Ovo NIJE prolaz niti greška i ne utiče na ocenu.",
+    "Nothing to fix on the page. If you need this result, check it manually: open the file in the browser (e.g. /sitemap.xml) or inspect the response headers in DevTools > Network.": "Na stranici nema šta da se ispravi. Ako ti je ovaj rezultat potreban, proveri ručno: otvori fajl u pregledaču (npr. /sitemap.xml) ili pregledaj response headers u DevTools > Network.",
+    "X-Robots-Tag header blocks indexing": "X-Robots-Tag header blokira indeksiranje",
+    "X-Robots-Tag: {0}": "X-Robots-Tag: {0}",
+    "The server sends an HTTP header that tells search engines not to index this page. It is invisible in the page's HTML and in the Designer, and it overrides what the page itself says.": "Server šalje HTTP header koji govori pretraživačima da ne indeksiraju ovu stranicu. Nevidljiv je u HTML-u stranice i u Designer-u, i nadjačava ono što sama stranica kaže.",
+    "Find where the header is set — it is not part of the Webflow project itself: a reverse proxy, Cloudflare rule, or hosting/CDN configuration.": "Pronađi gde je header postavljen — nije deo samog Webflow projekta: reverse proxy, Cloudflare pravilo ili konfiguracija hostinga/CDN-a.",
+    "Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site (e.g. Cloudflare Transform Rules). It can't be changed in the Webflow Designer.": "Potreban je pristup onome ko upravlja reverse proxy-jem / CDN-om / hostingom ispred sajta (npr. Cloudflare Transform Rules). Ne može se promeniti u Webflow Designer-u.",
+    "X-Robots-Tag header restricts snippets": "X-Robots-Tag header ograničava snippete",
+    "The server tells search engines not to show a text snippet for this page, which hurts click-through and AI-answer citations.": "Server govori pretraživačima da ne prikazuju tekstualni snippet za ovu stranicu, što šteti klikovima i citiranju u AI odgovorima.",
+    "Find where the header is set (reverse proxy / Cloudflare rule / hosting) and remove the snippet restriction if it is unintended.": "Pronađi gde je header postavljen (reverse proxy / Cloudflare pravilo / hosting) i ukloni ograničenje snippeta ako nije namerno.",
+    "Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site.": "Potreban je pristup onome ko upravlja reverse proxy-jem / CDN-om / hostingom ispred sajta.",
+    "No X-Robots-Tag header restricts indexing (header: {0})": "Nijedan X-Robots-Tag header ne ograničava indeksiranje (header: {0})",
+    "No X-Robots-Tag header restricts indexing": "Nijedan X-Robots-Tag header ne ograničava indeksiranje",
+    "This page is listed in sitemap.xml": "Ova stranica je navedena u sitemap.xml",
+    "This page is not listed in sitemap.xml": "Ova stranica nije navedena u sitemap.xml",
+    "Checked {0}/sitemap.xml ({1} URLs)": "Provereno: {0}/sitemap.xml ({1} URL-ova)",
+    "The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant. This looks intentional here (the page is noindex or its canonical points elsewhere).": "Sitemap govori pretraživačima koje URL-ove da indeksiraju. Stranica koja nedostaje u njemu i dalje može biti indeksirana preko linkova, ali se otkriva sporije i signalizira da je možda nevažna. Ovde izgleda namerno (stranica je noindex ili njen canonical pokazuje drugde).",
+    "The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant.": "Sitemap govori pretraživačima koje URL-ove da indeksiraju. Stranica koja nedostaje u njemu i dalje može biti indeksirana preko linkova, ali se otkriva sporije i signalizira da je možda nevažna.",
+    "In the Webflow Designer: Pages > this page > Settings > SEO — make sure \"Exclude this page from the sitemap\" is off, then publish. Also check Project Settings > SEO > Sitemap is enabled (auto-generate).": "U Webflow Designer-u: Pages > ova stranica > Settings > SEO — proveri da je \"Exclude this page from the sitemap\" isključeno, pa objavi. Takođe proveri da je Project Settings > SEO > Sitemap uključen (auto-generate).",
+    "Links": "Linkovi",
+    "Link doesn't go anywhere (href=\"{0}\")": "Link ne vodi nigde (href=\"{0}\")",
+    "Link doesn't go anywhere (href=\"\")": "Link ne vodi nigde (href=\"\")",
+    "If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role=\"tab\", not an <a> link — a link semantically implies navigation.": "Ako ovo predstavlja tab/accordion koji samo menja prikaz na istoj stranici, ispravan pristup prema WAI-ARIA Tabs obrascu je <button> sa role=\"tab\", a ne <a> link — link semantički podrazumeva navigaciju.",
+    "If the element doesn't navigate anywhere, change it to a <button> (or add role=\"tab\"/role=\"button\" plus the corresponding ARIA attributes). In Webflow, a link used only as an interaction trigger (e.g. closing a popup) is a very common pattern — if that is what this is, it is a minor note rather than a real problem.": "Ako element ne vodi nigde, promeni ga u <button> (ili dodaj role=\"tab\"/role=\"button\" plus odgovarajuće ARIA atribute). U Webflow-u je link korišćen samo kao okidač interakcije (npr. zatvaranje popup-a) veoma čest obrazac — ako je ovo to, reč je o maloj napomeni, a ne pravom problemu.",
+    "Anchor link points to an ID that doesn't exist (#{0})": "Anchor link pokazuje na ID koji ne postoji (#{0})",
+    "Clicking this link won't do anything since no element with that ID exists on the page.": "Klik na ovaj link neće ništa uraditi jer na stranici ne postoji element sa tim ID-jem.",
+    "Check whether the target element was renamed or removed, and fix the href or ID.": "Proveri da li je ciljni element preimenovan ili uklonjen i ispravi href ili ID.",
+    "Link with no text (and no image/icon/aria-label)": "Link bez teksta (i bez slike/ikone/aria-label)",
+    "(no href)": "(nema href)",
+    "An empty link carries zero context for the user and for the crawler.": "Prazan link ne nosi nikakav kontekst ni za korisnika ni za pretraživač.",
+    "Add visible text or an aria-label.": "Dodaj vidljiv tekst ili aria-label.",
+    "Generic anchor text: \"{0}\"": "Generički anchor tekst: \"{0}\"",
+    "href: {0}": "href: {0}",
+    "Descriptive anchor text helps users and Google understand where the link leads.": "Opisni anchor tekst pomaže korisnicima i Google-u da razumeju kuda link vodi.",
+    "Replace it with descriptive text (e.g. \"View pricing\" instead of \"click here\").": "Zameni ga opisnim tekstom (npr. \"View pricing\" umesto \"click here\").",
+    "There are no links that go nowhere (all href attributes are valid)": "Nema linkova koji ne vode nigde (svi href atributi su ispravni)",
+    "All in-page anchor links (#id) point to existing elements": "Svi anchor linkovi na stranici (#id) pokazuju na postojeće elemente",
+    "All links have visible text or an image": "Svi linkovi imaju vidljiv tekst ili sliku",
+    "All checked internal links ({0}) return a successful response with no 404/redirect": "Svi provereni interni linkovi ({0}) vraćaju uspešan odgovor bez 404/redirect-a",
+    "Internal link leads to a 404 page": "Interni link vodi na 404 stranicu",
+    "A broken internal link hurts both user experience and crawl efficiency.": "Pokvaren interni link šteti i korisničkom iskustvu i efikasnosti indeksiranja.",
+    "Fix the link, or restore/rename the target page.": "Ispravi link ili vrati/preimenuj ciljnu stranicu.",
+    "Internal link goes through a redirect": "Interni link prolazi kroz redirect",
+    "It isn't broken, but a redirect slows things down and dilutes the link signal.": "Nije pokvaren, ali redirect usporava stvari i razređuje signal linka.",
+    "If possible, update the link to point directly to the final URL.": "Ako je moguće, ažuriraj link da pokazuje direktno na krajnji URL.",
+    "In Webflow you can only point the link straight at the final URL. If the redirect itself is configured at the reverse proxy / Cloudflare / app level (e.g. www → app subdomain), removing it needs access to that platform.": "U Webflow-u link možeš usmeriti samo direktno na krajnji URL. Ako je sam redirect podešen na nivou reverse proxy-ja / Cloudflare-a / aplikacije (npr. www → app subdomen), za njegovo uklanjanje je potreban pristup toj platformi.",
+    "Content": "Sadržaj",
+    "Very little visible text on the page ({0} characters)": "Veoma malo vidljivog teksta na stranici ({0} karaktera)",
+    "Pages with very little text tend to rank worse for relevant queries (thin content).": "Stranice sa veoma malo teksta obično se lošije rangiraju za relevantne upite (thin content).",
+    "Add more relevant, useful content.": "Dodaj više relevantnog, korisnog sadržaja.",
+    "Relevant to both SEO and AEO — AI answer engines cite pages that have enough substance to directly answer the question; \"thin content\" is rarely cited.": "Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice koje imaju dovoljno sadržaja da direktno odgovore na pitanje; \"thin content\" se retko citira.",
+    "Relevant to both SEO and AEO — Google traditionally ranks \"thin content\" pages lower because they don't provide enough value to the user compared to the competition.": "Relevantno i za SEO i za AEO — Google tradicionalno niže rangira \"thin content\" stranice jer ne pružaju dovoljno vrednosti korisniku u poređenju sa konkurencijom.",
+    "The page has enough visible text ({0} characters)": "Stranica ima dovoljno vidljivog teksta ({0} karaktera)",
+    "Relevant to both SEO and AEO — AI answer engines cite pages that have enough substance to directly answer the question.": "Relevantno i za SEO i za AEO — AI answer engine-i citiraju stranice koje imaju dovoljno sadržaja da direktno odgovore na pitanje.",
+    "Relevant to both SEO and AEO — a sufficient amount of quality content is a basic prerequisite for Google to consider the page worth ranking.": "Relevantno i za SEO i za AEO — dovoljna količina kvalitetnog sadržaja je osnovni preduslov da Google smatra stranicu vrednom rangiranja.",
+    "Hidden content with a substantial amount of text ({0} block, display:none/visibility:hidden)": "Skriveni sadržaj sa velikom količinom teksta (blokova: {0}, display:none/visibility:hidden)",
+    "Hidden content with a substantial amount of text ({0} blocks, display:none/visibility:hidden)": "Skriveni sadržaj sa velikom količinom teksta (blokova: {0}, display:none/visibility:hidden)",
+    "First {0}:": "Prvih {0}:",
+    "Hidden text with a lot of words can look like an attempt at keyword stuffing, even if unintentional (e.g. a forgotten tab panel). Menus, popups, tabs, accordions and sliders are ignored, since they are hidden by design.": "Skriveni tekst sa mnogo reči može izgledati kao pokušaj keyword stuffing-a, čak i ako je nenamerno (npr. zaboravljen tab panel). Meniji, popup-ovi, tabovi, accordion-i i slajderi se ignorišu jer su skriveni po dizajnu.",
+    "Check whether this content should be visible, or remove it if it's leftover from development.": "Proveri da li ovaj sadržaj treba da bude vidljiv, ili ga ukloni ako je ostatak razvoja.",
+    "Repeated word in a row: \"{0} {1}\"": "Ponovljena reč zaredom: \"{0} {1}\"",
+    "Most often a copy-paste mistake.": "Najčešće greška pri copy-paste-u.",
+    "Remove the duplicate word.": "Ukloni duplu reč.",
+    "No repeated words in a row (copy-paste mistake)": "Nema ponovljenih reči zaredom (greška pri copy-paste-u)",
+    "Placeholder/Lorem ipsum text found on the page": "Pronađen placeholder/Lorem ipsum tekst na stranici",
+    "A common case is when a CMS Rich Text element isn't properly bound to the real data, so the default value is left in place.": "Čest slučaj je kada CMS Rich Text element nije pravilno povezan sa stvarnim podacima, pa ostaje podrazumevana vrednost.",
+    "Replace the placeholder text with real content before publishing.": "Zameni placeholder tekst pravim sadržajem pre objavljivanja.",
+    "No placeholder/Lorem ipsum text on the page": "Nema placeholder/Lorem ipsum teksta na stranici",
+    "Manual <br> line break inside a {0} element": "Ručni <br> prelom reda unutar {0} elementa",
+    "This doesn't directly affect SEO ranking, but a line break fixed for desktop layout can \"break\" and wrap the text oddly on mobile (a mobile-first indexing experience signal).": "Ovo direktno ne utiče na SEO rangiranje, ali prelom reda fiksiran za desktop raspored može da se \"pokvari\" i čudno prelomi tekst na mobilnom (signal iskustva mobile-first indeksiranja).",
+    "Consider a CSS solution (max-width, responsive font-size) instead of a manual <br>.": "Razmisli o CSS rešenju (max-width, responsive font-size) umesto ručnog <br>.",
+    "Fonts": "Fontovi",
+    "The page uses {0} different fonts: {1}": "Stranica koristi različite fontove ({0}): {1}",
+    "Every additional font is another file to download and a risk of FOUT/FOIT, which hurts performance.": "Svaki dodatni font je još jedan fajl za preuzimanje i rizik od FOUT/FOIT-a, što šteti performansama.",
+    "Reduce the number of fonts to 1-2 (e.g. one for headings, one for body text).": "Smanji broj fontova na 1-2 (npr. jedan za naslove, jedan za osnovni tekst).",
+    "The page uses {0} fonts: {1}": "Fontova na stranici: {0} ({1})",
+    "Informational only — doesn't affect the SEO score, but worth being aware of.": "Samo informativno — ne utiče na SEO skor, ali vredi znati.",
+    "The page uses only 1 font ({0}) — minimal risk of FOUT/FOIT": "Stranica koristi samo 1 font ({0}) — minimalan rizik od FOUT/FOIT",
+    "The page dynamically loads Google Fonts from Google's servers": "Stranica dinamički učitava Google Fonts sa Google servera",
+    "A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor's IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.": "Nemački sud (LG München I, 01/2022) presudio je da dinamičko učitavanje Google Fonts bez saglasnosti šalje IP adresu posetioca Google-u bez pravnog osnova prema GDPR-u, što je pokrenulo talas opomena (uglavnom u Nemačkoj, ali GDPR važi u celoj EU). Nismo pravni savetnici — proveri sa pravnikom ako je ovo relevantno za klijenta.",
+    "Download the font files and upload them directly to Webflow Assets (self-hosting) instead of a dynamic Google Fonts link.": "Preuzmi fajlove fontova i otpremi ih direktno u Webflow Assets (self-hosting) umesto dinamičkog Google Fonts linka.",
+    "No dynamic loading of Google Fonts from Google's servers (GDPR risk avoided)": "Nema dinamičkog učitavanja Google Fonts sa Google servera (izbegnut GDPR rizik)",
+    "Font file in an older format (not .woff2)": "Fajl fonta u starijem formatu (nije .woff2)",
+    ".woff2 has significantly better compression than .ttf/.otf/.eot — a smaller file means faster loading.": ".woff2 ima znatno bolju kompresiju od .ttf/.otf/.eot — manji fajl znači brže učitavanje.",
+    "Convert the font files to .woff2 before uploading to Webflow.": "Konvertuj fajlove fontova u .woff2 pre otpremanja u Webflow.",
+    "All @font-face files are in the modern .woff2 format": "Svi @font-face fajlovi su u modernom .woff2 formatu",
+    "Duplicate ID attribute: \"{0}\" ({1} times)": "Duplirani ID atribut: \"{0}\" (broj pojavljivanja: {1})",
+    "Duplicate IDs break in-page anchor links and ARIA references (aria-controls, aria-labelledby) that rely on a unique ID. Usually the result of copying an entire section without changing the ID.": "Duplirani ID-jevi kvare in-page anchor linkove i ARIA reference (aria-controls, aria-labelledby) koje zavise od jedinstvenog ID-a. Obično je posledica kopiranja cele sekcije bez promene ID-a.",
+    "Rename the duplicates to unique IDs.": "Preimenuj duplikate u jedinstvene ID-jeve.",
+    "No duplicate ID attributes on the page": "Na stranici nema dupliranih ID atributa",
+    "Large/deeply nested DOM (nodes: {0}, max depth: {1}, max children of one element: {2})": "Veliki/duboko ugnežđen DOM (čvorova: {0}, maks. dubina: {1}, maks. broj potomaka jednog elementa: {2})",
+    "An overly large DOM slows down rendering and makes it harder for crawlers to parse efficiently. This is a recommendation, not an error — if it's intentional and doesn't cause a visible problem, it can be ignored.": "Previše veliki DOM usporava renderovanje i otežava crawlerima efikasno parsiranje. Ovo je preporuka, a ne greška — ako je namerno i ne izaziva vidljiv problem, može se ignorisati.",
+    "Consider simplifying the section structure (fewer nested wrapper divs).": "Razmisli o pojednostavljenju strukture sekcija (manje ugnežđenih wrapper div-ova).",
+    "Relevant to both SEO and AEO — a simpler DOM is easier for faster/simpler AI crawlers to parse.": "Relevantno i za SEO i za AEO — jednostavniji DOM lakše parsiraju brži/jednostavniji AI crawleri.",
+    "Relevant to both SEO and AEO — an overly large/deeply nested DOM slows down rendering, which indirectly hurts the Core Web Vitals metrics Google uses for ranking.": "Relevantno i za SEO i za AEO — previše veliki/duboko ugnežđen DOM usporava renderovanje, što indirektno šteti Core Web Vitals metrikama koje Google koristi za rangiranje.",
+    "DOM size/depth is within reasonable limits (nodes: {0}, max depth: {1})": "Veličina/dubina DOM-a je u razumnim granicama (čvorova: {0}, maks. dubina: {1})",
+    "Relevant to both SEO and AEO — a reasonable DOM size contributes to faster rendering and better Core Web Vitals results.": "Relevantno i za SEO i za AEO — razumna veličina DOM-a doprinosi bržem renderovanju i boljim Core Web Vitals rezultatima.",
+    "Mixed content: HTTP resource on an HTTPS page": "Mixed content: HTTP resurs na HTTPS stranici",
+    "The browser may block or warn about this resource, and it is a security signal.": "Browser može blokirati ovaj resurs ili prikazati upozorenje, a to je i bezbednosni signal.",
+    "Change the resource URL to https://.": "Promeni URL resursa na https://.",
+    "Relevant to both SEO and AEO — HTTPS/security is one of the Tier-1 technical signals AI answer engines factor into assessing source trustworthiness.": "Relevantno i za SEO i za AEO — HTTPS/bezbednost je jedan od tehničkih signala Tier-1 koje AI answer engines uzimaju u obzir pri proceni pouzdanosti izvora.",
+    "Relevant to both SEO and AEO — HTTPS has been a confirmed Google ranking signal since 2014, and mixed content warnings in the browser undermine user trust.": "Relevantno i za SEO i za AEO — HTTPS je potvrđen Google signal za rangiranje od 2014, a mixed content upozorenja u browseru narušavaju poverenje korisnika.",
+    "No mixed content — all resources load over HTTPS": "Nema mixed content — svi resursi se učitavaju preko HTTPS-a",
+    "Relevant to both SEO and AEO — HTTPS is a Tier-1 technical trust signal for sources.": "Relevantno i za SEO i za AEO — HTTPS je tehnički signal poverenja Tier-1 za izvore.",
+    "Relevant to both SEO and AEO — full HTTPS with no mixed content warnings is a confirmed Google ranking signal.": "Relevantno i za SEO i za AEO — potpuni HTTPS bez mixed content upozorenja je potvrđen Google signal za rangiranje.",
+    "Third-party script without async/defer ({0})": "Skripta treće strane bez async/defer ({0})",
+    "Current:": "Trenutno:",
+    "Suggested:": "Predlog:",
+    "A script without async/defer blocks parsing/rendering of the page at that point until it's downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption.": "Skripta bez async/defer blokira parsiranje/renderovanje stranice na tom mestu dok se ne preuzme i izvrši sa spoljnog servera — jedan od najčešćih, dobro dokumentovanih uzroka lošeg LCP-a (Core Web Vital/signal za rangiranje). Prisustvo/odsustvo atributa direktno je provereno na <script> tagu, nije pretpostavka.",
+    "A script without async/defer blocks parsing/rendering of the page at that point until it's downloaded and executed from the external server — one of the most common, well-documented causes of poor LCP (a Core Web Vital/ranking signal). The presence/absence of the attribute is directly verified on the <script> tag, not an assumption. This one sits at the end of <body>, where it blocks very little (it mostly delays DOMContentLoaded), so it is only a minor note.": "Skripta bez async/defer blokira parsiranje/renderovanje stranice na tom mestu dok se ne preuzme i izvrši sa spoljnog servera — jedan od najčešćih, dobro dokumentovanih uzroka lošeg LCP-a (Core Web Vital/signal za rangiranje). Prisustvo/odsustvo atributa direktno je provereno na <script> tagu, nije pretpostavka. Ova skripta se nalazi na kraju <body>, gde skoro ništa ne blokira (uglavnom odlaže DOMContentLoaded), pa je samo manja napomena.",
+    "Add the \"defer\" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or \"async\" (for fully independent scripts). Even better: move the script into Page Settings > Custom Code > \"Before </body> tag\" instead of the <head>.": "Dodaj atribut \"defer\" (preporučeno za skripte kod kojih je bitan redosled izvršavanja/spremnost DOM-a — većina chat widgeta i tracking piksela) ili \"async\" (za potpuno nezavisne skripte). Još bolje: premesti skriptu u Page Settings > Custom Code > \"Before </body> tag\" umesto u <head>.",
+    "All third-party scripts ({0}) have async/defer (not counting Webflow's own scripts)": "Svi skriptovi trećih strana ({0}) imaju async/defer (bez Webflow-ovih sopstvenih skripti)",
+    "All third-party scripts ({0}) have async/defer": "Svi skriptovi trećih strana ({0}) imaju async/defer",
+    "Performance (CWV)": "Performanse (CWV)",
+    "Slow TTFB (Time To First Byte): {0}ms": "Spor TTFB (Time To First Byte): {0}ms",
+    "Over 1800ms is deep into \"poor\" territory. The server responds slowly to the initial request.": "Preko 1800ms je duboko u \"poor\" zoni. Server sporo odgovara na početni zahtev.",
+    "Over 800ms is slow. The server responds slowly to the initial request.": "Preko 800ms je sporo. Server sporo odgovara na početni zahtev.",
+    "Check custom code/integrations that could be slowing down the server response.": "Proveri custom code/integracije koje bi mogle usporavati odgovor servera.",
+    "TTFB is good ({0}ms, under the 800ms threshold)": "TTFB je dobar ({0}ms, ispod praga od 800ms)",
+    "Slow LCP (Largest Contentful Paint): {0}ms": "Spor LCP (Largest Contentful Paint): {0}ms",
+    "Google considers a good LCP to be under 2500ms, and over 4000ms falls into the \"Poor\" category. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Google smatra dobrim LCP ispod 2500ms, a preko 4000ms spada u kategoriju \"Poor\". Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
+    "Google considers a good LCP to be under 2500ms. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Google smatra dobrim LCP ispod 2500ms. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
+    "Optimize/compress the hero image, remove render-blocking resources.": "Optimizuj/kompresuj hero sliku, ukloni resurse koji blokiraju renderovanje.",
+    "LCP is good ({0}ms, under Google's 2500ms threshold)": "LCP je dobar ({0}ms, ispod Google-ovog praga od 2500ms)",
+    "The LCP image is lazy-loaded (loading=\"lazy\")": "LCP slika se učitava lazy (loading=\"lazy\")",
+    "The largest above-the-fold image is the LCP element. With loading=\"lazy\" the browser postpones fetching it until layout is known, which delays LCP (a Core Web Vital / ranking signal).": "Najveća slika iznad pregiba (above the fold) je LCP element. Sa loading=\"lazy\" browser odlaže njeno preuzimanje dok se ne zna layout, što odlaže LCP (Core Web Vital / signal za rangiranje).",
+    "In the Webflow Designer: select the image > Settings > Loading > \"Eager\". Optionally also add the custom attribute fetchpriority=\"high\".": "U Webflow Designer-u: izaberi sliku > Settings > Loading > \"Eager\". Opciono dodaj i custom atribut fetchpriority=\"high\".",
+    "The LCP image is not lazy-loaded": "LCP slika se ne učitava lazy",
+    "High CLS (Cumulative Layout Shift): {0}": "Visok CLS (Cumulative Layout Shift): {0}",
+    "Over 0.1 means noticeable content \"jumping\" during load (over 0.25 is Google's \"Poor\" threshold) — most often due to images/fonts without reserved space.": "Preko 0.1 znači primetno \"skakanje\" sadržaja tokom učitavanja (preko 0.25 je Google-ov prag za \"Poor\") — najčešće zbog slika/fontova bez rezervisanog prostora.",
+    "Over 0.1 means noticeable content \"jumping\" during load — most often due to images/fonts without reserved space.": "Preko 0.1 znači primetno \"skakanje\" sadržaja tokom učitavanja — najčešće zbog slika/fontova bez rezervisanog prostora.",
+    "Add width/height to images, check font-display settings.": "Dodaj width/height slikama, proveri font-display podešavanja.",
+    "CLS is good ({0}, under Google's 0.1 threshold)": "CLS je dobar ({0}, ispod Google-ovog praga od 0.1)",
+    "AEO - Structured data (Schema.org)": "AEO - Strukturirani podaci (Schema.org)",
+    "JSON-LD schema block contains invalid JSON": "JSON-LD schema blok sadrži nevalidan JSON",
+    "Invalid JSON in a <script type=\"application/ld+json\"> is completely ignored by Google and AI crawlers — the entire schema markup is useless until the syntax is fixed.": "Nevalidan JSON u <script type=\"application/ld+json\"> Google i AI crawleri potpuno ignorišu — celokupan schema markup je beskoristan dok se sintaksa ne ispravi.",
+    "Check the JSON syntax (missing/extra commas, quotes), e.g. at validator.schema.org.": "Proveri JSON sintaksu (nedostajući/višak zareza, navodnici), npr. na validator.schema.org.",
+    "All JSON-LD schema blocks ({0}) contain valid JSON": "Svi JSON-LD schema blokovi ({0}) sadrže validan JSON",
+    "Page looks like a FAQ section but has no FAQPage schema markup": "Stranica izgleda kao FAQ sekcija, ali nema FAQPage schema markup",
+    "FAQ-like elements were found (classes/IDs containing \"faq\", or 3+ question-style headings) without a corresponding JSON-LD FAQPage schema.": "Pronađeni su elementi nalik FAQ-u (klase/ID-jevi koji sadrže \"faq\" ili 3+ naslova u obliku pitanja) bez odgovarajuće JSON-LD FAQPage schema.",
+    "Based on AEO research so far, FAQPage schema is the single strongest predictor that an AI answer engine (ChatGPT, Perplexity, Google AI Overviews) will cite the page as a source of an answer.": "Na osnovu dosadašnjih AEO istraživanja, FAQPage schema je najjači pojedinačni prediktor da će AI answer engine (ChatGPT, Perplexity, Google AI Overviews) citirati stranicu kao izvor odgovora.",
+    "Add a JSON-LD FAQPage schema block (a mainEntity array of Question/acceptedAnswer objects) matching the visible questions and answers on the page.": "Dodaj JSON-LD FAQPage schema blok (mainEntity niz Question/acceptedAnswer objekata) koji odgovara vidljivim pitanjima i odgovorima na stranici.",
+    "FAQPage schema has no mainEntity (questions)": "FAQPage schema nema mainEntity (pitanja)",
+    "A FAQPage without a mainEntity array of Question objects is incomplete and won't be used for FAQ rich results or AI citation.": "FAQPage bez mainEntity niza Question objekata je nepotpun i neće se koristiti za FAQ rich results ili AI citiranje.",
+    "Add a mainEntity array with Question/acceptedAnswer objects for every question on the page.": "Dodaj mainEntity niz sa Question/acceptedAnswer objektima za svako pitanje na stranici.",
+    "{0} question(s) in the FAQPage schema have no acceptedAnswer.text filled in": "Pitanja u FAQPage schema bez popunjenog acceptedAnswer.text: {0}",
+    "Incomplete questions won't be used for FAQ rich results/AI citation. This is a verified fact about the schema JSON structure itself (not a heuristic or assumption) — every such question is effectively useless until filled in.": "Nepotpuna pitanja neće se koristiti za FAQ rich results/AI citiranje. Ovo je proverena činjenica o samoj JSON strukturi schema (nije heuristika ni pretpostavka) — svako takvo pitanje je praktično beskorisno dok se ne popuni.",
+    "Fill in acceptedAnswer.text for every Question in the schema.": "Popuni acceptedAnswer.text za svako Question u schema.",
+    "FAQPage schema is present and complete ({0} questions with answers)": "FAQPage schema je prisutna i kompletna (pitanja sa odgovorima: {0})",
+    "Page looks like an article/blog post but has no Article schema markup": "Stranica izgleda kao članak/blog post, ali nema Article schema markup",
+    "An <article> element with substantial text, og:type=\"article\", or a blog-style URL was found, without a JSON-LD Article/BlogPosting schema.": "Pronađen je <article> element sa značajnim tekstom, og:type=\"article\" ili URL u blog stilu, bez JSON-LD Article/BlogPosting schema.",
+    "Article schema helps AI answer engines and Google understand the author, publish/modified date, and topic of the page — all Tier-1 technical AEO signals.": "Article schema pomaže AI answer engines i Google-u da razumeju autora, datum objave/izmene i temu stranice — sve to su tehnički AEO signali Tier-1.",
+    "Add a JSON-LD Article schema with headline, author, datePublished, dateModified.": "Dodaj JSON-LD Article schema sa headline, author, datePublished, dateModified.",
+    "Article schema has neither dateModified nor datePublished": "Article schema nema ni dateModified ni datePublished",
+    "AI answer engines prefer fresh/recently updated sources — without a date there is no freshness signal for the content, and this is a Tier-1 AEO signal. A verified fact about the schema JSON (the field is missing or absent), not a heuristic.": "AI answer engines preferiraju sveže/skoro ažurirane izvore — bez datuma nema signala svežine sadržaja, a to je AEO signal Tier-1. Proverena činjenica o schema JSON-u (polje nedostaje ili je odsutno), nije heuristika.",
+    "Add dateModified (and datePublished) in ISO 8601 format. Best practice: bind the field automatically to the CMS \"last modified\" value instead of it being manual/hardcoded, so it doesn't get forgotten.": "Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolja praksa: poveži polje automatski sa CMS vrednošću \"last modified\" umesto ručnog/hardkodovanog unosa, da se ne zaboravi.",
+    "Article schema has datePublished/dateModified": "Article schema ima datePublished/dateModified",
+    "Author link in the Article schema leads to a 404": "Link autora u Article schema vodi na 404",
+    "author.url: {0}": "author.url: {0}",
+    "An invalid author link weakens the E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal that AI answer engines and Google use to assess source credibility.": "Nevalidan link autora slabi E-E-A-T (Experience-Expertise-Authoritativeness-Trust) signal koji AI answer engines i Google koriste za procenu kredibiliteta izvora.",
+    "Fix author.url to point to a valid author page/profile.": "Ispravi author.url da vodi na validnu stranicu/profil autora.",
+    "Author link in the Article schema is valid (doesn't return 404)": "Link autora u Article schema je validan (ne vraća 404)",
+    "Article schema has no author field": "Article schema nema author polje",
+    "Author is one of the E-E-A-T signals AI answer engines factor into assessing content trustworthiness.": "Autor je jedan od E-E-A-T signala koje AI answer engines uzimaju u obzir pri proceni pouzdanosti sadržaja.",
+    "Add an author (Person or Organization) with name and url.": "Dodaj author (Person ili Organization) sa name i url.",
+    "Article schema has an author field": "Article schema ima author polje",
+    "AEO - NAP consistency": "AEO - Konzistentnost NAP podataka",
+    "Phone number in the Organization/LocalBusiness schema doesn't match the number in the footer": "Telefon u Organization/LocalBusiness schema ne poklapa se sa brojem u footer-u",
+    "Schema telephone: {0}": "Schema telephone: {0}",
+    "A NAP (Name-Address-Phone) mismatch between schema markup and visible content is a signal that AI answer engines and Google may interpret as an unreliable/outdated data source.": "NAP (Name-Address-Phone) neusklađenost između schema markup-a i vidljivog sadržaja je signal koji AI answer engines i Google mogu protumačiti kao nepouzdan/zastareo izvor podataka.",
+    "Align the phone number in the schema markup with the one visibly shown in the footer.": "Uskladi broj telefona u schema markup-u sa onim vidljivo prikazanim u footer-u.",
+    "Address from the Organization/LocalBusiness schema doesn't appear anywhere in the visible footer": "Adresa iz Organization/LocalBusiness schema se ne pojavljuje nigde u vidljivom footer-u",
+    "Schema address: {0}": "Schema address: {0}",
+    "A NAP mismatch (an address listed in the schema that doesn't appear anywhere visibly on the page) weakens trust in the structured data.": "NAP neusklađenost (adresa navedena u schema koja se nigde vidljivo ne pojavljuje na stranici) slabi poverenje u strukturirane podatke.",
+    "Display the same address visibly (e.g. in the footer) or remove it from the schema if it's no longer accurate.": "Prikaži istu adresu vidljivo (npr. u footer-u) ili je ukloni iz schema ako više nije tačna.",
+    "NAP data (phone/address) from the schema markup is consistent with the footer": "NAP podaci (telefon/adresa) iz schema markup-a usklađeni su sa footer-om",
+    "A visible breadcrumb UI exists, but there is no BreadcrumbList schema markup": "Postoji vidljiv breadcrumb UI, ali nema BreadcrumbList schema markup",
+    "BreadcrumbList schema helps AI answer engines and Google understand the page's hierarchy/context within the site.": "BreadcrumbList schema pomaže AI answer engines i Google-u da razumeju hijerarhiju/kontekst stranice unutar sajta.",
+    "Add a JSON-LD BreadcrumbList schema matching the visible breadcrumb navigation.": "Dodaj JSON-LD BreadcrumbList schema koja odgovara vidljivoj breadcrumb navigaciji.",
+    "BreadcrumbList schema is present": "BreadcrumbList schema je prisutna",
+    "AEO - JS rendering dependency": "AEO - Zavisnost od JS renderovanja",
+    "Most of the content only appears after JavaScript executes (raw HTML: ~{0} chars, rendered: ~{1} chars)": "Većina sadržaja se pojavljuje tek nakon izvršavanja JavaScript-a (raw HTML: ~{0} karaktera, renderovano: ~{1} karaktera)",
+    "Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Some AI crawlers and simpler bots don't execute JavaScript reliably — if key content is only visible after JS rendering, there's a risk those bots \"see\" an empty or nearly empty page. Webflow pages are usually server-rendered so this is rare, but custom code/embeds can inject content afterward.": "Napomena: ovo je heuristika i može dati lažne rezultate (npr. cookie banner blokira preuzimanje). Neki AI crawleri i jednostavniji botovi ne izvršavaju JavaScript pouzdano — ako je ključni sadržaj vidljiv tek posle JS renderovanja, postoji rizik da ti botovi \"vide\" praznu ili skoro praznu stranicu. Webflow stranice su obično server-rendered pa je ovo retko, ali custom code/embedovi mogu naknadno ubaciti sadržaj.",
+    "Check \"View Page Source\" (Ctrl/Cmd+U) and compare it with what's visible on screen — if key text is missing from the raw HTML, consider making that content part of the server's initial HTML response.": "Proveri \"View Page Source\" (Ctrl/Cmd+U) i uporedi sa onim što je vidljivo na ekranu — ako ključni tekst nedostaje u raw HTML-u, razmisli da taj sadržaj postane deo početnog HTML odgovora servera.",
+    "Hide the report preview": "Sakrij pregled izveštaja",
+    "Preview the full report (SEO + AEO findings) before copying it": "Pregledaj ceo izveštaj (SEO + AEO nalazi) pre kopiranja",
+    "Close": "Zatvori",
+    "no change since last run": "nema promene od poslednjeg pokretanja",
+    "since last run": "od poslednjeg pokretanja",
+    "All checks passed": "Sve provere su prošle",
+    "Page optimized": "Stranica je optimizovana",
+    "Weighted share of checks that pass on this page. Errors weigh more than warnings, and warnings more than info items; when a check only affects some elements (e.g. a few images), you get partial credit. Not an official metric.": "Ponderisan udeo provera koje prolaze na ovoj stranici. Greške imaju veću težinu od upozorenja, a upozorenja veću od info stavki; kada provera utiče samo na neke elemente (npr. nekoliko slika), dobija se delimičan kredit. Nije zvanična metrika.",
+    "Last run ({0}): {1} findings → now: {2}": "Poslednje pokretanje ({0}): nalaza: {1} → sada: {2}",
+    "no change": "nema promene",
+    "All": "Sve",
+    "error": "greška",
+    "warning": "upozorenje",
+    "info": "info",
+    "All categories ({0})": "Sve kategorije ({0})",
+    "All ({0})": "Sve ({0})",
+    "AEO + SEO items ({0})": "AEO + SEO stavke ({0})",
+    "{0} only items ({1})": "Samo {0} stavke ({1})",
+    "Highlight all ({0})": "Istakni sve ({0})",
+    "Draw a box around every listed finding at once, instead of one at a time.": "Nacrtaj okvir oko svakog navedenog nalaza odjednom, umesto jednog po jednog.",
+    "No successful checks for the selected group (\"{0}\") in this tab.": "Nema uspešnih provera za izabranu grupu (\"{0}\") na ovom tabu.",
+    "No successful checks recorded yet (or the page is still being analyzed).": "Još nema zabeleženih uspešnih provera (ili se stranica još analizira).",
+    "No AEO findings on this page. 🎉": "Nema AEO nalaza na ovoj stranici. 🎉",
+    "No SEO findings on this page. 🎉": "Nema SEO nalaza na ovoj stranici. 🎉",
+    "No findings for filter severity=\"{0}\" + category=\"{1}\".": "Nema nalaza za filter severity=\"{0}\" + category=\"{1}\".",
+    "No findings for the selected filter (\"{0}\") in this tab.": "Nema nalaza za izabrani filter (\"{0}\") na ovom tabu.",
+    "Shown in both the SEO and AEO tabs (counted once in the totals)": "Prikazano i na SEO i na AEO tabu (u ukupnom zbiru se računa jednom)",
+    "Copy the suggested code to clipboard": "Kopiraj predloženi kod u clipboard",
+    "📋 Copy suggested code": "📋 Kopiraj predloženi kod",
+    "Who can fix:": "Ko može da reši:",
+    "Why:": "Zašto:",
+    "Fix:": "Rešenje:",
+    "Copy": "Kopiraj",
+    "Copy this fix suggestion to clipboard": "Kopiraj ovaj predlog rešenja u clipboard",
+    "Fix copied to clipboard.": "Rešenje je kopirano u clipboard.",
+    "Suggested code copied to clipboard.": "Predloženi kod je kopiran u clipboard.",
+    "Drag to resize panel height": "Prevuci da promeniš visinu panela",
+    "Report preview": "Pregled izveštaja",
+    "Close preview": "Zatvori pregled",
+    "📋 Copy to clipboard": "📋 Kopiraj u clipboard",
+    "Report copied to clipboard.": "Izveštaj je kopiran u clipboard.",
+    "Copied to clipboard.": "Kopirano u clipboard.",
+    "Could not copy to clipboard — your browser may be blocking it.": "Kopiranje u clipboard nije uspelo — browser ga možda blokira.",
+    "The panel is covering this element — drag the panel (by its header) to another part of the screen to see it.": "Panel prekriva ovaj element — prevuci panel (za zaglavlje) na drugi deo ekrana da bi ga video.",
+    "Relevant to both SEO and AEO.": "Relevantno i za SEO i za AEO.",
+    "SEO PAGE AUDITOR — Report": "SEO PAGE AUDITOR — Izveštaj",
+    "SUMMARY": "REZIME",
+    "SEO FINDINGS": "SEO NALAZI",
+    "AEO FINDINGS": "AEO NALAZI",
+    "(no findings)": "(nema nalaza)",
+    "Global element:": "Globalni element:",
+    "Why it matters:": "Zašto je bitno:",
+    "Page optimized :": "Stranica je optimizovana :",
+    "Successes :": "Uspešne provere :",
+    "errors": "grešaka",
+    "warnings": "upozorenja",
+    "SEO-only": "Samo SEO",
+    "AEO-only": "Samo AEO",
+    "Success": "Uspešno",
+    "Language": "Jezik",
+    "Switch the panel and report language (EN / SR)": "Promeni jezik panela i izveštaja (EN / SR)",
+    "SEO tab": "SEO tab",
+    "AEO tab": "AEO tab",
+    "total": "ukupno",
+    "Other": "Ostalo",
+    "Webflow platform script without async/defer ({0})": "Webflow platform skripta bez async/defer ({0})",
+    "This script is added automatically by Webflow to every published page (jQuery / the generated site JavaScript) and sits at the end of <body>.": "Ovu skriptu Webflow automatski dodaje na svaku objavljenu stranicu (jQuery / generisani JavaScript sajta) i nalazi se na kraju <body>.",
+    "No action needed — Webflow does not let you change its attributes.": "Nije potrebna nikakva akcija — Webflow ne dozvoljava izmenu njenih atributa.",
+    "Added by the Webflow platform itself — there is no option in the Designer or in Custom Code to change it. Not counted in the optimization score.": "Dodaje je sama Webflow platforma — ne postoji opcija u Designer-u ni u Custom Code-u da se promeni. Ne ulazi u skor optimizacije.",
+    "Needs access to Cloudflare (or whoever manages the CDN / reverse proxy in front of the site) — it is not part of the Webflow project, so it can't be changed from there.": "Potreban je pristup Cloudflare-u (ili onome ko upravlja CDN-om / reverse proxy-jem ispred sajta) — nije deo Webflow projekta, pa se odatle ne može promeniti.",
+    "Cookie-consent managers are usually loaded synchronously on purpose, so they can run before any tracking script. Check the provider's documentation before adding async/defer.": "Consent menadžeri za kolačiće se obično namerno učitavaju sinhrono, da bi se izvršili pre bilo koje tracking skripte. Pogledaj dokumentaciju provajdera pre nego što dodaš async/defer.",
+    "Usually leave as is. Only change it if the provider's docs say deferring is supported.": "Obično ostavi kako jeste. Menjaj samo ako dokumentacija provajdera kaže da je odlaganje podržano.",
+    "If this script is not in the project's Custom Code, it is most likely loaded by a tag manager (e.g. Google Tag Manager) or injected by a reverse proxy — then it has to be changed there, by whoever manages that platform.": "Ako ova skripta nije u Custom Code-u projekta, najverovatnije je učitava tag manager (npr. Google Tag Manager) ili je ubacuje reverse proxy — onda mora da se promeni tamo, od strane onoga ko upravlja tom platformom.",
+    "Global element ({0}) — likely a Symbol/Component that repeats across all pages of the site. Fixing it in one place resolves the issue site-wide. A quick check on 1-2 other pages is recommended.": "Globalni element ({0}) — verovatno Symbol/Component koji se ponavlja na svim stranicama sajta. Ispravka na jednom mestu rešava problem na celom sajtu. Preporučuje se brza provera na 1-2 druge stranice.",
+    "Sitemap check": "Provera sitemap-a",
+    "Sitemap check (is this page listed?)": "Provera sitemap-a (da li je stranica navedena?)",
+    "X-Robots-Tag header check": "Provera X-Robots-Tag header-a",
+    "the server answered HTTP {0} to the header request": "server je odgovorio sa HTTP {0} na zahtev za header",
+    "the browser blocked or failed the request (a network error, or the site's Content-Security-Policy \"connect-src\" rule)": "browser je blokirao ili prekinuo zahtev (mrežna greška, ili Content-Security-Policy \"connect-src\" pravilo sajta)",
+    "the sitemap has more nested files than this check reads (max 12 files, 3 levels deep), so it can't prove the page is missing": "sitemap ima više ugnježdenih fajlova nego što ova provera čita (najviše 12 fajlova, 3 nivoa dubine), pa ne može da dokaže da stranica nedostaje",
+    "a sitemap file ({0}) answered HTTP {1}": "sitemap fajl ({0}) je odgovorio sa HTTP {1}",
+    "a sitemap file ({0}) is not valid sitemap XML": "sitemap fajl ({0}) nije validan sitemap XML",
+    "Relevant to both SEO and AEO — a page blocked from indexing won't appear in the sources AI answer engines (partly) rely on via the Google index either.": "Relevantno i za SEO i za AEO — stranica blokirana za indeksiranje neće se pojaviti ni u izvorima na koje se AI answer engines (delimično) oslanjaju preko Google indeksa.",
+    "Relevant to both SEO and AEO — Core Web Vitals are part of the Tier-1 technical signals that AEO research links to the likelihood of AI citation.": "Relevantno i za SEO i za AEO — Core Web Vitals su deo tehničkih signala Tier-1 koje AEO istraživanja povezuju sa verovatnoćom AI citiranja.",
+    "Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).": "Relevantno i za SEO i za AEO — Core Web Vitals (TTFB, LCP, CLS) su zvanični Google signal rangiranja od 2021. (Page Experience update)."
+    };
   }
 
   run();
