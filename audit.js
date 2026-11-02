@@ -343,7 +343,8 @@
       }
     }
 
-    var titleTags = document.querySelectorAll('title');
+    // Only HTML <title> elements: inline SVGs (logos, icons) carry their own <title> for accessibility, which is not a page title.
+    var titleTags = Array.prototype.filter.call(document.querySelectorAll('title'), function (t) { return t.namespaceURI !== 'http://www.w3.org/2000/svg'; });
     if (titleTags.length > 1) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one <title> tag in the head (' + titleTags.length + ')',
         description: Array.prototype.map.call(titleTags, function (t) { return '"' + t.textContent + '"'; }).join(', '),
@@ -441,9 +442,9 @@
     }
 
     var canonical = document.querySelector('link[rel="canonical"]');
-    if (!canonical) {
+    if (!canonical || !(canonical.getAttribute('href') || '').trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Canonical tag is missing',
-        description: 'There is no <link rel="canonical">.', why: 'Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a "nice to have".',
+        description: canonical ? 'The <link rel="canonical"> is there, but its href is empty.' : 'There is no <link rel="canonical">.', why: 'Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a "nice to have".',
         fix: 'Add a canonical tag pointing to this page.', element: document.head,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an unclear "primary" URL makes it harder for AI answer engines to know which version of the page to cite.',
         crossNoteReverse: 'Relevant to both SEO and AEO — a canonical prevents duplicate content issues and consolidates ranking signals onto a single URL in the Google index.' });
@@ -452,9 +453,12 @@
     }
 
     var robots = getMeta('robots');
-    if (robots && /noindex/i.test(robots)) {
+    // "none" is the shorthand for noindex+nofollow; a bot-specific <meta name="googlebot"> with noindex blocks Google just the same.
+    var googlebotMeta = getMeta('googlebot') || '';
+    var robotsNoindex = function (v) { return /(^|[\s,;])(noindex|none)(\s|,|;|$)/i.test(v || ''); };
+    if (robots && robotsNoindex(robots) || robotsNoindex(googlebotMeta)) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Page is marked as noindex',
-        description: 'meta robots = "' + robots + '"', why: 'This page will not be indexed by Google as long as this remains in place.',
+        description: robotsNoindex(robots) ? 'meta robots = "' + robots + '"' : 'meta googlebot = "' + googlebotMeta + '"', why: 'This page will not be indexed by Google as long as this remains in place.',
         fix: 'If the page should be visible in search, remove noindex in Page Settings > SEO > "Exclude from search results".', element: document.head,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a noindex page won\'t appear in the sources AI answer engines (partly) rely on via the Google index either.',
         crossNoteReverse: 'Relevant to both SEO and AEO — a noindex directive completely removes the page from Google search, which is the most direct possible SEO problem.' });
@@ -495,10 +499,12 @@
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Viewport meta tag is present', description: '', element: document.head });
       var vpContent = viewport.getAttribute('content') || '';
-      if (/user-scalable\s*=\s*no/i.test(vpContent) || /maximum-scale\s*=\s*1(\.0)?\b/.test(vpContent)) {
+      // user-scalable=no / 0, or maximum-scale below 2 (the threshold of axe / Lighthouse; WCAG 1.4.4 asks for zoom to 200%).
+      var vpMaxScale = /maximum-scale\s*=\s*([0-9.]+)/i.exec(vpContent);
+      if (/user-scalable\s*=\s*(no|0)\b/i.test(vpContent) || (vpMaxScale && parseFloat(vpMaxScale[1]) < 2)) {
         addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Viewport prevents the user from zooming',
-          description: 'viewport = "' + vpContent + '"', why: 'Google Search Console explicitly flags "user-scalable=no"/"maximum-scale=1" as a mobile usability problem — it prevents users with reduced vision from zooming in on content on mobile.',
-          fix: 'Remove user-scalable=no and maximum-scale=1 from the viewport tag (allow zooming up to at least maximum-scale=5).', element: document.head });
+          description: 'viewport = "' + vpContent + '"', why: 'Google Search Console explicitly flags "user-scalable=no"/"maximum-scale=1" as a mobile usability problem, and Lighthouse/axe also fail any maximum-scale below 2 (WCAG asks for zoom up to 200%) — it prevents users with reduced vision from zooming in on content on mobile.',
+          fix: 'Remove user-scalable=no and maximum-scale from the viewport tag (or allow zooming up to at least maximum-scale=5).', element: document.head });
       } else {
         addSuccess({ category: 'Meta & head tags', title: 'Viewport allows the user to zoom the page', description: '', element: document.head });
       }
@@ -568,7 +574,9 @@
     }
 
     function checkDimensionsAndFormat(url) {
-      var ext = (url.split('?')[0].split('.').pop() || '').toLowerCase();
+      // Extension of the last path segment only ("https://cdn.example.com/favicon" has none; data: URIs are skipped).
+      var ext = '';
+      try { var fp = new URL(url).pathname.split('/').pop() || ''; ext = fp.indexOf('.') > -1 ? fp.split('.').pop().toLowerCase() : ''; } catch (e) {}
       if (ext && ['ico', 'png', 'svg', 'gif'].indexOf(ext) === -1) {
         addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon is in an unusual format (' + ext.toUpperCase() + ')',
           description: url, why: 'The widest support (browsers, Google Search) is for .ico, .png and .svg formats — other formats can behave unpredictably in browser UI.',
@@ -599,18 +607,34 @@
           if (!txt) return;
           var path;
           try { path = new URL(url).pathname; } catch (e) { return; }
-          var applicable = false, blocked = false;
+          // robots.txt groups: consecutive User-agent lines share the rules that follow. Only the "*" group is evaluated.
+          // Per Google's rules the longest matching pattern wins and Allow wins a tie; "*" and a trailing "$" are wildcards.
+          var inAgents = false, applicable = false, bestLen = -1, bestAllow = true, blocked = false;
+          var patToRe = function (pat) {
+            var re = pat.replace(/[.+?^{}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+            return new RegExp('^' + (/\$$/.test(pat) ? re.slice(0, -1) + '$' : re));
+          };
           txt.split('\n').forEach(function (line) {
-            line = line.trim();
-            var uaMatch = /^user-agent:\s*(.+)$/i.exec(line);
-            if (uaMatch) { applicable = (uaMatch[1].trim() === '*'); return; }
-            if (!applicable) return;
-            var disallowMatch = /^disallow:\s*(.+)$/i.exec(line);
-            if (disallowMatch) {
-              var rule = disallowMatch[1].trim();
-              if (rule && path.indexOf(rule) === 0) blocked = true;
+            line = line.replace(/#.*$/, '').trim();
+            if (!line) return;
+            var uaMatch = /^user-agent:\s*(.*)$/i.exec(line);
+            if (uaMatch) {
+              if (!inAgents) applicable = false;     // a new group starts
+              inAgents = true;
+              if (uaMatch[1].trim() === '*') applicable = true;
+              return;
             }
+            inAgents = false;
+            if (!applicable) return;
+            var rm = /^(allow|disallow):\s*(.*)$/i.exec(line);
+            if (!rm) return;
+            var allow = rm[1].toLowerCase() === 'allow', rule = rm[2].trim();
+            if (!rule) return;                      // "Disallow:" with nothing = allow everything
+            var hit = false;
+            try { hit = patToRe(rule).test(path); } catch (e) {}
+            if (hit && (rule.length > bestLen || (rule.length === bestLen && allow))) { bestLen = rule.length; bestAllow = allow; }
           });
+          blocked = bestLen >= 0 && !bestAllow;
           if (blocked) {
             addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is blocked in robots.txt',
               description: 'The path "' + path + '" is covered by a Disallow rule in /robots.txt (User-agent: *).',
@@ -647,8 +671,27 @@
 
     var curPath = LOC.pathname.replace(/\/$/, '');
     var canPath = canonicalUrl.pathname.replace(/\/$/, '');
+    var bare = function (h) { return String(h).replace(/^www\./i, '').toLowerCase(); };
 
-    if (canonicalUrl.hostname === LOC.hostname && canPath !== curPath) {
+    if (canonicalUrl.hostname !== LOC.hostname && bare(canonicalUrl.hostname) !== bare(LOC.hostname)) {
+      // Another domain entirely: right for syndicated content, wrong for the page's own canonical.
+      addFinding({ category: 'URL & page duplication', severity: 'warning',
+        title: 'Canonical points to a different domain',
+        description: 'Current page: ' + LOC.hostname + curPath + ' | Canonical: ' + canonicalUrl.hostname + canPath,
+        why: 'The canonical tells Google that another website holds the "real" version of this page, so this page is left out of the results in favour of that one. That is correct for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.',
+        fix: 'If it is not intentional, set the canonical in Page Settings to this page\'s own URL.', element: canonicalEl,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the "real" version of the page to cite.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.' });
+    } else if (canonicalUrl.hostname !== LOC.hostname || canonicalUrl.protocol !== LOC.protocol) {
+      // Same site, but the www / non-www or http / https variant differs from the one that is open.
+      addFinding({ category: 'URL & page duplication', severity: 'warning',
+        title: 'Canonical points to a different host or protocol version',
+        description: 'Current page: ' + LOC.protocol + '//' + LOC.hostname + curPath + ' | Canonical: ' + canonicalUrl.protocol + '//' + canonicalUrl.hostname + canPath,
+        why: 'The canonical names the www / non-www or http / https variant that is not the one this page was opened on. Google then treats the other variant as the primary URL, which is only right if the site redirects to it.',
+        fix: 'Make the canonical, the site\'s default domain (Project Settings > Hosting) and the redirects agree on one variant.', element: canonicalEl,
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the "real" version of the page to cite.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.' });
+    } else if (canonicalUrl.hostname === LOC.hostname && canPath !== curPath) {
       addFinding({ category: 'URL & page duplication', severity: 'error',
         title: 'Canonical points to a different path on the same site',
         description: 'Current page: ' + curPath + ' | Canonical: ' + canPath,
@@ -730,6 +773,8 @@
       var el = candidates[i];
       var t = text(el);
       if (!t || t.length > 90 || el.children.length > 2) continue;
+      // Already part of a real heading (<h2><span>Big</span></h2>): nothing to mark up.
+      if (el.closest && el.closest('h1, h2, h3, h4, h5, h6, [role="heading"]')) continue;
       checked++;
       var fs = parseFloat(window.getComputedStyle(el).fontSize);
       var fw = window.getComputedStyle(el).fontWeight;
@@ -866,10 +911,13 @@
     var HEAVY_INFO_BYTES = 150 * 1024, HEAVY_WARN_BYTES = 300 * 1024, HEAVY_BYTES_PER_PX = 500;
     var PHONE_USEFUL_W = 750, NOSRCSET_INFO_BYTES = 50 * 1024, NOSRCSET_WARN_BYTES = 150 * 1024;
     var lazyAboveList = [], lazyAboveConsidered = 0; // ABOVE-the-fold images that carry loading="lazy" (29.10.2026)
+    var lcpNowSrc = '';
     var lcpNowEl = null;                             // the LCP element is reported by its own check (cwv.lcpLazy) — skipped here
     try {
-      var lcpNowList = performance.getEntriesByType('largest-contentful-paint');
-      lcpNowEl = lcpNowList.length ? lcpNowList[lcpNowList.length - 1].element : null;
+      var lcpNowLast = lastLcpEntry();
+      lcpNowEl = lcpNowLast ? lcpNowLast.element : null;
+      // A device frame is hidden, so it has no LCP of its own: the main page tells it which image is the LCP image.
+      if (HEADLESS && window.__SeoAuditorLcpSrc) lcpNowSrc = String(window.__SeoAuditorLcpSrc);
     } catch (e) {}
 
     imgs.forEach(function (img) {
@@ -977,7 +1025,7 @@
       // after the loop (a row of client logos would otherwise produce a dozen near-identical notes).
       if (!skipSizing && shownW >= 64 && rectNow.height >= 64) {
         var absTopAbove = rectNow.top + (window.pageYOffset || 0);
-        if (absTopAbove < window.innerHeight && img !== lcpNowEl) {
+        if (absTopAbove < window.innerHeight && img !== lcpNowEl && !(lcpNowSrc && String(srcNow).replace(/[?#].*$/, '') === lcpNowSrc)) {
           lazyAboveConsidered++;
           if ((img.getAttribute('loading') || '').toLowerCase() === 'lazy') {
             lazyAboveList.push({ img: img, area: rectNow.width * rectNow.height, src: srcNow });
@@ -1001,8 +1049,13 @@
       var src = img.currentSrc || img.src || '';
       var host = hostnameOf(src);
       var isExternal = host && host !== LOC.hostname && !isWebflowAssetHost(host) && !isSameSite(host);
+      // No usable URL (a lazy-load placeholder without src, or a data:/blob: image): there is no file to request. Without this
+      // guard an empty src resolves to the PAGE itself, and the page's own HTML size would be reported as an "image".
+      var srcUsable = !!src && !/^(data|blob|about):/i.test(src) && src.replace(/#.*$/, '') !== LOC.href.replace(/#.*$/, '');
 
-      if (isExternal) {
+      if (!srcUsable) {
+        internalHostCount++;
+      } else if (isExternal) {
         addFinding({ category: 'Images', severity: 'error', title: 'Image is hosted on an external server',
           description: src, why: 'If that external server/project goes offline (a common case with WordPress or other migration leftovers), the image disappears from the page. File size isn\'t measured here since the server is outside our control.',
           fix: 'Download the image and upload it directly to Webflow Assets.', element: img });
@@ -1323,7 +1376,8 @@
       if (r.top + (window.pageYOffset || 0) >= vh) return;           // starts below the first screen
       if (r.width * r.height < 0.25 * vw * vh) return;               // small video — not a hero
       considered++;
-      if (!(v.getAttribute('poster') || '').trim()) bad.push({ v: v, area: r.width * r.height });
+      var hasPoster = !!(v.getAttribute('poster') || '').trim();
+      if (!hasPoster) bad.push({ v: v, area: r.width * r.height });
     });
     if (bad.length) {
       bad.sort(function (a, b) { return b.area - a.area; });
@@ -1332,8 +1386,7 @@
       // The LCP element being this video AND a slow LCP makes it a real problem; otherwise it is a recommendation.
       var slowLcp = false;
       try {
-        var l = performance.getEntriesByType('largest-contentful-paint');
-        var last = l.length ? l[l.length - 1] : null;
+        var last = lastLcpEntry();
         slowLcp = !!(last && last.element === video && last.startTime > 2500);
       } catch (e) {}
       addFinding({ category: 'Images', severity: slowLcp ? 'warning' : 'info',
@@ -1391,7 +1444,7 @@
 
   function checkLinks() {
     var links =Array.prototype.slice.call(document.querySelectorAll('a'));
-    var internalToCheck = [];
+    var internalToCheck = [], internalSeen = {};
     var checkedLinkCount = 0;
     var emptyHrefFound = false;
     var brokenAnchorFound = false;
@@ -1434,7 +1487,18 @@
       // In-page anchor targets
       if (href && href.charAt(0) === '#' && href.length > 1) {
         var targetId = href.slice(1);
-        if (!document.getElementById(targetId) && !document.getElementsByName(targetId).length) {
+        var targetDecoded = targetId;
+        try { targetDecoded = decodeURIComponent(targetId); } catch (e) {}
+        // HTML Standard, "select the indicated part": an element with that ID, then an <a name="..."> (first with the raw
+        // fragment, then with the percent-decoded one); only if neither exists, "top" (ASCII case-insensitive) means the
+        // top of the document. Verified in the spec source and in Chromium (a #top / #TOP link scrolls to the top with no element).
+        var anchorTargetFound = false;
+        [targetId, targetDecoded].forEach(function (t) {
+          if (document.getElementById(t)) anchorTargetFound = true;
+          Array.prototype.forEach.call(document.getElementsByName(t), function (n) { if (n.tagName === 'A') anchorTargetFound = true; });
+        });
+        var anchorSpecial = /^top$/i.test(targetDecoded);
+        if (!anchorSpecial && !anchorTargetFound) {
           brokenAnchorFound = true;
           addFinding({ category: 'Links', severity: 'error', title: 'Anchor link points to an ID that doesn\'t exist (#' + targetId + ')',
             description: '"' + text(a).slice(0, 60) + '"', why: 'Clicking this link won\'t do anything since no element with that ID exists on the page.',
@@ -1465,8 +1529,14 @@
           fix: 'Replace it with descriptive text (e.g. "View pricing" instead of "click here").', element: a });
       }
 
-      if (href && !isEmpty && sameHost(href, LOC.hostname)) {
-        internalToCheck.push({ el: a, href: href });
+      if (href && !isEmpty && href.charAt(0) !== '#' && sameHost(href, LOC.hostname)) {
+        // One request per distinct URL: the same link repeated in the header, body and footer must not use up the 25-request limit.
+        var internalKey = '';
+        try { var iu = new URL(href, LOC.href); iu.hash = ''; internalKey = iu.href; } catch (e) {}
+        if (internalKey && internalKey !== LOC.href.replace(/#.*$/, '') && !internalSeen[internalKey]) {
+          internalSeen[internalKey] = true;
+          internalToCheck.push({ el: a, href: href });
+        }
       }
     });
 
@@ -1484,14 +1554,19 @@
     // 404 / redirect chain check for internal links (best-effort, limited count)
     var toCheck = HEADLESS ? [] : internalToCheck.slice(0, 25);   // the per-device frames skip this (same on every device)
     setCheckTotal('links.internal', toCheck.length);
-    var linkCheckSettled = 0;
+    var linkCheckSettled = 0, linkCheckFailed = 0;
     var linkCheckProblemFound = false;
     function maybeReportLinkCheckSuccess() {
       linkCheckSettled++;
-      if (linkCheckSettled === toCheck.length && !linkCheckProblemFound) {
-        addSuccess({ category: 'Links', title: 'All checked internal links (' + toCheck.length + ') return a successful response with no 404/redirect',
-          description: '', element: null });
-        renderPanel();
+      if (linkCheckSettled === toCheck.length) {
+        // Requests the browser blocked (CSP / network) prove nothing: never report them as "successful".
+        if (linkCheckFailed === toCheck.length) reportCheckSkipped('Internal link check (404 / redirects)', [CSP_OR_NETWORK]);
+        else if (!linkCheckProblemFound) {
+          var okCount = toCheck.length - linkCheckFailed;
+          addSuccess({ category: 'Links', title: 'All checked internal links (' + okCount + ') return a successful response with no 404/redirect',
+            description: '', element: null });
+          renderPanel();
+        }
       }
     }
     toCheck.forEach(function (item) {
@@ -1512,8 +1587,8 @@
             renderPanel();
           }
           maybeReportLinkCheckSuccess();
-        }).catch(function () { /* CORS / network - ignore */ maybeReportLinkCheckSuccess(); });
-      } catch (e) { maybeReportLinkCheckSuccess(); }
+        }).catch(function () { linkCheckFailed++; maybeReportLinkCheckSuccess(); });
+      } catch (e) { linkCheckFailed++; maybeReportLinkCheckSuccess(); }
     });
   }
 
@@ -1672,7 +1747,7 @@
         description: '', why: 'Every additional font is another file to download and a risk of FOUT/FOIT, which hurts performance.',
         fix: 'Reduce the number of fonts to 1-2 (e.g. one for headings, one for body text).', element: null });
     } else if (distinct.length >= 2) {
-      addFinding({ category: 'Fonts', severity: 'info', title: 'The page uses ' + distinct.length + ' fonts: ' + distinct.join(', '),
+      addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' fonts: ' + distinct.join(', '),
         description: '', why: 'Informational only — doesn\'t affect the SEO score, but worth being aware of.',
         fix: '', element: null });
     } else if (distinct.length === 1) {
@@ -1686,6 +1761,19 @@
       var src = el.tagName === 'LINK' ? el.getAttribute('href') : el.textContent;
       if (src && /fonts\.googleapis\.com|fonts\.gstatic\.com/i.test(src)) usesGoogleFonts = true;
     });
+    // Webflow's own "Google Fonts" setting loads them with the WebFont loader from an inline script:
+    //   the WebFont loader called with a "google" families option — there is no <link> to fonts.googleapis.com in the HTML.
+    // Fonts that were really requested are also visible in the resource timing entries.
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll('script:not([src])'), function (sc) {
+        var scTxt = sc.textContent || '';
+        if (scTxt.indexOf('seoAuditorMain') !== -1) return;   // never read this tool's own source (it can be injected as a <script>)
+        if (/WebFont\.load\s*\(\s*\{[^]*?google\s*:/i.test(scTxt)) usesGoogleFonts = true;
+      });
+      performance.getEntriesByType('resource').forEach(function (e) {
+        if (/^https?:\/\/fonts\.(googleapis|gstatic)\.com\//i.test(e.name)) usesGoogleFonts = true;
+      });
+    } catch (e) {}
     if (usesGoogleFonts) {
       addFinding({ category: 'Fonts', severity: 'warning', title: 'The page dynamically loads Google Fonts from Google\'s servers',
         description: '', why: 'A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor\'s IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.',
@@ -1716,6 +1804,17 @@
         }
       } catch (e) { /* cross-origin stylesheet, can't read rules */ }
     }
+    // Webflow's stylesheet lives on another origin (its rules cannot be read above), so look at the font files the browser
+    // actually downloaded: it takes the first format it supports, so a .woff/.ttf/.otf/.eot request means there was nothing better.
+    try {
+      performance.getEntriesByType('resource').forEach(function (e) {
+        var pth = ''; try { pth = new URL(e.name).pathname; } catch (x) {}
+        var fx = /\.(woff2|woff|ttf|otf|eot)$/i.exec(pth);
+        if (!fx) return;
+        fontFaceRuleFound = true;
+        if (/^(woff|ttf|otf|eot)$/i.test(fx[1])) oldFormatFound = true;
+      });
+    } catch (e) {}
     if (oldFormatFound) {
       addFinding({ category: 'Fonts', severity: 'info', title: 'Font file in an older format (not .woff2)',
         description: '', why: '.woff2 has significantly better compression than .ttf/.otf/.eot — a smaller file means faster loading.',
@@ -1774,10 +1873,13 @@
 
     // Mixed content
     if (LOC.protocol === 'https:') {
-      var httpResources = Array.prototype.slice.call(document.querySelectorAll('img[src^="http://"], script[src^="http://"], link[href^="http://"], iframe[src^="http://"]'));
+      var httpResources = Array.prototype.slice.call(document.querySelectorAll(
+        'img[src^="http://" i], script[src^="http://" i], iframe[src^="http://" i], video[src^="http://" i], audio[src^="http://" i], source[src^="http://" i], video[poster^="http://" i], ' +
+        // <link>: only the ones that load a resource. canonical / alternate / dns-prefetch / author are plain references, not mixed content.
+        'link[rel~="stylesheet"][href^="http://" i], link[rel~="icon"][href^="http://" i], link[rel~="preload"][href^="http://" i], link[rel~="modulepreload"][href^="http://" i], link[rel~="manifest"][href^="http://" i], link[rel~="apple-touch-icon"][href^="http://" i]'));
       httpResources.forEach(function (el) {
         addFinding({ category: 'Technical / crawlability', severity: 'error', title: 'Mixed content: HTTP resource on an HTTPS page',
-          description: (el.src || el.href || ''), why: 'The browser may block or warn about this resource, and it is a security signal.',
+          description: (el.currentSrc || el.src || el.href || el.getAttribute('poster') || ''), why: 'The browser may block or warn about this resource, and it is a security signal.',
           fix: 'Change the resource URL to https://.', element: el,
           crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — HTTPS/security is one of the Tier-1 technical signals AI answer engines factor into assessing source trustworthiness.',
           crossNoteReverse: 'Relevant to both SEO and AEO — HTTPS has been a confirmed Google ranking signal since 2014, and mixed content warnings in the browser undermine user trust.' });
@@ -1812,7 +1914,7 @@
       if (!host || host === LOC.hostname) return;
       var isPlatform = isWebflowPlatformScript(host, src);
       if (!isPlatform) thirdPartyScriptCount++;
-      if (s.async || s.defer) return;
+      if (s.async || s.defer || (s.getAttribute('type') || '').toLowerCase() === 'module') return;   // module scripts are deferred by default
 
       var inHead = !!s.closest('head');
       var isConsent = CONSENT_HOST_RE.test(host);
@@ -1882,23 +1984,50 @@
 
   var cwv = { lcp: null, cls: 0, ttfb: null };
 
+  // LCP and layout-shift entries are NOT returned by performance.getEntriesByType() — they can only be read through a
+  // PerformanceObserver with buffered:true (verified in Chromium 02.11.2026; before that fix LCP was never measured and CLS was
+  // always 0). Observers deliver their buffered entries asynchronously, so run() starts the audit from the callback of
+  // startPerfObservers() (about 120 ms later) and the checks that need the LCP element read it from perfLcp.
+  var perfLcp = [], perfShifts = [];
+  function lastLcpEntry() { return perfLcp.length ? perfLcp[perfLcp.length - 1] : null; }
+  function startPerfObservers(cb) {
+    try {
+      if (window.PerformanceObserver) {
+        var o1 = new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { perfLcp.push(e); }); });
+        o1.observe({ type: 'largest-contentful-paint', buffered: true });
+        var o2 = new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { perfShifts.push(e); }); });
+        o2.observe({ type: 'layout-shift', buffered: true });
+      }
+    } catch (e) {}
+    setTimeout(cb, 120);
+  }
+  // CLS as Google defines it: the largest "session window" of shifts (a window ends after a 1 s gap between shifts or at 5 s),
+  // not the sum of every shift on a long-lived page. Shifts right after a user input are excluded.
+  function computeCls() {
+    var best = 0, cur = 0, first = 0, prev = 0;
+    perfShifts.forEach(function (e) {
+      if (e.hadRecentInput) return;
+      if (cur && e.startTime - prev < 1000 && e.startTime - first < 5000) cur += e.value;
+      else { cur = e.value; first = e.startTime; }
+      prev = e.startTime;
+      if (cur > best) best = cur;
+    });
+    return Math.round(best * 1000) / 1000;
+  }
+
   function measureCWV(done) {
     try {
       var nav = performance.getEntriesByType('navigation')[0];
-      if (nav) cwv.ttfb = Math.round(nav.responseStart - nav.requestStart);
+      // TTFB as defined on web.dev: from the start of the navigation (redirects, DNS, connection included) to the first byte.
+      if (nav) cwv.ttfb = Math.round(nav.responseStart - (nav.activationStart || 0));
     } catch (e) {}
 
     try {
-      var lcpEntries = performance.getEntriesByType('largest-contentful-paint');
-      if (lcpEntries.length) cwv.lcp = Math.round(lcpEntries[lcpEntries.length - 1].startTime);
+      var lcpLast = lastLcpEntry();
+      if (lcpLast) cwv.lcp = Math.round(lcpLast.startTime);
     } catch (e) {}
 
-    try {
-      var clsEntries = performance.getEntriesByType('layout-shift');
-      var sum = 0;
-      clsEntries.forEach(function (entry) { if (!entry.hadRecentInput) sum += entry.value; });
-      cwv.cls = Math.round(sum * 1000) / 1000;
-    } catch (e) {}
+    try { cwv.cls = computeCls(); } catch (e) {}
 
     var CWV_CROSS_NOTE = 'Relevant to both SEO and AEO — Core Web Vitals are part of the Tier-1 technical signals that AEO research links to the likelihood of AI citation.';
     var CWV_CROSS_NOTE_REVERSE = 'Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).';
@@ -1930,8 +2059,8 @@
     // fetched late on purpose, which directly delays LCP. Only evaluated when the LCP element is an
     // <img> (text/background LCP elements have nothing to check, so no result is shown for them).
     try {
-      var lcpList = performance.getEntriesByType('largest-contentful-paint');
-      var lcpEl = lcpList.length ? lcpList[lcpList.length - 1].element : null;
+      var lcpLastEl = lastLcpEntry();
+      var lcpEl = lcpLastEl ? lcpLastEl.element : null;
       if (lcpEl && lcpEl.tagName === 'IMG') {
         if ((lcpEl.getAttribute('loading') || '').toLowerCase() === 'lazy') {
           addFinding({ category: 'Performance (CWV)', severity: 'warning', title: 'The LCP image is lazy-loaded (loading="lazy")',
@@ -1956,7 +2085,7 @@
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
 
-    if (done) setTimeout(done, 1200); // give the PerformanceObserver buffer some time
+    if (done) setTimeout(done, 300);
   }
 
   // ---------------------------------------------------------------------
@@ -1970,8 +2099,13 @@
     scripts.forEach(function (s) {
       try {
         var parsed = JSON.parse(s.textContent);
-        var items = Array.isArray(parsed) ? parsed : (parsed && parsed['@graph'] ? parsed['@graph'] : [parsed]);
-        items.forEach(function (item) { if (item) blocks.push({ raw: item, el: s }); });
+        // Top level may be an object, an array, or a {"@graph": [...]} wrapper (also nested inside an array).
+        (function collect(node) {
+          if (!node || typeof node !== 'object') return;
+          if (Array.isArray(node)) { node.forEach(collect); return; }
+          if (node['@graph']) { collect(node['@graph']); if (!node['@type']) return; }
+          blocks.push({ raw: node, el: s });
+        })(parsed);
       } catch (e) {
         invalidFound = true;
         addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
@@ -1991,7 +2125,8 @@
   function schemaTypesOf(block) {
     var t = block.raw['@type'];
     if (!t) return [];
-    return Array.isArray(t) ? t : [t];
+    // "https://schema.org/Article" and "schema:Article" are the same type as "Article".
+    return (Array.isArray(t) ? t : [t]).map(function (x) { return String(x).replace(/^.*[\/:#]/, ''); });
   }
 
   function findSchemaByType(blocks, type) {
@@ -2024,6 +2159,9 @@
     return !!document.querySelector('[class*="breadcrumb" i], [aria-label*="breadcrumb" i], nav[aria-label*="breadcrumb" i]');
   }
 
+  // Country calling codes (from the libphonenumber metadata, PhoneNumberMetadata.xml; prefix-free, so a phone number's code is unambiguous).
+  var CALLING_CODES = ',1,7,20,27,30,31,32,33,34,36,39,40,41,43,44,45,46,47,48,49,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,81,82,84,86,90,91,92,93,94,95,98,211,212,213,216,218,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,256,257,258,260,261,262,263,264,265,266,267,268,269,290,291,297,298,299,350,351,352,353,354,355,356,357,358,359,370,371,372,373,374,375,376,377,378,380,381,382,383,385,386,387,389,420,421,423,500,501,502,503,504,505,506,507,508,509,590,591,592,593,594,595,596,597,598,599,670,672,673,674,675,676,677,678,679,680,681,682,683,685,686,687,688,689,690,691,692,800,808,850,852,853,855,856,870,878,880,881,882,883,886,888,960,961,962,963,964,965,966,967,968,970,971,972,973,974,975,976,977,979,992,993,994,995,996,998,';
+
   function checkAEO() {
     var blocks = getJsonLdBlocks();
 
@@ -2045,7 +2183,11 @@
             description: '', why: 'A FAQPage without a mainEntity array of Question objects is incomplete and won\'t be used for FAQ rich results or AI citation.',
             fix: 'Add a mainEntity array with Question/acceptedAnswer objects for every question on the page.', element: b.el });
         } else {
-          var badItems = arr.filter(function (q) { return !q.acceptedAnswer || !q.acceptedAnswer.text; });
+          var badItems = arr.filter(function (q) {
+            var ans = q && q.acceptedAnswer;
+            if (Array.isArray(ans)) ans = ans[0];
+            return !ans || !ans.text;
+          });
           if (badItems.length) {
             addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
               title: badItems.length + ' question(s) in the FAQPage schema have no acceptedAnswer.text filled in',
@@ -2060,7 +2202,10 @@
     }
 
     // Article / BlogPosting / NewsArticle
-    var articleSchemas = findSchemaByType(blocks, 'Article').concat(findSchemaByType(blocks, 'BlogPosting'), findSchemaByType(blocks, 'NewsArticle'));
+    var articleSchemas = [];
+    ['Article', 'BlogPosting', 'NewsArticle', 'TechArticle', 'ScholarlyArticle', 'OpinionNewsArticle', 'ReportageNewsArticle', 'AnalysisNewsArticle', 'LiveBlogPosting'].forEach(function (t) {
+      findSchemaByType(blocks, t).forEach(function (b) { if (articleSchemas.indexOf(b) === -1) articleSchemas.push(b); });
+    });
     if (looksLikeArticle() && articleSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
         title: 'Page looks like an article/blog post but has no Article schema markup',
@@ -2117,10 +2262,30 @@
       if (!footerText) return;
 
       var napIssueFound = false;
-      var schemaPhone = (b.raw.telephone || '').replace(/[^\d]/g, '');
+      var schemaTelRaw = String(Array.isArray(b.raw.telephone) ? b.raw.telephone[0] : (b.raw.telephone || '')).trim();
+      var schemaPhone = schemaTelRaw.replace(/[^\d]/g, '');
+      // Same number, different notation: schema.org usually carries the international form ("+44 20 7946 0958"), the page the
+      // national one ("020 7946 0958"). Per ITU E.164 a number is <country code><national number>, and country codes are
+      // prefix-free (checked against the libphonenumber metadata: 215 codes, no code is the start of another), so the country
+      // code can be read off unambiguously and the NATIONAL number compared. Every written form of the number contains it.
+      var phoneNeedles = [];
       if (schemaPhone) {
-        var footerDigits = footerText.replace(/[^\d]/g, '');
-        if (footerDigits.indexOf(schemaPhone) === -1) {
+        var intl = /^\+/.test(schemaTelRaw) || /^00/.test(schemaPhone);
+        var digitsNoIntlPrefix = /^00/.test(schemaPhone) && !/^\+/.test(schemaTelRaw) ? schemaPhone.slice(2) : schemaPhone;
+        var cc = '';
+        if (intl) { for (var cl = 1; cl <= 3 && !cc; cl++) { if (CALLING_CODES.indexOf(',' + digitsNoIntlPrefix.slice(0, cl) + ',') !== -1) cc = digitsNoIntlPrefix.slice(0, cl); } }
+        if (cc) phoneNeedles.push(digitsNoIntlPrefix.slice(cc.length).replace(/^0+/, ''));   // national number (a "(0)" trunk digit written in the schema is dropped)
+        else { phoneNeedles.push(schemaPhone); if (/^0/.test(schemaPhone)) phoneNeedles.push(schemaPhone.replace(/^0+/, '')); }   // no country code: the number as written, or without its trunk 0
+        phoneNeedles = phoneNeedles.filter(function (n) { return n.length >= 5; });
+        if (!phoneNeedles.length) phoneNeedles = [schemaPhone];
+      }
+      if (schemaPhone) {
+        var phoneSources = footerText;
+        Array.prototype.forEach.call(footer ? footer.querySelectorAll('a[href^="tel:" i]') : [], function (a) { var tel = (a.getAttribute('href') || '').replace(/^tel:/i, ''); try { tel = decodeURIComponent(tel); } catch (e) {} phoneSources += ' ' + tel; });
+        // Digit groups as written on the page (spaces, dots, dashes, slashes and brackets inside one number), compared one group at a time.
+        var footerGroups = (phoneSources.match(/\d[\d\s().\/\-\u2013\u00a0]*\d|\d/g) || []).map(function (g) { return g.replace(/[^\d]/g, ''); });
+        var phoneFound = footerGroups.some(function (g) { return phoneNeedles.some(function (n) { return g.indexOf(n) !== -1; }); });
+        if (!phoneFound) {
           napIssueFound = true;
           addFinding({ category: 'AEO - NAP consistency', group: 'aeo', severity: 'warning',
             title: 'Phone number in the Organization/LocalBusiness schema doesn\'t match the number in the footer',
@@ -2231,10 +2396,11 @@
     // JS-render dependency (best-effort heuristic)
     try {
       fetch(LOC.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
-        var tmp = document.createElement('div');
-        tmp.innerHTML = rawHtml; // doesn't execute <script> tags when sliced this way
+        // DOMParser builds an inert document: nothing in it loads or runs (innerHTML on a detached <div> would still start
+        // downloading every <img> and fire its onload handlers on the live site).
+        var tmp = new DOMParser().parseFromString(rawHtml, 'text/html');
         Array.prototype.forEach.call(tmp.querySelectorAll('script,style,noscript'), function (n) { n.remove(); });
-        var rawText = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+        var rawText = ((tmp.body || tmp.documentElement).textContent || '').replace(/\s+/g, ' ').trim();
         var renderedText = text(document.body).replace(/\s+/g, ' ').trim();
         if (renderedText.length > 300 && rawText.length < renderedText.length * 0.3) {
           addFinding({ category: 'AEO - JS rendering dependency', group: 'aeo', severity: 'warning',
@@ -2344,7 +2510,7 @@
     { id: 'og.imageQuality', w: 4, re: /^OG image/, evalIfSuccessOf: ['og.image'] },
     { id: 'twitter.card', w: 2, re: /^Twitter\/X Card/ },
     { id: 'meta.canonical', w: 4, re: /^Canonical tag is missing/, always: true },
-    { id: 'meta.noindex', w: 4, re: /noindex/ },
+    { id: 'meta.noindex', w: 4, re: /^Page is (not )?marked as noindex/ },
     { id: 'meta.nosnippet', w: 4, re: /^Robots directive/ },
     { id: 'meta.xrobots', w: 4, re: /^(X-Robots-Tag|No X-Robots-Tag)/ },
     { id: 'meta.sitemap', w: 2, re: /^This page is (not )?listed in sitemap/ },
@@ -2617,6 +2783,7 @@
       sorted.forEach(function (f, idx) {
         lines.push((idx + 1) + '. [' + tr(f.severity).toUpperCase() + '] ' + tr(f.category) + ' — ' + tr(f.title) + deviceTagsText(f));
         if (f.description) lines.push(indentLines(tr(f.description), '   '));
+        if (whereInfo(f)) lines.push(indentLines(whereText(f), '   '));
         if (f.crossRelevant) lines.push('   (' + tr(getCrossText(f, contextGroup)) + ')');
         if (f.globalNote) lines.push('   ' + tr('Global element:') + ' ' + tr(f.globalNote));
         if (f.ownerNote) lines.push(indentLines(tr('Who can fix:') + ' ' + tr(f.ownerNote), '   '));
@@ -2995,6 +3162,7 @@
       // 60px with no way to read the rest. Text is now always shown at full height; the outer
       // .list container handles scrolling for the whole list.
       '.item .desc{color:#c3c9d6;white-space:pre-wrap;font-size:12px;line-height:1.5;margin-top:4px;}',
+      '.item .desc.where{color:#a5b4fc;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;}',
       '.item .global{margin-top:6px;color:#fbbf24;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.item .owner{margin-top:6px;color:#fcd34d;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
       '.item .cross{margin-top:6px;color:#c4b5fd;font-size:11px;overflow-wrap:anywhere;word-break:break-word;}',
@@ -3233,6 +3401,45 @@
     var names = devs.map(function (id) { return tr(DEVICE_LABEL[id]); }).join(', ');
     return '<span class="devtags" data-tip="' + attrEsc(trf('Found only on: {0}. It does not appear on the other devices that were checked.', [names])) + '">' +
       devs.map(function (id) { return DEVICE_ICONS[id]; }).join('') + '</span>';
+  }
+  // "Where is it": for an element that is not visible right now (closed tab / accordion / menu, hidden at this width), the row
+  // cannot highlight anything on screen, so it shows the element's own opening tag, the chain of parents it sits in and
+  // which ancestor hides it. Computed once per finding.
+  function whereInfo(f) {
+    if (f._where !== undefined) return f._where;
+    var out = null;
+    try {
+      var el = f.element;
+      if (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement && !el.closest('head') && (f.hiddenUi || !isVisible(el))) {
+        var open = (/^<[^>]*>/.exec(el.cloneNode(false).outerHTML) || [''])[0];
+        if (open.length > 220) open = open.slice(0, 217) + '…>';
+        var lab = function (n) { return elLabel(n) + (n.id ? '#' + n.id : ''); };
+        var chain = [], par = el.parentElement, depth = 0;
+        while (par && par !== document.body && par !== document.documentElement && depth < 4) { chain.unshift(lab(par)); par = par.parentElement; depth++; }
+        if (par && par !== document.body && par !== document.documentElement) chain.unshift('…');
+        var hid = null, q = el;
+        while (q && q !== document.documentElement) { if (window.getComputedStyle(q).display === 'none') { hid = q; break; } q = q.parentElement; }
+        var hiddenLabel = hid ? (hid === el ? '' : lab(hid) + ' (display:none)') : null;
+        if (!hid) {
+          var det = el.closest('details');
+          var clip = (det && !det.open) ? null : zeroHeightClipper(el);
+          if (det && !det.open) hiddenLabel = lab(det) + ' (closed)';
+          else if (clip) hiddenLabel = lab(clip) + ' (height:0)';
+        }
+        out = { open: open, chain: chain.join(' › '), hidden: hiddenLabel, self: hid === el };
+      }
+    } catch (e) {}
+    f._where = out;
+    return out;
+  }
+  function whereText(f) {
+    var w = whereInfo(f);
+    if (!w) return '';
+    var t = tr('Where:') + ' ' + w.open;
+    if (w.chain) t += ' · ' + trf('inside: {0}', [w.chain]);
+    if (w.self) t += ' · ' + trf('hidden by: {0}', [tr('the element itself (display:none)')]);
+    else if (w.hidden) t += ' · ' + trf('hidden by: {0}', [w.hidden]);
+    return t;
   }
   function uiTagHtml(f) {
     if (!f.hiddenUi) return '';
@@ -3793,6 +4000,7 @@
           '<div class="cat">' + tr(f.category) + '</div>' +
           '<div class="title"><span class="badge ' + f.severity + ' tag">' + tr(f.severity) + '</span>' + deviceTagsHtml(f) + uiTagHtml(f) + (f.crossRelevant ? '<span class="badge group-shared tag" title="' + tr('Shown in both the SEO and AEO tabs (counted once in the totals)') + '">SEO+AEO</span>' : '') + tr(f.title) + '</div>' +
           '<div class="desc">' + tr(f.description || '').replace(/</g, '&lt;') + '</div>' +
+          (whereInfo(f) ? '<div class="desc where">' + whereText(f).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>' : '') +
           (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="' + tr('Copy the suggested code to clipboard') + '" style="margin:6px 0 0;">' + tr('📋 Copy suggested code') + '</button>' : '') +
           (f.globalNote ? '<div class="global">🌐 ' + tr(f.globalNote) + '</div>' : '') +
           (f.ownerNote ? '<div class="owner">🔑 <b>' + tr('Who can fix:') + '</b> ' + tr(f.ownerNote) + '</div>' : '') +
@@ -3963,15 +4171,18 @@
     return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth });
   }
 
+  // Runs one check; an exception is logged (window.__SeoAuditorErrors) instead of stopping the whole audit.
+  function runCheckSafely(fn) {
+    try { fn(); } catch (e) {
+      (window.__SeoAuditorErrors = window.__SeoAuditorErrors || []).push((fn.name || 'check') + ': ' + (e && e.message));
+      try { console.warn('[SEO Page Auditor] ' + (fn.name || 'check') + ' failed:', e); } catch (x) {}
+    }
+  }
+
   function runHeadless() {
     // Only the checks whose outcome depends on the viewport. Site-level checks (meta, sitemap, robots,
     // fonts, CWV, schema) are identical on every device and already covered by the main run.
-    checkHeadings();
-    checkImages();
-    checkVideos();
-    checkForms();
-    checkLinks();
-    checkContent();
+    [checkHeadings, checkImages, checkVideos, checkForms, checkLinks, checkContent].forEach(runCheckSafely);
     window.__SeoAuditorHeadlessExport = exportHeadless;
     window.__SeoAuditorHeadlessDone = true;
   }
@@ -4031,6 +4242,10 @@
           var fw = fr.contentWindow, fd = fw.document;
           if (!fd || !fd.body || !fd.documentElement) return fail('empty');
           fw.__SeoAuditorHeadless = true;
+          try {
+            var lcpE = lastLcpEntry(), lcpI = lcpE && lcpE.element;
+            if (lcpI && lcpI.tagName === 'IMG') fw.__SeoAuditorLcpSrc = stripQuery(lcpI.currentSrc || lcpI.src);
+          } catch (e) {}
           fw.__SeoAuditorLoc = { href: LOC.href, hostname: LOC.hostname, origin: LOC.origin, pathname: LOC.pathname, protocol: LOC.protocol };
           // Lazy images below the fold are not fetched in a hidden frame; load them so their real size is known.
           var lazy = Array.prototype.filter.call(fd.querySelectorAll('img[loading="lazy"]'), function (im) { return !im.complete; });
@@ -4168,6 +4383,10 @@
 
   function run() {
     if (HEADLESS) { runHeadless(); return; }
+    startPerfObservers(runMain);
+  }
+
+  function runMain() {
     // Capture the PREVIOUS run's results (if any, from an earlier visit to this exact URL)
     // before this run adds anything new — see the "Previous run vs. now" banner in renderPanel()
     // and saveCurrentRun() below (11.08.2026).
@@ -4189,20 +4408,9 @@
       if (savedPanelState.activeSuccessGroup) activeSuccessGroup = savedPanelState.activeSuccessGroup;
     }
 
-    checkPreliminary();
-    checkSlug();
-    checkMetaHead();
-    checkFavicon();
-    checkIndexingSignals();
-    checkHeadings();
-    checkImages();
-    checkVideos();
-    checkForms();
-    checkLinks();
-    checkContent();
-    checkFonts();
-    checkTechnical();
-    checkAEO();
+    // Each check runs on its own: an unexpected error inside one (a page with unusual markup) must not take the others down.
+    [checkPreliminary, checkSlug, checkMetaHead, checkFavicon, checkIndexingSignals, checkHeadings, checkImages, checkVideos,
+     checkForms, checkLinks, checkContent, checkFonts, checkTechnical, checkAEO].forEach(runCheckSafely);
     tagGlobalFindings();
     renderPanel();
 
@@ -4357,8 +4565,8 @@
     "Viewport meta tag is present": "Viewport meta tag postoji",
     "Viewport prevents the user from zooming": "Viewport sprečava korisnika da zumira",
     "viewport = \"{0}\"": "viewport = \"{0}\"",
-    "Google Search Console explicitly flags \"user-scalable=no\"/\"maximum-scale=1\" as a mobile usability problem — it prevents users with reduced vision from zooming in on content on mobile.": "Google Search Console eksplicitno označava \"user-scalable=no\"/\"maximum-scale=1\" kao problem mobilne upotrebljivosti — sprečava korisnike slabijeg vida da zumiraju sadržaj na mobilnom.",
-    "Remove user-scalable=no and maximum-scale=1 from the viewport tag (allow zooming up to at least maximum-scale=5).": "Ukloni user-scalable=no i maximum-scale=1 iz viewport taga (dozvoli zumiranje do najmanje maximum-scale=5).",
+    "Google Search Console explicitly flags \"user-scalable=no\"/\"maximum-scale=1\" as a mobile usability problem, and Lighthouse/axe also fail any maximum-scale below 2 (WCAG asks for zoom up to 200%) — it prevents users with reduced vision from zooming in on content on mobile.": "Google Search Console eksplicitno označava \"user-scalable=no\"/\"maximum-scale=1\" kao problem mobilne upotrebljivosti, a Lighthouse/axe obaraju i svaki maximum-scale ispod 2 (WCAG traži zumiranje do 200%) — sprečava korisnike slabijeg vida da zumiraju sadržaj na mobilnom.",
+    "Remove user-scalable=no and maximum-scale from the viewport tag (or allow zooming up to at least maximum-scale=5).": "Ukloni user-scalable=no i maximum-scale iz viewport taga (ili dozvoli zumiranje do najmanje maximum-scale=5).",
     "Viewport allows the user to zoom the page": "Viewport dozvoljava korisniku da zumira stranicu",
     "OG image is in a format social platforms render unreliably ({0})": "OG slika je u formatu koji društvene platforme prikazuju nepouzdano ({0})",
     "og:image: {0}": "og:image: {0}",
@@ -4395,6 +4603,17 @@
     "URL & page duplication": "URL & dupliranje stranica",
     "Canonical points to a different path on the same site": "Canonical pokazuje na drugu putanju na istom sajtu",
     "Current page: {0} | Canonical: {1}": "Trenutna stranica: {0} | Canonical: {1}",
+    "The <link rel=\"canonical\"> is there, but its href is empty.": "<link rel=\"canonical\"> postoji, ali je njegov href prazan.",
+    "Where:": "Gde:",
+    "inside: {0}": "unutar: {0}",
+    "hidden by: {0}": "sakriveno zbog: {0}",
+    "the element itself (display:none)": "sam element (display:none)",
+    "Canonical points to a different domain": "Canonical pokazuje na drugi domen",
+    "The canonical tells Google that another website holds the \"real\" version of this page, so this page is left out of the results in favour of that one. That is correct for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.": "Canonical govori Google-u da \"pravu\" verziju ove stranice drži drugi sajt, pa ova stranica ostaje van rezultata u korist te. To je ispravno za namerno sindikovan sadržaj, ali pogrešno kada je zaostatak iz template-a, staging kopije ili drugog sajta.",
+    "If it is not intentional, set the canonical in Page Settings to this page's own URL.": "Ako nije namerno, postavi canonical u Page Settings na URL ove stranice.",
+    "Canonical points to a different host or protocol version": "Canonical pokazuje na drugu verziju hosta ili protokola",
+    "The canonical names the www / non-www or http / https variant that is not the one this page was opened on. Google then treats the other variant as the primary URL, which is only right if the site redirects to it.": "Canonical navodi www / non-www ili http / https varijantu koja nije ona na kojoj je ova stranica otvorena. Google tada drugu varijantu smatra primarnim URL-om, što je ispravno samo ako sajt preusmerava na nju.",
+    "Make the canonical, the site's default domain (Project Settings > Hosting) and the redirects agree on one variant.": "Uskladi canonical, podrazumevani domen sajta (Project Settings > Hosting) i preusmeravanja na jednu varijantu.",
     "A common cause: the page was duplicated in Webflow and the canonical was left pointing at the original — Google then ignores this page in favor of that other one.": "Čest uzrok: stranica je duplirana u Webflow-u, a canonical je ostao da pokazuje na original — Google tada ignoriše ovu stranicu u korist one druge.",
     "Check whether this is intentional. If not, fix the canonical in Page Settings to point to this page.": "Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings tako da pokazuje na ovu stranicu.",
     "Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the \"real\" version of the page to cite.": "Relevantno i za SEO i za AEO — pogrešan canonical takođe zbunjuje AI answer engine-e oko toga koja je \"prava\" verzija stranice za citiranje.",
