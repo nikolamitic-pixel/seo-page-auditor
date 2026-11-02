@@ -3,7 +3,7 @@
  * Runs entirely client-side in the developer's browser. No server, no Lighthouse.
  * See SPEC.md in this project for the full rule list and rationale.
  */
-(function () {
+(function seoAuditorMain() {
   'use strict';
 
   if (window.__SeoAuditorRunning) {
@@ -11,6 +11,28 @@
     return;
   }
   window.__SeoAuditorRunning = true;
+
+  // HEADLESS mode (30.10.2026): the per-device pass loads the same page in hidden same-origin frames
+  // (mobile / tablet / desktop widths) and runs only the viewport-dependent checks there, without a panel.
+  // The frame gets this very script (seoAuditorMain.toString()) and window.__SeoAuditorHeadless = true.
+  var HEADLESS = !!window.__SeoAuditorHeadless;
+  var SELF_SRC = null;
+  try { SELF_SRC = seoAuditorMain.toString(); } catch (e) {}
+  // The page's address. In a frame the document is about:srcdoc, so the parent passes the real location.
+  var LOC = (HEADLESS && window.__SeoAuditorLoc) || window.location;
+  // Every network request of the audit goes through this wrapper (it shadows the global fetch inside this
+  // script only; the page's own fetches are untouched). It counts requests in flight, so the panel can say
+  // "analysis in progress" until the images / links / robots checks have really finished.
+  var auditPending = 0;
+  var fetch = function () {
+    auditPending++;
+    var pr;
+    try { pr = window.fetch.apply(window, arguments); } catch (e) { auditPending--; throw e; }
+    var dn = function () { auditPending--; };
+    pr.then(dn, dn);
+    return pr;
+  };
+  if (HEADLESS) window.__SeoAuditorHeadlessPending = function () { return auditPending; };
 
   // ---------------------------------------------------------------------
   // Utilities
@@ -24,6 +46,10 @@
     f.severity = f.severity || 'warning'; // 'error' | 'warning' | 'info'
     f.category = f.category || 'Other';
     f.group = f.group || 'seo'; // 'seo' | 'aeo' — which tab in the panel shows this finding
+    if (f.element && f.element.nodeType === 1 && f.element !== document.body && !f.hiddenUi) {
+      var hk = hiddenUiKind(f.element);          // 'tab' | 'accordion' | ... when the element is in a closed UI container
+      if (hk && hk !== 'hidden') f.hiddenUi = hk;
+    }
     findings.push(f);
     return f;
   }
@@ -134,9 +160,75 @@
     return rect.width > 0 || rect.height > 0;
   }
 
+  // ---------------------------------------------------------------------
+  // Hidden-but-reachable UI (30.10.2026): tabs, accordions, <details>, dropdowns, collapsed menus,
+  // sliders and popups are not visible at page load, but their content is real (visitors reach it
+  // with one click, crawlers read it). hiddenUiKind() says WHY an element is not visible:
+  //   null        -> it is visible
+  //   'tab' | 'accordion' | 'dropdown' | 'menu' | 'slider' | 'popup' -> hidden only because a UI container is closed
+  //   'hidden'    -> hidden by design / by breakpoint / never shown (conditional CMS visibility, honeypots,
+  //                  "hide on desktop" utility classes...) — NOT checked here (the per-device pass covers breakpoints)
+  // ---------------------------------------------------------------------
+  var UI_KINDS = [
+    ['popup', '[role="dialog"], [aria-modal="true"], .w-lightbox-backdrop, [class*="popup" i], [class*="modal" i], [class*="lightbox" i], [class*="drawer" i]'],
+    ['tab', '.w-tab-pane, [role="tabpanel"], [class*="tabs" i], [class*="tab_" i], [class*="tab-" i]'],
+    ['accordion', '[class*="accordion" i], [class*="collapse" i], [class*="expand" i], [class*="faq" i], [class*="toggle" i]'],
+    ['dropdown', '.w-dropdown-list, [class*="dropdown" i]'],
+    ['menu', '.w-nav-menu, [role="menu"], [role="menubar"], nav, [role="navigation"], [class*="menu" i], [class*="navbar" i]'],
+    ['slider', '.w-slide, .w-slider, [class*="slide" i], [class*="carousel" i]']
+  ];
+  var CONTENT_UI_KINDS = ['tab', 'accordion', 'dropdown', 'slider'];   // real page content (no popups / menus)
+  // A visible-looking element can still be collapsed: clipped by an ancestor that has overflow:hidden and zero height
+  // (the classic Webflow accordion: the answer is "height: 0px; overflow: hidden").
+  function zeroHeightClipper(el) {
+    var p = el.parentElement, n = 0;
+    while (p && p !== document.body && n++ < 10) {
+      var st = window.getComputedStyle(p);
+      if ((st.overflow !== 'visible' || st.overflowY !== 'visible') && p.getBoundingClientRect().height === 0) return p;
+      p = p.parentElement;
+    }
+    return null;
+  }
+  function hiddenUiKind(el) {
+    try {
+      if (!el || el.nodeType !== 1) return null;
+      var det = el.closest('details');
+      if (det && !det.open && !el.closest('summary')) return 'accordion';   // closed <details> (Chrome keeps a box for its content)
+      var hider = null;
+      if (isVisible(el)) {
+        hider = zeroHeightClipper(el);
+        if (!hider) return null;
+      } else {
+        var p = el;
+        while (p && p !== document.documentElement) {
+          var st = window.getComputedStyle(p);
+          if (st.display === 'none' || st.visibility === 'hidden') { hider = p; break; }
+          p = p.parentElement;
+        }
+        if (!hider) return 'hidden';
+      }
+      if (hider.closest('.w-condition-invisible, .w-dyn-hide')) return 'hidden';
+      for (var i = 0; i < UI_KINDS.length; i++) {
+        if (hider.closest(UI_KINDS[i][1])) return UI_KINDS[i][0];
+      }
+      if (hider.id) {
+        var ctrl = document.querySelector('[aria-controls~="' + String(hider.id).replace(/"/g, '\\"') + '"]');
+        if (ctrl && (ctrl.hasAttribute('aria-expanded') || ctrl.hasAttribute('aria-selected'))) return ctrl.getAttribute('role') === 'tab' ? 'tab' : 'accordion';
+      }
+      if (isVisible(el)) return 'accordion';   // collapsed by clipping, no recognisable container: still a closed block
+    } catch (e) {}
+    return 'hidden';
+  }
+  // Visible, or hidden only because a UI container (of one of the given kinds) is closed.
+  function isReachable(el, kinds) {
+    if (isVisible(el)) return true;
+    var k = hiddenUiKind(el);
+    return !!k && k !== 'hidden' && (!kinds || kinds.indexOf(k) !== -1);
+  }
+
   function sameHost(url, host) {
     try {
-      return new URL(url, location.href).hostname === host;
+      return new URL(url, LOC.href).hostname === host;
     } catch (e) {
       return false;
     }
@@ -144,7 +236,7 @@
 
   function hostnameOf(url) {
     try {
-      return new URL(url, location.href).hostname;
+      return new URL(url, LOC.href).hostname;
     } catch (e) {
       return null;
     }
@@ -166,7 +258,7 @@
     return p.slice(-2).join('.');
   }
   function isSameSite(host) {
-    return !!host && rootDomain(host) === rootDomain(location.hostname);
+    return !!host && rootDomain(host) === rootDomain(LOC.hostname);
   }
 
   function isWebflowAssetHost(host) {
@@ -201,7 +293,7 @@
           category: 'Preliminary check',
           severity: 'info',
           title: 'Page was loaded via a redirect',
-          description: 'The browser followed ' + nav.redirectCount + ' redirect(s) before arriving at: ' + location.href,
+          description: 'The browser followed ' + nav.redirectCount + ' redirect(s) before arriving at: ' + LOC.href,
           why: 'If this is unexpected, the results reflect the final page, not the URL you may have originally opened.',
           fix: 'Check whether the redirect is intentional.',
           element: null
@@ -210,12 +302,12 @@
     } catch (e) { /* Navigation Timing L2 not supported */ }
 
     // Staging detection
-    if (/\.webflow\.io$/.test(location.hostname)) {
+    if (/\.webflow\.io$/.test(LOC.hostname)) {
       addFinding({
         category: 'Preliminary check',
         severity: 'info',
         title: 'This is a Webflow staging link',
-        description: 'The domain ' + location.hostname + ' is a Webflow staging subdomain.',
+        description: 'The domain ' + LOC.hostname + ' is a Webflow staging subdomain.',
         why: 'Findings here do not affect the score, but it is recommended to also check the live domain before publishing.',
         fix: 'Run the audit on the live domain once it is ready.',
         element: null,
@@ -463,9 +555,9 @@
     var linkEl = document.querySelector('link[rel~="icon"]') || document.querySelector('link[rel="shortcut icon"]') || document.querySelector('link[rel="apple-touch-icon"]');
     var faviconUrl;
     try {
-      faviconUrl = (linkEl && linkEl.getAttribute('href')) ? new URL(linkEl.getAttribute('href'), location.href).href : (location.origin + '/favicon.ico');
+      faviconUrl = (linkEl && linkEl.getAttribute('href')) ? new URL(linkEl.getAttribute('href'), LOC.href).href : (LOC.origin + '/favicon.ico');
     } catch (e) {
-      faviconUrl = location.origin + '/favicon.ico';
+      faviconUrl = LOC.origin + '/favicon.ico';
     }
 
     function reportBroken() {
@@ -503,7 +595,7 @@
 
     function checkRobotsBlock(url) {
       try {
-        fetch(location.origin + '/robots.txt').then(function (r) { return r.ok ? r.text() : null; }).then(function (txt) {
+        fetch(LOC.origin + '/robots.txt').then(function (r) { return r.ok ? r.text() : null; }).then(function (txt) {
           if (!txt) return;
           var path;
           try { path = new URL(url).pathname; } catch (e) { return; }
@@ -551,12 +643,12 @@
     var href = canonicalEl.getAttribute('href');
     if (!href) return;
     var canonicalUrl;
-    try { canonicalUrl = new URL(href, location.href); } catch (e) { return; }
+    try { canonicalUrl = new URL(href, LOC.href); } catch (e) { return; }
 
-    var curPath = location.pathname.replace(/\/$/, '');
+    var curPath = LOC.pathname.replace(/\/$/, '');
     var canPath = canonicalUrl.pathname.replace(/\/$/, '');
 
-    if (canonicalUrl.hostname === location.hostname && canPath !== curPath) {
+    if (canonicalUrl.hostname === LOC.hostname && canPath !== curPath) {
       addFinding({ category: 'URL & page duplication', severity: 'error',
         title: 'Canonical points to a different path on the same site',
         description: 'Current page: ' + curPath + ' | Canonical: ' + canPath,
@@ -577,17 +669,17 @@
   // ---------------------------------------------------------------------
 
   function checkSlug() {
-    var segments = location.pathname.split('/').filter(Boolean);
+    var segments = LOC.pathname.split('/').filter(Boolean);
     var last = segments[segments.length - 1] || '';
     if (/-\d+$/.test(last) && /-[2-9]$/.test(last)) {
       addFinding({ category: 'URL & page duplication', severity: 'error',
         title: 'URL slug ends with a suffix resembling "-2" (' + last + ')',
-        description: 'Path: ' + location.pathname,
+        description: 'Path: ' + LOC.pathname,
         why: 'Webflow automatically appends "-2", "-3", etc. to the slug when a page is duplicated. This is concrete, verified evidence that the page was created via duplication and the slug was left untouched before publishing — a direct risk of duplicate content and a non-descriptive URL in search.',
         fix: 'Rename the slug in Page Settings to something descriptive, and set up a 301 redirect from the old one if it\'s already indexed.', element: null });
     } else {
       addSuccess({ category: 'URL & page duplication', title: 'URL slug does not contain a Webflow duplication suffix (e.g. "-2")',
-        description: 'Path: ' + location.pathname, element: null });
+        description: 'Path: ' + LOC.pathname, element: null });
     }
   }
 
@@ -596,7 +688,7 @@
   // ---------------------------------------------------------------------
 
   function checkHeadings() {
-    var headings = Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).filter(isVisible);
+    var headings = Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).filter(function (h) { return isReachable(h, CONTENT_UI_KINDS); });
     var h1s = headings.filter(function (h) { return h.tagName === 'H1'; });
 
     if (h1s.length === 0) {
@@ -781,7 +873,11 @@
     } catch (e) {}
 
     imgs.forEach(function (img) {
-      if (!isVisible(img)) return;
+      // Visible images, plus images in a closed tab / accordion / dropdown / menu / slider / popup (30.10.2026).
+      // Those have no layout box, so the checks that need a rendered size (oversize, lazy position,
+      // bytes-per-pixel) are skipped for them; alt text, format, host, fixed height and file size still apply.
+      var imgHidden = !isVisible(img);
+      if (imgHidden && !isReachable(img)) return;
       checkedImgCount++;
 
       // Webflow technically implements "Alt Text: Decorative" by leaving alt="" (EMPTY, but
@@ -904,7 +1000,7 @@
 
       var src = img.currentSrc || img.src || '';
       var host = hostnameOf(src);
-      var isExternal = host && host !== location.hostname && !isWebflowAssetHost(host) && !isSameSite(host);
+      var isExternal = host && host !== LOC.hostname && !isWebflowAssetHost(host) && !isSameSite(host);
 
       if (isExternal) {
         addFinding({ category: 'Images', severity: 'error', title: 'Image is hosted on an external server',
@@ -921,7 +1017,7 @@
           modernFormatCount++;
         }
 
-        var headShownW = Math.max(1, shownW), headNatW = natW, headOversize = isOversizeCand;
+        var headShownW = Math.max(1, shownW), headNatW = natW, headOversize = isOversizeCand, headHidden = imgHidden;
         var headHasSrcset = img.hasAttribute('srcset') || !!img.closest('picture');
         try {
           fetch(src, { method: 'HEAD' }).then(function (r) {
@@ -935,9 +1031,9 @@
             } else if (bytes >= HEAVY_INFO_BYTES && !headOversize) {
               // Heavy file for what it shows (29.10.2026). Images that are also much larger than displayed
               // are reported by the oversize check (severity by wasted bytes), so they are skipped here.
-              var perPx = bytes / headShownW;
+              var perPx = headHidden ? 0 : bytes / headShownW;
               addFinding({ category: 'Images', severity: (bytes >= HEAVY_WARN_BYTES || perPx >= HEAVY_BYTES_PER_PX) ? 'warning' : 'info',
-                title: 'Image file is heavy (' + fmtBytes(bytes) + ' for a ' + headShownW + 'px-wide image)',
+                title: headHidden ? 'Image file is heavy (' + fmtBytes(bytes) + ', image is in a closed tab/accordion/menu)' : 'Image file is heavy (' + fmtBytes(bytes) + ' for a ' + headShownW + 'px-wide image)',
                 description: src.replace(/\?.*$/, '').slice(0, 120),
                 why: 'The file is large for what it shows. Every KB competes with the content of the first view and is paid again by every visitor — most noticeably on phones and slow connections. As a rule of thumb a content image shown about 350px wide should be well under 100 KB as WebP/AVIF, and even a full-width hero image rarely needs more than a few hundred KB. The size is measured (content-length header), not guessed.',
                 fix: 'Re-export the image at about 2x the displayed width and compress it (WebP/AVIF; Squoosh, TinyPNG), then Assets panel > ... > Replace — every place the image is used is updated. For many files at once: Assets panel > Select > Compress.',
@@ -1103,8 +1199,8 @@
     // 1) X-Robots-Tag response header (can block indexing without anything visible in the HTML)
     try {
       var reqOpts = { cache: 'no-store', credentials: 'same-origin' };
-      fetch(location.href, Object.assign({ method: 'HEAD' }, reqOpts)).then(function (r) {
-        return (r.status === 405 || r.status === 501) ? fetch(location.href, Object.assign({ method: 'GET' }, reqOpts)) : r;
+      fetch(LOC.href, Object.assign({ method: 'HEAD' }, reqOpts)).then(function (r) {
+        return (r.status === 405 || r.status === 501) ? fetch(LOC.href, Object.assign({ method: 'GET' }, reqOpts)) : r;
       }).then(function (r) {
         if (!r) return;
         if (r.status >= 400) { reportCheckSkipped('X-Robots-Tag header check', ['the server answered HTTP ' + r.status + ' to the header request']); return; }
@@ -1133,10 +1229,10 @@
 
     // 2) Is this page listed in sitemap.xml?
     try {
-      if (/\.webflow\.io$/.test(location.hostname)) return; // staging: sitemap is normally off, the staging note already covers it
+      if (/\.webflow\.io$/.test(LOC.hostname)) return; // staging: sitemap is normally off, the staging note already covers it
       var norm = function (u) {
         try {
-          var x = new URL(u, location.href);
+          var x = new URL(u, LOC.href);
           return x.hostname.replace(/^www\./i, '').toLowerCase() + x.pathname.replace(/\/+$/, '');
         } catch (e) { return null; }
       };
@@ -1179,7 +1275,7 @@
           return isRoot ? null : [];
         });
       };
-      readSitemap(location.origin + '/sitemap.xml', 0, true).then(function (locs) {
+      readSitemap(LOC.origin + '/sitemap.xml', 0, true).then(function (locs) {
         if (!locs) {
           if (sitemapRootError) reportCheckSkipped('Sitemap check', [sitemapRootError]); // a missing sitemap (404) stays silent: site-level matter
           return;
@@ -1187,7 +1283,7 @@
         var set = {};
         locs.forEach(function (u) { var n = norm(u); if (n != null) set[n] = true; });
         var canon = document.querySelector('link[rel="canonical"]');
-        var me = norm(location.href);
+        var me = norm(LOC.href);
         var canonN = canon ? norm(canon.getAttribute('href')) : null;
         if (set[me] || (canonN && set[canonN])) {
           addSuccess({ category: 'Technical / crawlability', title: 'This page is listed in sitemap.xml', description: '', element: null });
@@ -1200,7 +1296,7 @@
           var intentional = /noindex/i.test(robotsMeta) || (canonN && canonN !== me);
           addFinding({ category: 'Technical / crawlability', severity: intentional ? 'info' : 'warning',
             title: 'This page is not listed in sitemap.xml',
-            description: 'Checked ' + location.origin + '/sitemap.xml (' + locs.length + ' URLs)',
+            description: 'Checked ' + LOC.origin + '/sitemap.xml (' + locs.length + ' URLs)',
             why: 'The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant.' +
               (intentional ? ' This looks intentional here (the page is noindex or its canonical points elsewhere).' : ''),
             fix: 'In the Webflow Designer: Pages > this page > Settings > SEO — make sure "Exclude this page from the sitemap" is off, then publish. Also check Project Settings > SEO > Sitemap is enabled (auto-generate).',
@@ -1260,7 +1356,7 @@
       }
       if (el.disabled || el.closest('[aria-hidden="true"]')) return false; // honeypots / decorative
       if (el.getAttribute('tabindex') === '-1' && !isVisible(el)) return false;
-      return isVisible(el);
+      return isReachable(el);   // visible, or only in a closed tab / accordion / popup / menu (30.10.2026)
     });
     if (!fields.length) return;
     var unlabeled = 0;
@@ -1293,26 +1389,6 @@
 
   var GENERIC_ANCHOR = /^(klikni ovde|click here|read more|saznaj vi[sš]e|vi[sš]e|ovde|here|link)$/i;
 
-  // True when an invisible element is hidden only because a NAVIGATION MENU / DROPDOWN container
-  // above it is collapsed (Webflow .w-nav-menu / .w-dropdown-list, role=menu, nav-like class
-  // names). Popups, modals, dialogs, lightboxes, tabs and sliders are hidden by design → false.
-  function isInCollapsedMenu(el) {
-    try {
-      if (el.closest('[role="dialog"], [aria-modal="true"], .w-lightbox-backdrop, .w-tab-pane, .w-slider, [class*="popup" i], [class*="modal" i], [class*="lightbox" i]')) return false;
-      var p = el.parentElement;
-      while (p && p !== document.documentElement) {
-        var st = window.getComputedStyle(p);
-        if (st.display === 'none' || st.visibility === 'hidden') {
-          if (p.matches('.w-nav-menu, .w-dropdown-list, [role="menu"], [role="menubar"], nav, [role="navigation"]')) return true;
-          var cls = (p.getAttribute('class') || '');
-          return /(^|[\s_-])(navbar|nav|menu|dropdown)([\s_-]|$)/i.test(cls);
-        }
-        p = p.parentElement;
-      }
-    } catch (e) {}
-    return false;
-  }
-
   function checkLinks() {
     var links =Array.prototype.slice.call(document.querySelectorAll('a'));
     var internalToCheck = [];
@@ -1322,14 +1398,18 @@
     var noTextLinkFound = false;
 
     links.forEach(function (a) {
-      var inCollapsedMenu = false;
+      var inCollapsedMenu = false, inPopup = false;
       if (!isVisible(a)) {
-        // Links inside a COLLAPSED navigation menu / dropdown (e.g. the mobile menu) are hidden
-        // only until the visitor opens it — they still get the "goes nowhere" check (added
-        // 29.10.2026 after social links with href="#" in a mobile nav menu were missed).
-        // Popups, modals, tabs and sliders stay skipped (hidden by design).
-        if (!isInCollapsedMenu(a)) return;
-        inCollapsedMenu = true;
+        // Hidden-but-reachable links (30.10.2026). A link inside a COLLAPSED navigation menu / dropdown
+        // (e.g. the mobile menu) still gets only the "goes nowhere" check (the same links are normally also
+        // visible in the desktop menu). A link inside a closed TAB / ACCORDION / SLIDER is real page content,
+        // so it gets every link check. Popup / modal links get every check except "goes nowhere"
+        // (href="#" is the standard close button there). Everything else that is hidden stays skipped.
+        var hk = hiddenUiKind(a);
+        if (!hk || hk === 'hidden') return;
+        if (hk === 'menu' || hk === 'dropdown') inCollapsedMenu = true;
+        else if (hk === 'popup') inPopup = true;
+        if (!inCollapsedMenu) checkedLinkCount++;
       } else {
         checkedLinkCount++;
       }
@@ -1337,7 +1417,7 @@
       var isEmpty = !href || href.trim() === '' || href.trim() === '#' || /^javascript:/i.test(href.trim());
       var hasCompensatingRole = a.getAttribute('role') === 'tab' || a.getAttribute('role') === 'button';
 
-      if (isEmpty && !hasCompensatingRole) {
+      if (isEmpty && !hasCompensatingRole && !inPopup) {
         emptyHrefFound = true;
         var linkLabel = (text(a) || (a.getAttribute('aria-label') || '').trim()).slice(0, 60);
         addFinding({ category: 'Links', severity: 'warning', title: 'Link doesn\'t go anywhere (href="' + (href || '') + '")',
@@ -1385,7 +1465,7 @@
           fix: 'Replace it with descriptive text (e.g. "View pricing" instead of "click here").', element: a });
       }
 
-      if (href && !isEmpty && sameHost(href, location.hostname)) {
+      if (href && !isEmpty && sameHost(href, LOC.hostname)) {
         internalToCheck.push({ el: a, href: href });
       }
     });
@@ -1402,7 +1482,7 @@
     }
 
     // 404 / redirect chain check for internal links (best-effort, limited count)
-    var toCheck = internalToCheck.slice(0, 25);
+    var toCheck = HEADLESS ? [] : internalToCheck.slice(0, 25);   // the per-device frames skip this (same on every device)
     setCheckTotal('links.internal', toCheck.length);
     var linkCheckSettled = 0;
     var linkCheckProblemFound = false;
@@ -1449,8 +1529,27 @@
   function checkContent() {
     var main = document.querySelector('main') || document.body;
 
+    // Text that is hidden only because a tab / accordion / dropdown / slider is closed is real content
+    // (visitors reach it with a click, Google indexes it) — it counts for the "thin content" and the
+    // placeholder checks (30.10.2026). Keyed to the TOPMOST hidden container, scripts/styles removed.
+    var uiHiddenText = '';
+    (function () {
+      var blocks = [];
+      Array.prototype.slice.call(main.querySelectorAll('*')).forEach(function (el) {
+        if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG)$/i.test(el.tagName)) return;
+        if (blocks.some(function (b) { return b.contains(el); })) return;
+        var st = window.getComputedStyle(el);
+        if (st.display !== 'none') return;
+        if (CONTENT_UI_KINDS.indexOf(hiddenUiKind(el)) === -1) return;
+        blocks.push(el);
+        var c = el.cloneNode(true);
+        Array.prototype.forEach.call(c.querySelectorAll('script,style,noscript,template'), function (n) { n.remove(); });
+        Array.prototype.forEach.call(c.querySelectorAll('*'), function (n) { n.insertAdjacentText('afterend', ' '); });   // keep words from different elements apart
+        uiHiddenText += ' ' + (c.textContent || '');
+      });
+    })();
     // Thin content
-    var visibleTextLen = text(main).replace(/\s+/g, ' ').length;
+    var visibleTextLen = (text(main) + ' ' + uiHiddenText).replace(/\s+/g, ' ').trim().length;
     if (visibleTextLen < 200) {
       addFinding({ category: 'Content', severity: 'warning', title: 'Very little visible text on the page (' + visibleTextLen + ' characters)',
         description: '', why: 'Pages with very little text tend to rank worse for relevant queries (thin content).',
@@ -1504,7 +1603,7 @@
     }
 
     // Repeated consecutive word
-    var bodyText = text(main);
+    var bodyText = text(main) + ' ' + uiHiddenText;
     var repeatRegex = /\b(\w{2,})\s+\1\b/gi;
     var seenRepeats = {};
     var m;
@@ -1674,7 +1773,7 @@
     }
 
     // Mixed content
-    if (location.protocol === 'https:') {
+    if (LOC.protocol === 'https:') {
       var httpResources = Array.prototype.slice.call(document.querySelectorAll('img[src^="http://"], script[src^="http://"], link[href^="http://"], iframe[src^="http://"]'));
       httpResources.forEach(function (el) {
         addFinding({ category: 'Technical / crawlability', severity: 'error', title: 'Mixed content: HTTP resource on an HTTPS page',
@@ -1710,7 +1809,7 @@
     scripts.forEach(function (s) {
       var src = s.getAttribute('src');
       var host = hostnameOf(src);
-      if (!host || host === location.hostname) return;
+      if (!host || host === LOC.hostname) return;
       var isPlatform = isWebflowPlatformScript(host, src);
       if (!isPlatform) thirdPartyScriptCount++;
       if (s.async || s.defer) return;
@@ -1902,7 +2001,7 @@
   function looksLikeFAQ() {
     var candidates = document.querySelectorAll('[class*="faq" i], [id*="faq" i]');
     if (candidates.length > 0) return true;
-    var headings = Array.prototype.slice.call(document.querySelectorAll('h2,h3,h4')).filter(isVisible);
+    var headings = Array.prototype.slice.call(document.querySelectorAll('h2,h3,h4')).filter(function (h) { return isReachable(h, CONTENT_UI_KINDS); });
     var questionCount = 0;
     headings.forEach(function (h) { if (/\?\s*$/.test(text(h))) questionCount++; });
     return questionCount >= 3;
@@ -1918,7 +2017,7 @@
     if (/^article$/i.test((getMeta('og:type', 'property') || '').trim())) return true;
     var main = document.querySelector('main') || document.body;
     var wordCount = text(main).split(/\s+/).filter(Boolean).length;
-    return /^\/(blog|posts?|articles?|news|insights|learn|resources|stories)\/[^\/]+/i.test(location.pathname) && wordCount > 300;
+    return /^\/(blog|posts?|articles?|news|insights|learn|resources|stories)\/[^\/]+/i.test(LOC.pathname) && wordCount > 300;
   }
 
   function looksLikeBreadcrumbUI() {
@@ -2086,7 +2185,7 @@
         var href = a.getAttribute('href') || '';
         if (!/^https?:\/\//i.test(href)) return;
         var path = '';
-        try { path = new URL(href, location.href).pathname; } catch (e) {}
+        try { path = new URL(href, LOC.href).pathname; } catch (e) {}
         if (path.length <= 1 || /share|sharer|intent|dialog|plugins/i.test(href)) return; // not a profile link
         var sh = socialHostOf(href);
         if (sh && pageSocial.indexOf(sh) === -1) pageSocial.push(sh);
@@ -2110,7 +2209,7 @@
             title: 'Organization schema lists its official profiles (sameAs: ' + sameAsList.length + ')', description: '', element: orgB.el });
         }
       }
-    } else if (/^\/([a-z]{2}(-[a-z]{2})?\/?)?$/i.test(location.pathname)) {
+    } else if (/^\/([a-z]{2}(-[a-z]{2})?\/?)?$/i.test(LOC.pathname)) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
         title: 'Home page has no Organization schema',
         description: '', why: 'The home page is where search and AI answer engines learn who the business is: its name, logo and official profiles. Organization schema states that explicitly instead of leaving it to be guessed from the text.',
@@ -2131,7 +2230,7 @@
 
     // JS-render dependency (best-effort heuristic)
     try {
-      fetch(location.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
+      fetch(LOC.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
         var tmp = document.createElement('div');
         tmp.innerHTML = rawHtml; // doesn't execute <script> tags when sliced this way
         Array.prototype.forEach.call(tmp.querySelectorAll('script,style,noscript'), function (n) { n.remove(); });
@@ -2491,7 +2590,7 @@
 
     var lines = [];
     lines.push(tr('SEO PAGE AUDITOR — Report'));
-    lines.push(location.href);
+    lines.push(LOC.href);
     lines.push(new Date().toLocaleString());
     lines.push('');
     lines.push(DIVIDER);
@@ -2516,7 +2615,7 @@
       }
       var sorted = list.slice().sort(function (a, b) { return order[a.severity] - order[b.severity]; });
       sorted.forEach(function (f, idx) {
-        lines.push((idx + 1) + '. [' + tr(f.severity).toUpperCase() + '] ' + tr(f.category) + ' — ' + tr(f.title));
+        lines.push((idx + 1) + '. [' + tr(f.severity).toUpperCase() + '] ' + tr(f.category) + ' — ' + tr(f.title) + deviceTagsText(f));
         if (f.description) lines.push(indentLines(tr(f.description), '   '));
         if (f.crossRelevant) lines.push('   (' + tr(getCrossText(f, contextGroup)) + ')');
         if (f.globalNote) lines.push('   ' + tr('Global element:') + ' ' + tr(f.globalNote));
@@ -2541,7 +2640,7 @@
   var HISTORY_KEY_PREFIX = 'seoAuditorHistory::';
   function loadPreviousRun() {
     try {
-      var raw = localStorage.getItem(HISTORY_KEY_PREFIX + location.href);
+      var raw = localStorage.getItem(HISTORY_KEY_PREFIX + LOC.href);
       return raw ? JSON.parse(raw) : null;
     } catch (e) {
       return null;
@@ -2550,7 +2649,7 @@
   function saveCurrentRun() {
     try {
       var data = { totalFindings: findings.length, successes: successes.length, optimizedPct: computeOptimization().pct, timestamp: Date.now() };
-      localStorage.setItem(HISTORY_KEY_PREFIX + location.href, JSON.stringify(data));
+      localStorage.setItem(HISTORY_KEY_PREFIX + LOC.href, JSON.stringify(data));
     } catch (e) {
       // Ignore — see comment above.
     }
@@ -2570,7 +2669,7 @@
   var PANEL_STATE_KEY_PREFIX = 'seoAuditorPanelState::';
   function loadPanelState() {
     try {
-      var raw = localStorage.getItem(PANEL_STATE_KEY_PREFIX + location.href);
+      var raw = localStorage.getItem(PANEL_STATE_KEY_PREFIX + LOC.href);
       return raw ? JSON.parse(raw) : null;
     } catch (e) {
       return null;
@@ -2587,14 +2686,14 @@
         activeCategoryOrigin: activeCategoryOrigin,
         activeSuccessGroup: activeSuccessGroup
       };
-      localStorage.setItem(PANEL_STATE_KEY_PREFIX + location.href, JSON.stringify(state));
+      localStorage.setItem(PANEL_STATE_KEY_PREFIX + LOC.href, JSON.stringify(state));
     } catch (e) {
       // Ignore — see comment above savePanelState()'s sibling functions.
     }
   }
   function clearPanelState() {
     try {
-      localStorage.removeItem(PANEL_STATE_KEY_PREFIX + location.href);
+      localStorage.removeItem(PANEL_STATE_KEY_PREFIX + LOC.href);
     } catch (e) {
       // Ignore.
     }
@@ -2951,6 +3050,23 @@
       // "Previous run vs. now" banner (11.08.2026, localStorage-backed) — sits below the tab bar,
       // above the severity/group summary, and applies regardless of which tab is active (it's a
       // whole-page comparison, not per-tab).
+      // Device tags (phone / tablet / monitor icons) + the "closed tab / accordion" eye icon, with an instant CSS tooltip (30.10.2026).
+      '.devtags{position:relative;display:inline-flex;align-items:center;gap:3px;margin-right:6px;padding:2px 7px;border-radius:20px;vertical-align:middle;cursor:help;color:#c4b5fd;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.35);line-height:1;}',
+      '.devtags.uitag{color:#9ca3af;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16);}',
+      '.devtags svg{display:block;}',
+      '.devtags:hover::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:max-content;max-width:230px;white-space:normal;background:#1f2333;color:#e5e7eb;font-size:11.5px;line-height:1.5;font-weight:400;padding:8px 10px;border-radius:10px;box-shadow:0 10px 30px -6px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);pointer-events:none;}',
+      '.devscan{flex:0 0 auto;padding:7px 14px;font-size:11px;color:#9ca3af;line-height:1.7;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);}',
+      '.devscan svg{display:inline-block;vertical-align:-2px;margin-right:1px;}',
+      '.devscan .devwarn{color:#fbbf24;margin-top:2px;}',
+      // "Analysis in progress" banner: an indeterminate bar + the current step.
+      '.loading{flex:0 0 auto;padding:10px 14px 11px;background:linear-gradient(90deg,rgba(99,102,241,.14),rgba(168,85,247,.10));border-bottom:1px solid rgba(139,92,246,.3);}',
+      '.loading .ld-bar{height:3px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-bottom:8px;}',
+      '.loading .ld-bar i{display:block;height:100%;width:38%;border-radius:3px;background:linear-gradient(90deg,#6366f1,#a855f7);animation:ldslide 1.2s ease-in-out infinite;}',
+      '@keyframes ldslide{0%{transform:translateX(-110%);}100%{transform:translateX(280%);}}',
+      '.loading .ld-txt{display:flex;flex-direction:column;gap:2px;font-size:11.5px;line-height:1.45;color:#c4b5fd;}',
+      '.loading .ld-txt b{color:#e9e5ff;font-size:12.5px;}',
+      '.loading .ld-note{color:#9ca3af;font-size:10.5px;}',
+      '.prog.busy .prog-pct{opacity:.5;}',
       '.prevrun{flex:0 0 auto;padding:8px 14px;font-size:11px;color:#9ca3af;line-height:1.4;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06);}',
       // Keyboard-selected item (11.08.2026, Up/Down navigation) — a left accent bar + tint,
       // distinct from :hover so it stays visible while the mouse is elsewhere.
@@ -3041,7 +3157,7 @@
       var r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) { // e.g. a link inside a collapsed menu
         highlightBox.style.display = 'none';
-        showToast(tr('This element is hidden right now (e.g. inside a collapsed menu) — open the menu or widen the window to see it.'));
+        showToast(tr('This element is hidden right now (e.g. inside a closed tab, accordion or menu, or hidden at this screen width) — open it or resize the window to see it.'));
         return;
       }
       highlightBox.style.display = 'block';
@@ -3094,10 +3210,89 @@
     runSaveTimer = setTimeout(function () { try { saveCurrentRun(); } catch (e) {} }, 2500);
   }
 
+  // ---- Device tags + "closed UI" tag (30.10.2026) ----
+  var SVG_ATTR = ' viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+  var DEVICE_ICONS = {
+    mobile: '<svg' + SVG_ATTR + '><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>',
+    tablet: '<svg' + SVG_ATTR + '><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>',
+    desktop: '<svg' + SVG_ATTR + '><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>'
+  };
+  var EYE_OFF_ICON = '<svg' + SVG_ATTR + '><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  var DEVICE_LABEL = { mobile: 'Mobile (narrower than 768px)', tablet: 'Tablet (768-991px)', desktop: 'Desktop (992px and wider)' };
+  var UI_KIND_LABEL = { tab: 'tab', accordion: 'accordion / collapsible block', dropdown: 'dropdown', menu: 'collapsed menu', slider: 'slider', popup: 'popup / modal' };
+  function attrEsc(x) { return String(x).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+  // Devices where this finding appears, when that is NOT every device that was checked (else '').
+  function findingDevices(f) {
+    if (!f.devices || !f.devicesChecked || f.devices.length >= f.devicesChecked.length) return [];
+    if (f.check === 'img.noSrcset' || /^Image has no responsive versions/.test(f.title || '')) return [];   // about phones by definition: a device tag would only confuse
+    return DEVICES.map(function (d) { return d.id; }).filter(function (id) { return f.devices.indexOf(id) !== -1; });
+  }
+  function deviceTagsHtml(f) {
+    var devs = findingDevices(f);
+    if (!devs.length) return '';
+    var names = devs.map(function (id) { return tr(DEVICE_LABEL[id]); }).join(', ');
+    return '<span class="devtags" data-tip="' + attrEsc(trf('Found only on: {0}. It does not appear on the other devices that were checked.', [names])) + '">' +
+      devs.map(function (id) { return DEVICE_ICONS[id]; }).join('') + '</span>';
+  }
+  function uiTagHtml(f) {
+    if (!f.hiddenUi) return '';
+    return '<span class="devtags uitag" data-tip="' + attrEsc(trf('This element is inside a {0} that is closed when the page loads. The audit still checks it — click the row to locate it.', [tr(UI_KIND_LABEL[f.hiddenUi] || f.hiddenUi)])) + '">' + EYE_OFF_ICON + '</span>';
+  }
+  function deviceTagsText(f) {
+    var devs = findingDevices(f), out = '';
+    if (devs.length) out += ' [' + trf('only on: {0}', [devs.map(function (id) { return tr(DEVICES.filter(function (d) { return d.id === id; })[0].name).toLowerCase(); }).join(', ')]) + ']';
+    if (f.hiddenUi) out += ' [' + trf('in closed UI: {0}', [tr(UI_KIND_LABEL[f.hiddenUi] || f.hiddenUi)]) + ']';
+    return out;
+  }
+  // The small status line under the score bar (shown when the device pass is finished).
+  function deviceScanHtml() {
+    if (deviceScan.state !== 'done') return '';
+    var parts = DEVICES.filter(function (d) { return deviceScan.checked.indexOf(d.id) !== -1; }).map(function (d) {
+      var widths = [];
+      if (d.id === deviceScan.current) widths.push(trf('this window, {0}px', [deviceScan.curWidth]));
+      FRAMES.forEach(function (f) { if (f.device === d.id && deviceScan.frameOk.indexOf(f.key) !== -1) widths.push(f.w + 'px'); });
+      return DEVICE_ICONS[d.id] + ' ' + tr(d.name) + (widths.length ? ' (' + widths.join(', ') + ')' : '');
+    });
+    var html = tr('Checked on:') + ' ' + parts.join(' · ');
+    if (deviceScan.failed.length) {
+      var why = { timeout: 'it took too long', blocked: 'the frame could not be read', empty: 'the frame stayed empty', frame: 'the page copy could not be created' };
+      html += '<div class="devwarn">' + deviceScan.failed.map(function (x) {
+        return trf('Could not check {0}: {1}.', [tr(x.name), tr(why[x.reason] || 'an error occurred')]);
+      }).join(' ') + ' ' + tr('Results for the devices that could not be checked are missing.') + '</div>';
+    }
+    return html;
+  }
+  // "Analysis in progress" banner — shown from the first render until everything has really finished, so a
+  // slow site shows a clear message instead of a panel that silently keeps changing.
+  function loadingHtml() {
+    if (!analysis.busy) return '';
+    var step;
+    if (analysis.step === 'perf') step = tr('Measuring performance (server response, LCP, layout shift)…');
+    else if (analysis.step === 'devices') step = deviceScan.total ? trf('Checking the mobile, tablet and desktop layouts ({0} of {1} done)…', [deviceScan.done, deviceScan.total]) : tr('Checking the mobile, tablet and desktop layouts…');
+    else if (analysis.step === 'network') step = tr('Finishing the network checks (images, links)…');
+    else step = tr('Running the page checks…');
+    return '<div class="ld-bar"><i></i></div><div class="ld-txt"><b>' + tr('Analysis in progress — please wait…') + '</b><span>' + step + '</span><span class="ld-note">' + tr('The score and the list below may still change until this is done.') + '</span></div>';
+  }
+
+  // While the analysis is still running, async results call renderPanel() many times (every image check, every
+  // link). Re-building the panel that often makes it flicker, so during that phase renders are limited to one
+  // per ~350 ms (the first one is immediate, the last one is never lost). Once the analysis is done, every
+  // call renders at once, so clicks stay instant.
+  var lastRenderAt = 0, renderTimer = null, pendingListScroll = 0;
   function renderPanel() {
+    if (HEADLESS) return;   // frames used by the per-device pass have no panel
+    if (!analysis.busy) { if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; } return renderPanelNow(); }
+    var wait = 350 - (Date.now() - lastRenderAt);
+    if (wait <= 0) return renderPanelNow();
+    if (!renderTimer) renderTimer = setTimeout(function () { renderTimer = null; renderPanelNow(); }, wait);
+  }
+  function renderPanelNow() {
+    lastRenderAt = Date.now();
     scheduleRunSave();
     ensurePanel();
     var old = shadow.querySelector('.panel');
+    var oldScroll = 0;
+    try { var ol = old && old.querySelector('.list'); if (ol) oldScroll = ol.scrollTop; } catch (e) {}   // keep the reading position across re-renders
     if (old) old.remove();
     var opt = computeOptimization(); // computed first: it also tags every finding with its check id (used by the check filter)
 
@@ -3253,7 +3448,24 @@
     var targetPct = opt.pct;
     lastShownPct = targetPct;
     (window.requestAnimationFrame || function (fn) { setTimeout(fn, 16); })(function () { progFill.style.width = targetPct + '%'; });
+    if (analysis.busy) prog.classList.add('busy');
+    var loadHtml = loadingHtml();
+    if (loadHtml) {
+      var loadBox = document.createElement('div');
+      loadBox.className = 'loading';
+      loadBox.setAttribute('role', 'status');
+      loadBox.innerHTML = loadHtml;
+      panel.appendChild(loadBox);
+    }
     panel.appendChild(prog);
+
+    var scanHtml = deviceScanHtml();
+    if (scanHtml) {
+      var scanBox = document.createElement('div');
+      scanBox.className = 'devscan';
+      scanBox.innerHTML = scanHtml;
+      panel.appendChild(scanBox);
+    }
 
     // "Previous run vs. now" banner (11.08.2026, localStorage-backed) — shown right below the
     // header regardless of the active tab, since it's a whole-page comparison. Only appears once
@@ -3579,7 +3791,7 @@
         item.className = 'item';
         item.innerHTML =
           '<div class="cat">' + tr(f.category) + '</div>' +
-          '<div class="title"><span class="badge ' + f.severity + ' tag">' + tr(f.severity) + '</span>' + (f.crossRelevant ? '<span class="badge group-shared tag" title="' + tr('Shown in both the SEO and AEO tabs (counted once in the totals)') + '">SEO+AEO</span>' : '') + tr(f.title) + '</div>' +
+          '<div class="title"><span class="badge ' + f.severity + ' tag">' + tr(f.severity) + '</span>' + deviceTagsHtml(f) + uiTagHtml(f) + (f.crossRelevant ? '<span class="badge group-shared tag" title="' + tr('Shown in both the SEO and AEO tabs (counted once in the totals)') + '">SEO+AEO</span>' : '') + tr(f.title) + '</div>' +
           '<div class="desc">' + tr(f.description || '').replace(/</g, '&lt;') + '</div>' +
           (f.suggestedCode ? '<button class="copybtn copy-code-btn" title="' + tr('Copy the suggested code to clipboard') + '" style="margin:6px 0 0;">' + tr('📋 Copy suggested code') + '</button>' : '') +
           (f.globalNote ? '<div class="global">🌐 ' + tr(f.globalNote) + '</div>' : '') +
@@ -3614,12 +3826,340 @@
     lastRenderedRows = renderedRows;
 
     panel.appendChild(list);
+    pendingListScroll = oldScroll;
 
     appendResizeHandle();
 
     shadow.appendChild(panel);
+    if (pendingListScroll > 0) { try { list.scrollTop = pendingListScroll; } catch (e) {} }   // after it is attached (layout needed)
     renderReportPreview(); // re-append if it was open — persists across tab/filter re-renders
     savePanelState(); // persist tab/severity/category/successGroup — see loadPanelState() comment
+  }
+
+  // ---------------------------------------------------------------------
+  // Per-device pass (30.10.2026): mobile / tablet / desktop
+  // ---------------------------------------------------------------------
+  // A bookmarklet only sees the page at the CURRENT window width, but Webflow sites change a lot per
+  // breakpoint (elements hidden on desktop, other images served to phones, a different menu...). So,
+  // besides this window, the same page is opened in hidden same-origin frames at a typical width of
+  // each device class and the viewport-dependent checks (headings, images, video, forms, links,
+  // content) are run there headlessly. The results are merged: a finding that appears on every
+  // checked device is shown as before; one that appears only on some devices gets a device tag
+  // (phone / tablet / monitor icon, explained on hover). Findings that exist ONLY on another device
+  // (e.g. a mobile-only menu link) are added to the list and the score — the score reflects reality.
+  // Widths follow Webflow's breakpoints: desktop >= 992, tablet 768-991, mobile < 768.
+  var DEVICES = [
+    { id: 'mobile', name: 'Mobile', range: 'narrower than 768px' },
+    { id: 'tablet', name: 'Tablet', range: '768-991px' },
+    { id: 'desktop', name: 'Desktop', range: '992px and wider' }
+  ];
+  // One frame per Webflow breakpoint (mobile has two: portrait <= 478px and landscape 479-767px).
+  var FRAMES = [
+    { key: 'mobile-p', device: 'mobile', name: 'Mobile', w: 375, h: 812, min: 0, max: 478 },
+    { key: 'mobile-l', device: 'mobile', name: 'Mobile landscape', w: 600, h: 400, min: 479, max: 767 },
+    { key: 'tablet', device: 'tablet', name: 'Tablet', w: 768, h: 1024, min: 768, max: 991 },
+    { key: 'desktop', device: 'desktop', name: 'Desktop', w: 1440, h: 900, min: 992, max: 99999 }
+  ];
+  function deviceOfWidth(w) { return w >= 992 ? 'desktop' : (w >= 768 ? 'tablet' : 'mobile'); }
+  // state: idle | running | done. done = frames finished, total = frames to run.
+  var deviceScan = { state: 'idle', current: null, curWidth: 0, checked: [], failed: [], frameOk: [], done: 0, total: 0 };
+  // The "analysis in progress" banner: busy from the first render until the page checks, the performance
+  // measurement, the device frames and the audit's own network requests are all finished.
+  var analysis = { busy: !HEADLESS, step: 'page' };
+
+  // --- Element identity that survives across frames (content first, DOM path as the fallback) ---
+  var PATH_SKIP_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|LINK|TEMPLATE|IFRAME)$/i;   // injected by trackers/widgets, differ between loads
+  function pathChildren(par) { return Array.prototype.filter.call(par.children, function (c) { return !PATH_SKIP_TAGS.test(c.tagName); }); }
+  function elPath(el) {
+    try {
+      if (!el || el.nodeType !== 1) return '';
+      if (el === document.body) return 'body';
+      var parts = [], n = el;
+      while (n && n !== document.documentElement) {
+        if (n.id && document.getElementById(n.id) === n) { parts.unshift('#' + encodeURIComponent(n.id)); break; }
+        var par = n.parentElement;
+        if (!par) break;
+        parts.unshift(String(pathChildren(par).indexOf(n)));
+        n = par;
+      }
+      return parts.join('/');
+    } catch (e) { return ''; }
+  }
+  function elByPath(path) {
+    try {
+      if (!path) return null;
+      if (path === 'body') return document.body;
+      var cur = document.documentElement, parts = path.split('/');
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].charAt(0) === '#') { cur = document.getElementById(decodeURIComponent(parts[i].slice(1))); }
+        else { cur = pathChildren(cur)[parseInt(parts[i], 10)]; }
+        if (!cur) return null;
+      }
+      return cur;
+    } catch (e) { return null; }
+  }
+  function stripQuery(u) { return String(u || '').replace(/[?#].*$/, ''); }
+  function elKeyPart(el) {
+    var tag = el.tagName;
+    if (tag === 'IMG') return 'img:' + stripQuery(el.getAttribute('src') || el.currentSrc);
+    if (tag === 'A') return 'a:' + (el.getAttribute('href') || '') + '|' + text(el).slice(0, 40) + '|' + (el.getAttribute('aria-label') || '');
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return 'f:' + tag + (el.getAttribute('type') || '') + '|' + (el.getAttribute('name') || '') + '|' + (el.id || '') + '|' + (el.getAttribute('placeholder') || '');
+    if (/^H[1-6]$/.test(tag)) return 'h:' + tag + '|' + text(el).slice(0, 50);
+    if (tag === 'VIDEO') return 'v:' + stripQuery(el.getAttribute('src') || el.currentSrc || (el.querySelector('source') || {}).src);
+    return 'p:' + elPath(el);
+  }
+  // Key of a finding = group + check + what it is about; identical keys in one run get an occurrence number.
+  function findingKeys(list) {
+    var seen = {};
+    return list.map(function (f) {
+      var id = matchCheckId(f.title || '') || ((f.category || '') + '|' + String(f.title || '').replace(/[\d.,]+/g, '#'));
+      var part = (f.element && f.element.nodeType === 1) ? elKeyPart(f.element) : 't:' + String(f.title || '').replace(/[\d.,]+/g, '#');
+      var base = (f.group || 'seo') + '|' + id + '|' + part;
+      seen[base] = (seen[base] || 0) + 1;
+      return base + '#' + seen[base];
+    });
+  }
+  // Locate (in THIS document) the element a frame's finding was about.
+  function locateByInfo(info) {
+    try {
+      if (!info) return null;
+      // Same DOM path and the same thing there (tag + src / href) -> that is the element.
+      var byPath = elByPath(info.path);
+      if (byPath && byPath.tagName === info.tag) {
+        if (info.tag === 'IMG' && stripQuery(byPath.getAttribute('src') || byPath.currentSrc) === info.src) return byPath;
+        if (info.tag === 'A' && (byPath.getAttribute('href') || '') === info.href) return byPath;
+        if (info.tag !== 'IMG' && info.tag !== 'A') return byPath;
+      }
+      // Otherwise by content, taking the n-th identical one.
+      var list = [];
+      if (info.tag === 'IMG' && info.src) list = Array.prototype.filter.call(document.images, function (i) { return stripQuery(i.getAttribute('src') || i.currentSrc) === info.src; });
+      else if (info.tag === 'A' && info.href !== undefined) list = Array.prototype.filter.call(document.querySelectorAll('a'), function (a) { return (a.getAttribute('href') || '') === info.href && text(a).slice(0, 40) === info.txt; });
+      if (list.length) return list[Math.min(Math.max(info.nth || 0, 0), list.length - 1)];
+    } catch (e) {}
+    return null;
+  }
+  var EXPORT_FIELDS = ['category', 'group', 'severity', 'title', 'description', 'why', 'fix', 'crossRelevant', 'crossNote', 'crossNoteReverse', 'noScore', 'hiddenUi', 'ownerNote', 'globalNote', 'suggestedCode'];
+
+  // Runs inside a frame: what the parent needs, as plain JSON (no DOM objects).
+  function exportHeadless() {
+    var keys = findingKeys(findings);
+    var items = findings.map(function (f, i) {
+      var o = {};
+      EXPORT_FIELDS.forEach(function (k) { if (f[k] !== undefined) o[k] = f[k]; });
+      var el = f.element, info = null;
+      if (el && el.nodeType === 1) {
+        info = { tag: el.tagName, path: elPath(el) };
+        if (el.tagName === 'IMG') {
+          info.src = stripQuery(el.getAttribute('src') || el.currentSrc);
+          info.nth = Array.prototype.filter.call(document.images, function (i) { return stripQuery(i.getAttribute('src') || i.currentSrc) === info.src; }).indexOf(el);
+        }
+        if (el.tagName === 'A') {
+          info.href = el.getAttribute('href') || ''; info.txt = text(el).slice(0, 40);
+          info.nth = Array.prototype.filter.call(document.querySelectorAll('a'), function (a) { return (a.getAttribute('href') || '') === info.href && text(a).slice(0, 40) === info.txt; }).indexOf(el);
+        }
+      }
+      return { key: keys[i], f: o, info: info };
+    });
+    return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth });
+  }
+
+  function runHeadless() {
+    // Only the checks whose outcome depends on the viewport. Site-level checks (meta, sitemap, robots,
+    // fonts, CWV, schema) are identical on every device and already covered by the main run.
+    checkHeadings();
+    checkImages();
+    checkVideos();
+    checkForms();
+    checkLinks();
+    checkContent();
+    window.__SeoAuditorHeadlessExport = exportHeadless;
+    window.__SeoAuditorHeadlessDone = true;
+  }
+
+  // --- Parent side: a hidden frame per breakpoint, built from a COPY of the page's live DOM ---
+  // The frame is NOT a reload of the page: the page's own scripts are switched off in the copy, so nothing
+  // runs twice (no analytics hits, no popups, no tracking pixels, no timers), it is fast, and the only
+  // difference between the frames is the viewport width the CSS media queries react to.
+  function buildFrameHtml() {
+    // Copy into an INERT document (no browsing context): cloning inside the live document would start loading the
+    // copied <img> elements and run their inline onload handlers in the real page.
+    var inert = document.implementation.createHTMLDocument('');
+    var root = inert.importNode(document.documentElement, true);
+    var host = root.querySelector('#seo-audit-host');
+    if (host && host.parentNode) host.parentNode.removeChild(host);
+    Array.prototype.forEach.call(root.querySelectorAll('script'), function (sc) {
+      var t = (sc.getAttribute('type') || '').toLowerCase();
+      if (t === 'application/ld+json') return;
+      sc.setAttribute('type', 'text/plain'); sc.removeAttribute('src');      // inert: a non-JS type is never executed or fetched
+      sc.textContent = '';                                                   // and its code is dropped (a literal </script> inside it would end the element early and leak the rest into the page)
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('*'), function (el) {
+      Array.prototype.slice.call(el.attributes).forEach(function (at) { if (/^on/i.test(at.name)) el.removeAttribute(at.name); });   // inline handlers (onload=...) would run
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('meta[http-equiv]'), function (m) { if (/refresh/i.test(m.getAttribute('http-equiv'))) m.parentNode.removeChild(m); });
+    Array.prototype.forEach.call(root.querySelectorAll('link[rel~="preload"],link[rel~="prefetch"],link[rel~="modulepreload"],link[rel~="preconnect"],link[rel~="dns-prefetch"],base'), function (l) { l.parentNode.removeChild(l); });
+    Array.prototype.forEach.call(root.querySelectorAll('iframe,embed,object'), function (f) { f.removeAttribute('src'); f.removeAttribute('srcdoc'); f.removeAttribute('data'); });   // embeds (YouTube, maps...) are not loaded again
+    Array.prototype.forEach.call(root.querySelectorAll('video,audio'), function (m) { m.setAttribute('preload', 'none'); m.removeAttribute('autoplay'); });
+    var head = root.querySelector('head');
+    if (head) { var base = inert.createElement('base'); base.setAttribute('href', document.baseURI); head.insertBefore(base, head.firstChild); }
+    var dt = '<!DOCTYPE html>';
+    try { if (document.doctype) dt = new XMLSerializer().serializeToString(document.doctype); } catch (e) {}
+    return dt + root.outerHTML;
+  }
+
+  function scanFrame(def, html, cb) {
+    var fr = document.createElement('iframe'), finished = false, timer;
+    function finish(res) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { fr.parentNode && fr.parentNode.removeChild(fr); } catch (e) {}
+      cb(res);
+    }
+    function fail(reason) { finish({ ok: false, reason: reason }); }
+    timer = setTimeout(function () { fail('timeout'); }, 45000);
+    // allow-scripts only so that THIS script can run in the frame; the page's own scripts were made inert above.
+    // No allow-top-navigation / allow-popups / allow-modals / allow-forms.
+    fr.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+    fr.setAttribute('aria-hidden', 'true');
+    fr.setAttribute('tabindex', '-1');
+    fr.setAttribute('title', 'SEO Page Auditor — ' + def.name + ' check');
+    fr.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + def.w + 'px;height:' + def.h + 'px;border:0;pointer-events:none;opacity:0;';
+    fr.onload = function () {
+      setTimeout(function () {
+        try {
+          var fw = fr.contentWindow, fd = fw.document;
+          if (!fd || !fd.body || !fd.documentElement) return fail('empty');
+          fw.__SeoAuditorHeadless = true;
+          fw.__SeoAuditorLoc = { href: LOC.href, hostname: LOC.hostname, origin: LOC.origin, pathname: LOC.pathname, protocol: LOC.protocol };
+          // Lazy images below the fold are not fetched in a hidden frame; load them so their real size is known.
+          var lazy = Array.prototype.filter.call(fd.querySelectorAll('img[loading="lazy"]'), function (im) { return !im.complete; });
+          lazy.forEach(function (im) { im.setAttribute('loading', 'eager'); });
+          var t0 = Date.now();
+          (function waitLazy() {
+            var open = lazy.filter(function (im) { return !im.complete; }).length;
+            if (open && Date.now() - t0 < 5000) return setTimeout(waitLazy, 150);
+            lazy.forEach(function (im) { im.setAttribute('loading', 'lazy'); });   // restore, so the lazy-loading checks see the real attribute
+            try { fw.eval('(' + SELF_SRC + ')()'); } catch (e) { return fail('eval'); }
+            var t1 = Date.now(), calm = 0;
+            (function waitDone() {
+              try {
+                var pend = fw.__SeoAuditorHeadlessPending ? fw.__SeoAuditorHeadlessPending() : 0;
+                if (fw.__SeoAuditorHeadlessDone && pend === 0) calm++; else calm = 0;
+                if (calm >= 3 || Date.now() - t1 > 12000) {
+                  return finish({ ok: true, data: JSON.parse(fw.__SeoAuditorHeadlessExport()) });
+                }
+              } catch (e) { return fail('read'); }
+              setTimeout(waitDone, 150);
+            })();
+          })();
+        } catch (e) { fail('blocked'); }
+      }, 400);
+    };
+    try { fr.srcdoc = html; document.documentElement.appendChild(fr); } catch (e) { fail('frame'); }
+  }
+
+  function scanDevices(done) {
+    if (HEADLESS || !SELF_SRC) { deviceScan.state = 'done'; return done(); }
+    var curW = window.innerWidth, cur = deviceOfWidth(curW);
+    // The frame whose breakpoint contains the current window width is skipped: this window already is that check.
+    var todo = FRAMES.filter(function (f) { return !(curW >= f.min && curW <= f.max); });
+    deviceScan = { state: 'running', current: cur, curWidth: curW, checked: [cur], failed: [], frameOk: [], done: 0, total: todo.length };
+    renderPanel();
+    var html = '';
+    try { html = buildFrameHtml(); } catch (e) { html = ''; }
+    if (!html) {
+      todo.forEach(function (f) { deviceScan.failed.push({ key: f.key, device: f.device, name: f.name, reason: 'frame' }); });
+      deviceScan.state = 'done';
+      return done();
+    }
+    var results = {};
+    // One frame at a time keeps the memory / CPU spike small on heavy pages; each one is fast (no scripts run).
+    (function next(i) {
+      if (i >= todo.length) {
+        try { mergeDeviceResults(cur, results, todo); } catch (e) { try { console.warn('[SeoAuditor] device merge failed', e); } catch (e2) {} }
+        deviceScan.state = 'done';
+        return done();
+      }
+      scanFrame(todo[i], html, function (res) {
+        results[todo[i].key] = res;
+        deviceScan.done = i + 1;
+        renderPanel();
+        next(i + 1);
+      });
+    })(0);
+  }
+
+  // Only the checks that the frames actually run can be compared across devices. Findings of the other
+  // checks (meta tags, sitemap, schema, fonts, CWV, internal-link 404s...) are the same on every device,
+  // so they get no device tag.
+  var DEVICE_SCOPED_RE = /^(img\.|video\.|form\.|h\.|links\.(nowhere|anchor|noText|generic)$|content\.)/;
+  function isDeviceScoped(f) { return DEVICE_SCOPED_RE.test(matchCheckId(f.title || '') || ''); }
+  function baseKeyOf(k) { return k.replace(/#\d+$/, ''); }
+
+  function mergeDeviceResults(cur, results, frames) {
+    var keys = findingKeys(findings), groups = {};
+    findings.forEach(function (f, i) {
+      if (!isDeviceScoped(f)) return;
+      f.devices = [cur];
+      var b = baseKeyOf(keys[i]);
+      (groups[b] = groups[b] || []).push({ f: f, path: (f.element && f.element.nodeType === 1) ? elPath(f.element) : '', t: {} });
+    });
+    frames.forEach(function (def) {
+      var res = results[def.key];
+      if (!res) return;
+      if (!res.ok) { deviceScan.failed.push({ key: def.key, device: def.device, name: def.name, reason: res.reason }); return; }
+      deviceScan.frameOk.push(def.key);
+      if (deviceScan.checked.indexOf(def.device) === -1) deviceScan.checked.push(def.device);
+      var d = res.data, itemsByBase = {};
+      Object.keys(d.totals || {}).forEach(function (id) {
+        if (id === 'links.internal') return;                       // not run in frames
+        if (!(checkTotals[id] >= d.totals[id])) checkTotals[id] = d.totals[id];
+      });
+      d.items.forEach(function (it) {
+        if (!isDeviceScoped(it.f)) return;
+        var b = baseKeyOf(it.key);
+        (itemsByBase[b] = itemsByBase[b] || []).push(it);
+      });
+      function mark(c) { c.t[def.key] = true; if (c.f.devices.indexOf(def.device) === -1) c.f.devices.push(def.device); }
+      // 1) same element = same content key AND same DOM path
+      var pending = {}, totalItems = 0, pathMatched = 0;
+      Object.keys(itemsByBase).forEach(function (b) {
+        var items = itemsByBase[b], cands = groups[b] || (groups[b] = []), rest = [];
+        items.forEach(function (it) {
+          totalItems++;
+          var c = null;
+          for (var i = 0; i < cands.length; i++) { if (!cands[i].t[def.key] && cands[i].path && it.info && cands[i].path === it.info.path) { c = cands[i]; break; } }
+          if (c) { pathMatched++; mark(c); } else rest.push(it);
+        });
+        pending[b] = rest;
+      });
+      // 2) if the DOM paths hardly ever agree, pair the leftovers of groups that have the same number of items on both sides, in order
+      var pathsUnreliable = totalItems > 0 && pathMatched / totalItems < 0.5;
+      Object.keys(pending).forEach(function (b) {
+        var rest = pending[b], cands = groups[b], free = cands.filter(function (c) { return !c.t[def.key]; });
+        if (pathsUnreliable && rest.length && itemsByBase[b].length === cands.length && free.length === rest.length) {
+          rest.forEach(function (it, i) { mark(free[i]); });
+          pending[b] = [];
+        }
+      });
+      // 3) what is left exists only on this device -> add it to the list (and the score)
+      Object.keys(pending).forEach(function (b) {
+        var cands = groups[b];
+        pending[b].forEach(function (it) {
+          var nf = {};
+          Object.keys(it.f).forEach(function (k) { nf[k] = it.f[k]; });
+          nf.element = locateByInfo(it.info);
+          nf.devices = [def.device];
+          nf.deviceOnly = true;
+          addFinding(nf);                                           // assigns the id; hiddenUi comes from the frame
+          var t = {}; t[def.key] = true;
+          cands.push({ f: nf, path: it.info ? it.info.path : '', t: t });
+        });
+      });
+    });
+    // Findings were only ever compared among the devices that could actually be scanned.
+    findings.forEach(function (f) { if (f.devices) f.devicesChecked = deviceScan.checked.slice(); });
   }
 
   // ---------------------------------------------------------------------
@@ -3627,6 +4167,7 @@
   // ---------------------------------------------------------------------
 
   function run() {
+    if (HEADLESS) { runHeadless(); return; }
     // Capture the PREVIOUS run's results (if any, from an earlier visit to this exact URL)
     // before this run adds anything new — see the "Previous run vs. now" banner in renderPanel()
     // and saveCurrentRun() below (11.08.2026).
@@ -3665,12 +4206,40 @@
     tagGlobalFindings();
     renderPanel();
 
+    // The "analysis in progress" banner stays up until everything has really finished (steps: page checks ->
+    // performance -> device frames -> the audit's own network requests). A watchdog guarantees it never sticks.
+    function finishAnalysis() {
+      if (!analysis.busy) return;
+      analysis.busy = false;
+      tagGlobalFindings();
+      renderPanel();
+      saveCurrentRun();
+    }
+    setTimeout(finishAnalysis, 90000);
+    analysis.step = 'perf';
+    renderPanel();
     measureCWV(function () {
       tagGlobalFindings();
       renderPanel();
       // Save AFTER the async CWV pass completes, so the stored count reflects the fully
       // finished audit (including CWV-related findings), not the mid-run synchronous snapshot.
       saveCurrentRun();
+      // Then the per-device pass (mobile / tablet / desktop) — started only now so the extra work
+      // cannot disturb the LCP / TTFB measurement above.
+      analysis.step = 'devices';
+      scanDevices(function () {
+        tagGlobalFindings();
+        analysis.step = 'network';
+        renderPanel();
+        // wait for the audit's own requests (image sizes, internal links, robots...) to settle
+        var calm = 0, waited = 0;
+        (function poll() {
+          if (auditPending === 0) calm++; else calm = 0;
+          waited += 250;
+          if (calm >= 2 || waited >= 15000) return finishAnalysis();
+          setTimeout(poll, 250);
+        })();
+      });
     });
   }
 
@@ -3934,6 +4503,41 @@
     "Above-the-fold video poster": "Poster videa iznad preloma",
     "Form field labels": "Labele polja forme",
     "Organization schema profiles (sameAs)": "Profili u Organization schema (sameAs)",
+    "Found only on: {0}. It does not appear on the other devices that were checked.": "Pronađeno samo na: {0}. Ne pojavljuje se na ostalim proverenim uređajima.",
+    "This element is inside a {0} that is closed when the page loads. The audit still checks it — click the row to locate it.": "Ovaj element je unutar zatvorenog elementa ({0}) koji nije otvoren pri učitavanju stranice. Audit ga ipak proverava — klikni na red da ga pronađeš.",
+    "Mobile (narrower than 768px)": "Mobilni (uži od 768px)",
+    "Tablet (768-991px)": "Tablet (768-991px)",
+    "Desktop (992px and wider)": "Desktop (992px i šire)",
+    "tab": "tab",
+    "accordion / collapsible block": "accordion / sklopivi blok",
+    "dropdown": "dropdown",
+    "collapsed menu": "sklopljeni meni",
+    "slider": "slider",
+    "popup / modal": "popup / modal",
+    "only on: {0}": "samo na: {0}",
+    "in closed UI: {0}": "u zatvorenom UI elementu: {0}",
+    "Checking the mobile, tablet and desktop layouts in the background…": "Proveravam mobilni, tablet i desktop prikaz u pozadini…",
+    "Checked on:": "Provereno na:",
+    "this window, {0}px": "ovaj prozor, {0}px",
+    "Mobile": "Mobilni",
+    "Tablet": "Tablet",
+    "Desktop": "Desktop",
+    "Could not check {0}: {1}.": "Nije moguće proveriti {0}: {1}.",
+    "it took too long": "trajalo je predugo",
+    "the page cannot be opened in a hidden frame (X-Frame-Options / CSP)": "stranica ne dozvoljava otvaranje u skrivenom okviru (X-Frame-Options / CSP)",
+    "the frame stayed empty": "okvir je ostao prazan",
+    "an error occurred": "došlo je do greške",
+    "Results for the devices that could not be checked are missing.": "Rezultati za uređaje koji nisu mogli da se provere nedostaju.",
+    "Measuring performance (server response, LCP, layout shift)…": "Merim performanse (odziv servera, LCP, pomeranje rasporeda)…",
+    "Checking the mobile, tablet and desktop layouts ({0} of {1} done)…": "Proveravam mobilni, tablet i desktop prikaz ({0} od {1} gotovo)…",
+    "Finishing the network checks (images, links)…": "Završavam mrežne provere (slike, linkovi)…",
+    "Running the page checks…": "Pokrećem provere stranice…",
+    "Analysis in progress — please wait…": "Analiza je u toku — sačekaj…",
+    "The score and the list below may still change until this is done.": "Skor i lista ispod se još mogu promeniti dok ovo traje.",
+    "the frame could not be read": "okvir nije mogao da se pročita",
+    "the page copy could not be created": "kopija stranice nije mogla da se napravi",
+    "Mobile landscape": "Mobilni (landscape)",
+    "Image file is heavy ({0}, image is in a closed tab/accordion/menu)": "Fajl slike je težak ({0}, slika je u zatvorenom tabu/accordionu/meniju)",
     "{0} of {1} visible images have descriptive (or deliberately decorative) alt text": "{0} od {1} vidljivih slika ima opisni (ili namerno dekorativni) alt tekst",
     "{0} image(s) have both dimensions fixed (HTML attribute or CSS, any unit)": "Slika sa obe fiksne dimenzije (HTML atribut ili CSS, bilo koja jedinica): {0}",
     "{0} image(s) have a fixed height (width is auto — safe, does not cause CLS)": "Slika sa fiksnom visinom (širina je auto — bezbedno, ne izaziva CLS): {0}",
@@ -3968,7 +4572,7 @@
     "Links": "Linkovi",
     "Link doesn't go anywhere (href=\"{0}\")": "Link ne vodi nigde (href=\"{0}\")",
     "Link doesn't go anywhere (href=\"\")": "Link ne vodi nigde (href=\"\")",
-    "This element is hidden right now (e.g. inside a collapsed menu) — open the menu or widen the window to see it.": "Ovaj element je trenutno skriven (npr. u sklopljenom meniju) — otvori meni ili proširi prozor da ga vidiš.",
+    "This element is hidden right now (e.g. inside a closed tab, accordion or menu, or hidden at this screen width) — open it or resize the window to see it.": "Ovaj element je trenutno skriven (npr. u zatvorenom tabu, accordionu ili meniju, ili je skriven na ovoj širini ekrana) — otvori ga ili promeni veličinu prozora da ga vidiš.",
     "This link sits inside a collapsed menu (e.g. the mobile menu or a dropdown), so it is hidden until the menu is opened — but visitors still reach it with one click. With an empty href the click leads nowhere (with target=\"_blank\" it just opens a new tab of the same page). This is typical for social icons or menu items whose real URL was never filled in.": "Ovaj link se nalazi u sklopljenom meniju (npr. mobilni meni ili dropdown), pa je skriven dok se meni ne otvori — ali posetioci do njega stižu jednim klikom. Sa praznim href-om klik ne vodi nigde (uz target=\"_blank\" samo otvori novi tab iste stranice). Tipično za social ikonice ili stavke menija kojima pravi URL nikad nije upisan.",
     "Fill in the real URL (Webflow Designer: select the link > Settings panel > Link settings > URL) and publish. If the destination does not exist yet, remove the link until it does. The menu is collapsed at the current window width — open it (or widen the window) to find the element.": "Upiši pravi URL (Webflow Designer: selektuj link > Settings panel > Link settings > URL) i objavi sajt. Ako odredište još ne postoji, ukloni link dok ne bude gotovo. Meni je sklopljen pri trenutnoj širini prozora — otvori ga (ili proširi prozor) da pronađeš element.",
     "If this represents a tab/accordion that only changes the display on the same page, the correct approach per the WAI-ARIA Tabs pattern is a <button> with role=\"tab\", not an <a> link — a link semantically implies navigation.": "Ako ovo predstavlja tab/accordion koji samo menja prikaz na istoj stranici, ispravan pristup prema WAI-ARIA Tabs obrascu je <button> sa role=\"tab\", a ne <a> link — link semantički podrazumeva navigaciju.",
