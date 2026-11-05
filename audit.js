@@ -441,11 +441,15 @@
       addSuccess({ category: 'Meta & head tags', title: 'Twitter/X Card meta tag is present (' + twitterCard + ')', description: '', element: document.head });
     }
 
-    var canonical = document.querySelector('link[rel="canonical"]');
+    // Only a canonical inside <head> counts: Google accepts the rel="canonical" link element only there (one written
+    // after an element that isn't allowed in <head> lands in <body> — see checkCanonicalValid).
+    var canonical = canonicalLinks(document).filter(inHeadOf(document))[0] || null;
+    var canonicalOutside = canonical ? null : (canonicalLinks(document)[0] || null);
     if (!canonical || !(canonical.getAttribute('href') || '').trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Canonical tag is missing',
-        description: canonical ? 'The <link rel="canonical"> is there, but its href is empty.' : 'There is no <link rel="canonical">.', why: 'Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a "nice to have".',
-        fix: 'Add a canonical tag pointing to this page.', element: document.head,
+        description: canonical ? 'The <link rel="canonical"> is there, but its href is empty.'
+          : (canonicalOutside ? 'There is a <link rel="canonical"> (href: ' + (canonicalOutside.getAttribute('href') || '') + '), but it is outside <head>, where Google ignores it. ' + HEAD_PARSE_NOTE : 'There is no <link rel="canonical">.'), why: 'Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a "nice to have".',
+        fix: 'Add a canonical tag pointing to this page. ' + CANON_FIX, element: document.head,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an unclear "primary" URL makes it harder for AI answer engines to know which version of the page to cite.',
         crossNoteReverse: 'Relevant to both SEO and AEO — a canonical prevents duplicate content issues and consolidates ranking signals onto a single URL in the Google index.' });
     } else {
@@ -459,7 +463,7 @@
     if (robots && robotsNoindex(robots) || robotsNoindex(googlebotMeta)) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Page is marked as noindex',
         description: robotsNoindex(robots) ? 'meta robots = "' + robots + '"' : 'meta googlebot = "' + googlebotMeta + '"', why: 'This page will not be indexed by Google as long as this remains in place.',
-        fix: 'If the page should be visible in search, remove noindex in Page Settings > SEO > "Exclude from search results".', element: document.head,
+        fix: 'If the page should be visible in search: in Webflow, Page settings > SEO settings > turn "Sitemap indexing" back on (turned off, it adds <meta name="robots" content="noindex">); for a CMS item: the Collection item > Item details > Sitemap indexing. A noindex can also come from custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code). Publish after the change.', element: document.head,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a noindex page won\'t appear in the sources AI answer engines (partly) rely on via the Google index either.',
         crossNoteReverse: 'Relevant to both SEO and AEO — a noindex directive completely removes the page from Google search, which is the most direct possible SEO problem.' });
     } else {
@@ -551,114 +555,186 @@
   // ---------------------------------------------------------------------
   // 5.1b Favicon
   // ---------------------------------------------------------------------
-  // Google Search Central explicitly documents favicon requirements so a site shows up
-  // with its own icon in mobile search results (square, min. 48x48px, must be crawlable).
-  // It's not a core ranking factor (same as OG tags), hence "warning" rather than "error"
-  // for its absence — but a "nosnippet"-level direct block (robots.txt Disallow) also stays
-  // a warning since it only affects the icon display, not the entire page's content.
+  // Shared robots.txt reader (05.11.2026) — used for the favicon, for this page (Googlebot) and for AI search crawlers.
+  // Parsing and matching follow Google's "How Google interprets the robots.txt specification" and RFC 9309:
+  //  - a group = consecutive user-agent lines + the rules after them; other fields (sitemap, crawl-delay...) are
+  //    ignored and do not end a group; rules before the first user-agent line and rules without a path are ignored;
+  //  - the crawler uses the group(s) whose product token matches (case-insensitive, "googlebot/1.2" = "googlebot"),
+  //    all such groups combined; only if none matches, the "*" group(s);
+  //  - the matching rule with the longest path wins; on a tie the least restrictive (allow) wins;
+  //    "*" = any characters, a trailing "$" = end of URL; paths are case-sensitive and compared percent-encoded;
+  //  - 4xx (except 429) = no robots.txt = no restrictions; 5xx/429 = server error; only the first 500 KiB are read.
+  var robotsTxtPromise = null;
+  function getRobotsTxt() {
+    if (!robotsTxtPromise) {
+      robotsTxtPromise = fetch(LOC.origin + '/robots.txt', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+        if (r.ok) return r.text().then(function (t) { return { status: r.status, text: t }; });
+        return { status: r.status, text: null };
+      }).catch(function () { return { error: CSP_OR_NETWORK }; });
+    }
+    return robotsTxtPromise;
+  }
+  function parseRobotsTxt(txt) {
+    try {
+      var bytes = new TextEncoder().encode(txt);
+      if (bytes.length > 512000) txt = new TextDecoder().decode(bytes.slice(0, 512000));
+    } catch (e) {}
+    txt = txt.replace(/^﻿/, '');
+    var groups = [], cur = null, inAgents = false;
+    txt.split(/\r\n|\r|\n/).forEach(function (line) {
+      line = line.replace(/#.*$/, '').trim();
+      var m = /^([A-Za-z-]+)\s*:\s*(.*)$/.exec(line);
+      if (!m) return;                                   // invalid line: ignored
+      var field = m[1].toLowerCase(), value = m[2].trim();
+      if (field === 'user-agent') {
+        if (!cur || !inAgents) { cur = { agents: [], rules: [] }; groups.push(cur); }
+        inAgents = true;
+        cur.agents.push(value === '*' ? '*' : ((/^[A-Za-z_-]+/.exec(value) || [''])[0].toLowerCase()));
+        return;
+      }
+      if (field === 'allow' || field === 'disallow') {
+        inAgents = false;
+        if (!cur || !value) return;                     // rule outside any group, or rule without a path: ignored
+        cur.rules.push({ allow: field === 'allow', path: value });
+      }
+      // sitemap / crawl-delay / unknown fields: ignored, they don't end the group
+    });
+    return groups;
+  }
+  function robotsNormPath(p) {
+    // RFC 9309 2.2.2: compare percent-encoded forms (non-ASCII is percent-encoded; %XX of an unreserved character is decoded)
+    p = p.replace(/[^\x00-\x7F]+/g, function (x) { try { return encodeURIComponent(x); } catch (e) { return x; } });
+    return p.replace(/%([0-9a-fA-F]{2})/g, function (m, h) {
+      var c = String.fromCharCode(parseInt(h, 16));
+      return /[A-Za-z0-9\-._~]/.test(c) ? c : '%' + h.toUpperCase();
+    });
+  }
+  // -> { group: 'googlebot' | '*' | null, blocked: bool, rule: 'Disallow: /x' | null }
+  function robotsVerdict(groups, token, target) {
+    var rules = [], group = null;
+    groups.forEach(function (g) { if (g.agents.indexOf(token) > -1) { rules = rules.concat(g.rules); group = token; } });
+    if (!group) groups.forEach(function (g) { if (g.agents.indexOf('*') > -1) { rules = rules.concat(g.rules); group = '*'; } });
+    var url = robotsNormPath(target), best = null;
+    rules.forEach(function (r) {
+      var rp = robotsNormPath(r.path);
+      var anchored = rp.charAt(rp.length - 1) === '$';
+      var body = anchored ? rp.slice(0, -1) : rp;
+      var re;
+      try { re = new RegExp('^' + body.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + (anchored ? '$' : '')); } catch (e) { return; }
+      if (!re.test(url)) return;
+      if (!best || rp.length > best.len || (rp.length === best.len && r.allow && !best.allow)) {
+        best = { len: rp.length, allow: r.allow, line: (r.allow ? 'Allow: ' : 'Disallow: ') + r.path };
+      }
+    });
+    return { group: group, blocked: !!(best && !best.allow), rule: best ? best.line : null };
+  }
+
+  // Google Search Central ("Define a favicon to show in search results", checked 05.11.2026): the favicon must be
+  // a square (1:1) of at least 8x8px, Google recommends larger than 48x48px, supported formats are BMP, GIF, ICO,
+  // PNG, JPEG, PPM and TIFF, supported rel values are icon / shortcut icon / apple-touch-icon(-precomposed), and
+  // Googlebot-Image must be allowed to crawl the file. Not a ranking factor (search-result appearance), hence
+  // "warning" at most.
+  var FAVICON_FIX_WEBFLOW = 'In Webflow: Site settings > General tab > Icons — upload one square image (PNG is safest). Webflow then generates the 32x32 and 48x48 favicons, 180x180 and 192x192 touch icons and a 256x256 webclip by itself (Webflow update, May 2026), so upload at least 256x256px — then no generated size is enlarged from a smaller image. Publish the site afterwards.';
   function checkFavicon() {
     var head = document.head;
-    var linkEl = document.querySelector('link[rel~="icon"]') || document.querySelector('link[rel="shortcut icon"]') || document.querySelector('link[rel="apple-touch-icon"]');
+    var iconLinks = Array.prototype.filter.call(document.querySelectorAll('link[rel][href]'), function (l) {
+      return /(^|\s)(icon|apple-touch-icon|apple-touch-icon-precomposed)(\s|$)/i.test(l.getAttribute('rel') || '');
+    });
+    var linkEl = iconLinks.filter(function (l) { return /(^|\s)icon(\s|$)/i.test(l.getAttribute('rel')); })[0] || iconLinks[0] || null;
     var faviconUrl;
     try {
       faviconUrl = (linkEl && linkEl.getAttribute('href')) ? new URL(linkEl.getAttribute('href'), LOC.href).href : (LOC.origin + '/favicon.ico');
     } catch (e) {
       faviconUrl = LOC.origin + '/favicon.ico';
     }
+    var iconUrls = [];
+    iconLinks.forEach(function (l) { try { var u = new URL(l.getAttribute('href'), LOC.href).href; if (iconUrls.indexOf(u) === -1) iconUrls.push(u); } catch (e) {} });
+    if (!iconUrls.length) iconUrls.push(faviconUrl);
 
     function reportBroken() {
       addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is missing or fails to load',
         description: linkEl ? ('A <link> tag was found, but the resource (' + faviconUrl + ') does not load.') : ('There is no <link rel="icon"> in the head, and no fallback /favicon.ico exists either.'),
         why: 'Google Search Central explicitly documents favicon requirements so a site shows up with its own icon in mobile search results and in Chrome tabs/bookmarks — without it a generic icon is shown, which reduces brand recognition and CTR in the SERP.',
-        fix: 'Add a favicon in Webflow Site Settings > Icons (square, minimum 48x48px, .ico/.png/.svg).', element: linkEl || head });
+        fix: FAVICON_FIX_WEBFLOW, element: linkEl || head });
     }
 
-    function checkDimensionsAndFormat(url) {
-      // Extension of the last path segment only ("https://cdn.example.com/favicon" has none; data: URIs are skipped).
-      var ext = '';
-      try { var fp = new URL(url).pathname.split('/').pop() || ''; ext = fp.indexOf('.') > -1 ? fp.split('.').pop().toLowerCase() : ''; } catch (e) {}
-      if (ext && ['ico', 'png', 'svg', 'gif'].indexOf(ext) === -1) {
-        addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon is in an unusual format (' + ext.toUpperCase() + ')',
-          description: url, why: 'The widest support (browsers, Google Search) is for .ico, .png and .svg formats — other formats can behave unpredictably in browser UI.',
-          fix: 'Use the .ico, .png or .svg format for the favicon.', element: linkEl || head });
-      }
-      var img = new Image();
-      img.onload = function () {
-        var w = img.naturalWidth, h = img.naturalHeight;
-        var issues = [];
-        if (w && h && Math.abs(w - h) > 1) issues.push('is not square (' + w + 'x' + h + ')');
-        if (w && h && (w < 48 || h < 48)) issues.push('is smaller than the recommended 48x48px (' + w + 'x' + h + ')');
-        if (issues.length) {
-          addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon dimensions are not ideal (' + issues.join(', ') + ')',
-            description: url, why: 'Google recommends a square favicon, minimum 48x48px (in a multiple of that size), so it renders cleanly in search results and browser UI at all resolutions.',
-            fix: 'Replace the favicon with a square image at least 48x48px (ideally 128x128px for retina screens).', element: linkEl || head });
-        } else if (w && h) {
-          addSuccess({ category: 'Favicon', title: 'Favicon is square and an appropriate size (' + w + 'x' + h + ')', description: url, element: linkEl || head });
+    // Only declared icons with a recognizable file extension are judged ("https://cdn.example.com/favicon" has none);
+    // the dimensions are measured only on icons Google Search can use (supported or unknown format).
+    var GOOGLE_FORMATS = ['bmp', 'gif', 'ico', 'png', 'jpg', 'jpeg', 'ppm', 'tif', 'tiff'];
+    var extOf = function (u) {
+      if (/^data:/i.test(u)) return '';
+      try { var fp = new URL(u).pathname.split('/').pop() || ''; return fp.indexOf('.') > -1 ? fp.split('.').pop().toLowerCase() : ''; } catch (e) { return ''; }
+    };
+    var usableUrls = iconUrls.filter(function (u) { var x = extOf(u); return !x || GOOGLE_FORMATS.indexOf(x) > -1; });
+    function checkFormat() {
+      if (usableUrls.length) return;
+      var exts = iconUrls.map(extOf).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+      addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon is not in a format Google Search supports (' + exts.join(', ').toUpperCase() + ')',
+        description: iconUrls.join('\n'), why: 'Google Search supports these favicon formats: BMP, GIF, ICO, PNG, JPEG, PPM and TIFF. An SVG (or WebP) favicon works in browsers, but Google Search can\'t use it, so the result may show a generic icon.',
+        fix: 'Also provide a PNG or ICO favicon. ' + FAVICON_FIX_WEBFLOW + ' (Webflow converts an SVG upload to PNG.)', element: linkEl || head });
+    }
+
+    function checkDimensions() {
+      if (!usableUrls.length) return;                   // reported by checkFormat()
+      var sizes = [], left = Math.min(usableUrls.length, 8);
+      var done = function () {
+        if (--left > 0) return;
+        if (!sizes.length) return;                       // nothing could be measured
+        var squares = sizes.filter(function (z) { return Math.abs(z.w - z.h) <= 1 && z.w >= 8; });
+        var largest = squares.sort(function (a, b) { return b.w - a.w; })[0];
+        var list = sizes.map(function (z) { return z.w + 'x' + z.h; }).join(', ');
+        if (!largest) {
+          addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon dimensions do not meet Google\'s requirement (square, at least 8x8px): ' + list,
+            description: usableUrls.join('\n'), why: 'Google Search shows a favicon only if it is a square (1:1 aspect ratio) of at least 8x8px. None of the icons declared on this page is.',
+            fix: FAVICON_FIX_WEBFLOW, element: linkEl || head });
+        } else if (largest.w <= 48) {
+          addFinding({ category: 'Favicon', severity: 'info', title: 'Favicon dimensions: no icon is larger than 48x48px (largest: ' + largest.w + 'x' + largest.h + ')',
+            description: usableUrls.join('\n'), why: 'Google Search requires at least 8x8px, but recommends a favicon larger than 48x48px so it looks good on various surfaces.',
+            fix: FAVICON_FIX_WEBFLOW, element: linkEl || head });
+        } else {
+          addSuccess({ category: 'Favicon', title: 'Favicon is square and larger than 48x48px (' + largest.w + 'x' + largest.h + ')', description: largest.url, element: linkEl || head });
         }
         renderPanel();
       };
-      img.onerror = function () { /* The HEAD fetch above already catches the real "doesn't exist" error — silently ignore here. */ };
-      img.src = url;
+      usableUrls.slice(0, 8).forEach(function (u) {
+        var img = new Image();
+        img.onload = function () { if (img.naturalWidth && img.naturalHeight) sizes.push({ w: img.naturalWidth, h: img.naturalHeight, url: u }); done(); };
+        img.onerror = function () { done(); };   // the HEAD fetch already reports a favicon that doesn't exist
+        img.src = u;
+      });
     }
 
     function checkRobotsBlock(url) {
-      try {
-        fetch(LOC.origin + '/robots.txt').then(function (r) { return r.ok ? r.text() : null; }).then(function (txt) {
-          if (!txt) return;
-          var path;
-          try { path = new URL(url).pathname; } catch (e) { return; }
-          // robots.txt groups: consecutive User-agent lines share the rules that follow. Only the "*" group is evaluated.
-          // Per Google's rules the longest matching pattern wins and Allow wins a tie; "*" and a trailing "$" are wildcards.
-          var inAgents = false, applicable = false, bestLen = -1, bestAllow = true, blocked = false;
-          var patToRe = function (pat) {
-            var re = pat.replace(/[.+?^{}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-            return new RegExp('^' + (/\$$/.test(pat) ? re.slice(0, -1) + '$' : re));
-          };
-          txt.split('\n').forEach(function (line) {
-            line = line.replace(/#.*$/, '').trim();
-            if (!line) return;
-            var uaMatch = /^user-agent:\s*(.*)$/i.exec(line);
-            if (uaMatch) {
-              if (!inAgents) applicable = false;     // a new group starts
-              inAgents = true;
-              if (uaMatch[1].trim() === '*') applicable = true;
-              return;
-            }
-            inAgents = false;
-            if (!applicable) return;
-            var rm = /^(allow|disallow):\s*(.*)$/i.exec(line);
-            if (!rm) return;
-            var allow = rm[1].toLowerCase() === 'allow', rule = rm[2].trim();
-            if (!rule) return;                      // "Disallow:" with nothing = allow everything
-            var hit = false;
-            try { hit = patToRe(rule).test(path); } catch (e) {}
-            if (hit && (rule.length > bestLen || (rule.length === bestLen && allow))) { bestLen = rule.length; bestAllow = allow; }
-          });
-          blocked = bestLen >= 0 && !bestAllow;
-          if (blocked) {
-            addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is blocked in robots.txt',
-              description: 'The path "' + path + '" is covered by a Disallow rule in /robots.txt (User-agent: *).',
-              why: 'If Googlebot can\'t access the favicon file, it can\'t display it in mobile search results either — Google Search Central explicitly requires the favicon URL to be crawlable.',
-              fix: 'Add an Allow rule for the favicon path in robots.txt, or narrow the Disallow rule so it doesn\'t cover it.', element: null });
-            renderPanel();
-          }
-        }).catch(function () { /* robots.txt doesn't exist or CORS — ignore silently */ });
-      } catch (e) {}
+      var u;
+      try { u = new URL(url); } catch (e) { return; }
+      if (u.origin !== LOC.origin) return;               // a favicon on a CDN is governed by the CDN's own robots.txt, which the browser can't read here
+      getRobotsTxt().then(function (res) {
+        if (res.error || res.text == null) return;       // no robots.txt (4xx) = no restrictions; errors are reported by the page robots check
+        var v = robotsVerdict(parseRobotsTxt(res.text), 'googlebot-image', u.pathname + u.search);
+        if (v.blocked) {
+          addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is blocked in robots.txt',
+            description: 'The path "' + u.pathname + '" is blocked by "' + v.rule + '" (group: User-agent: ' + v.group + ').',
+            why: 'Google Search Central: Googlebot-Image must be able to crawl the favicon file — it must not be blocked by robots.txt. Otherwise Google can\'t show it in search results.',
+            fix: 'In Webflow: Site settings > SEO > Indexing — change the robots.txt rules so they don\'t cover the favicon path (add an Allow rule for it or narrow the Disallow rule), save and publish.', element: null });
+          renderPanel();
+        }
+      });
     }
 
+    checkFormat();
     try {
       fetch(faviconUrl, { method: 'HEAD' }).then(function (r) {
         if (!r.ok) { reportBroken(); renderPanel(); return; }
         var ct = r.headers.get('content-type') || '';
         if (ct && ct.indexOf('image') === -1 && ct.indexOf('icon') === -1) { reportBroken(); renderPanel(); return; }
         addSuccess({ category: 'Favicon', title: 'Favicon is present and loads successfully', description: faviconUrl, element: linkEl || head });
-        checkDimensionsAndFormat(faviconUrl);
+        checkDimensions();
         checkRobotsBlock(faviconUrl);
         renderPanel();
       }).catch(function () {
-        // CORS on a HEAD request rarely happens on the same origin, but just in case we don't
-        // report a false error — we just try the dimensions/format (if the image loads at all).
-        checkDimensionsAndFormat(faviconUrl);
+        // A favicon on another host (e.g. the Webflow CDN) usually refuses a cross-origin HEAD request: no error is
+        // reported for that — the dimensions are still measured (if the image loads at all).
+        checkDimensions();
       });
     } catch (e) {}
   }
@@ -679,7 +755,7 @@
         title: 'Canonical points to a different domain',
         description: 'Current page: ' + LOC.hostname + curPath + ' | Canonical: ' + canonicalUrl.hostname + canPath,
         why: 'The canonical tells Google that another website holds the "real" version of this page, so this page is left out of the results in favour of that one. That is correct for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.',
-        fix: 'If it is not intentional, set the canonical in Page Settings to this page\'s own URL.', element: canonicalEl,
+        fix: 'If it is not intentional, make the canonical point to this page\'s own URL. ' + CANON_FIX, element: canonicalEl,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the "real" version of the page to cite.',
         crossNoteReverse: 'Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.' });
     } else if (canonicalUrl.hostname !== LOC.hostname || canonicalUrl.protocol !== LOC.protocol) {
@@ -696,7 +772,7 @@
         title: 'Canonical points to a different path on the same site',
         description: 'Current page: ' + curPath + ' | Canonical: ' + canPath,
         why: 'A common cause: the page was duplicated in Webflow and the canonical was left pointing at the original — Google then ignores this page in favor of that other one.',
-        fix: 'Check whether this is intentional. If not, fix the canonical in Page Settings to point to this page.', element: canonicalEl,
+        fix: 'Check whether this is intentional. If not, make the canonical point to this page. ' + CANON_FIX, element: canonicalEl,
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the "real" version of the page to cite.',
         crossNoteReverse: 'Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.' });
     } else {
@@ -705,6 +781,735 @@
         crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — a clear "primary" URL helps AI answer engines know which version of the page to cite.',
         crossNoteReverse: 'Relevant to both SEO and AEO — a correct canonical consolidates ranking signals onto one, precisely defined URL.' });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // 5.3c Group A (05.11.2026): robots.txt for this page, canonical validity, original vs rendered HTML,
+  // meta refresh, hreflang. The source of every rule is quoted in SPEC.md (05.11.2026).
+  // ---------------------------------------------------------------------
+  // Code lists from the Debian iso-codes package 4.16 (ISO 639-1: 184 languages, ISO 3166-1 alpha-2: 249 regions,
+  // ISO 15924: 182 scripts). hreflang: language ISO 639-1 + optional region ISO 3166-1 alpha-2 (Google / Lighthouse).
+  var ISO_639_1 = 'aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu'.split(' ');
+  var ISO_3166_1 = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
+  var ISO_15924 = 'Adlm Afak Aghb Ahom Arab Aran Armi Armn Avst Bali Bamu Bass Batk Beng Bhks Blis Bopo Brah Brai Bugi Buhd Cakm Cans Cari Cham Cher Cirt Copt Cprt Cyrl Cyrs Deva Dsrt Dupl Egyd Egyh Egyp Elba Ethi Geok Geor Glag Goth Gran Grek Gujr Guru Hanb Hang Hani Hano Hans Hant Hatr Hebr Hira Hluw Hmng Hrkt Hung Inds Ital Jamo Java Jpan Jurc Kali Kana Khar Khmr Khoj Kitl Kits Knda Kore Kpel Kthi Lana Laoo Latf Latg Latn Leke Lepc Limb Lina Linb Lisu Loma Lyci Lydi Mahj Mand Mani Marc Maya Mend Merc Mero Mlym Modi Mong Moon Mroo Mtei Mult Mymr Narb Nbat Newa Nkgb Nkoo Nshu Ogam Olck Orkh Orya Osge Osma Palm Pauc Perm Phag Phli Phlp Phlv Phnx Piqd Plrd Prti Qaaa Qabx Rjng Roro Runr Samr Sara Sarb Saur Sgnw Shaw Shrd Sidd Sind Sinh Sora Sund Sylo Syrc Syre Syrj Syrn Tagb Takr Tale Talu Taml Tang Tavt Telu Teng Tfng Tglg Thaa Thai Tibt Tirh Ugar Vaii Visp Wara Wole Xpeo Xsux Yiii Zinh Zmth Zsye Zsym Zxxx Zyyy Zzzz'.split(' ');
+
+  // The page's ORIGINAL HTML (what the server sends, before any JavaScript runs) — fetched once and shared.
+  var rawDocPromise = null;
+  function getRawDoc() {
+    if (!rawDocPromise) {
+      rawDocPromise = fetch(LOC.href, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) return { error: 'the server answered HTTP ' + r.status + ' to the request for the original HTML' };
+        var refreshHeader = r.headers.get('refresh') || '';
+        return r.text().then(function (t) {
+          // DOMParser builds an inert document: nothing in it loads or runs (innerHTML on a detached <div> would still start
+          // downloading every <img> and fire its onload handlers on the live site).
+          return { html: t, doc: new DOMParser().parseFromString(t, 'text/html'), refreshHeader: refreshHeader };
+        });
+      }).catch(function () { return { error: CSP_OR_NETWORK }; });
+    }
+    return rawDocPromise;
+  }
+  function absUrl(h, base) { try { return new URL(h, base || LOC.href).href; } catch (e) { return null; } }
+  // protocol + host + path without a trailing slash (query and fragment ignored) — "is this the same page?"
+  function pageKey(u, base) { try { var x = new URL(u, base || LOC.href); return x.protocol + '//' + x.hostname.toLowerCase() + x.pathname.replace(/\/+$/, ''); } catch (e) { return null; } }
+  function inHeadOf(doc) { return function (el) { return !!(doc.head && doc.head.contains(el)); }; }
+  // rel="canonical" links Google uses: annotations with hreflang, lang, media or type attributes are not used for canonicalization.
+  function canonicalLinks(doc) {
+    return Array.prototype.filter.call(doc.querySelectorAll('link[rel]'), function (l) {
+      if (!/(^|\s)canonical(\s|$)/i.test(l.getAttribute('rel') || '')) return false;
+      return !(l.hasAttribute('hreflang') || l.hasAttribute('lang') || l.hasAttribute('media') || l.hasAttribute('type'));
+    });
+  }
+  function docNoindexTag(doc) {
+    var hit = null;
+    Array.prototype.forEach.call(doc.querySelectorAll('meta[name]'), function (m) {
+      var n = (m.getAttribute('name') || '').toLowerCase();
+      if ((n === 'robots' || n === 'googlebot') && /(^|[\s,;])(noindex|none)(\s|,|;|$)/i.test(m.getAttribute('content') || '')) {
+        hit = hit || ('<meta name="' + n + '" content="' + m.getAttribute('content') + '">');
+      }
+    });
+    return hit;
+  }
+  var CUSTOM_CODE_PLACES = 'custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code)';
+  var CANON_FIX = 'In Webflow the canonical comes from Site settings > SEO > Global canonical tag URL (the site\'s base URL, e.g. https://www.yourdomain.com, without a trailing slash — Webflow adds each page\'s slug) or, for one static page, from Page settings > SEO settings > Page canonical URL (a full URL starting with https://). Any other canonical comes from ' + CUSTOM_CODE_PLACES + ' or from a tool such as Google Tag Manager — Webflow advises not to set the global canonical tag when another tool injects it. Publish after the change.';
+  var HEAD_PARSE_NOTE = 'A tag written in the head custom code can still end up in <body>: when an element that isn\'t allowed in <head> (for example a <div>, <img>, <p> or plain text) comes before it, the browser closes <head> early and everything after it lands in <body>.';
+
+  // A1 — is THIS page blocked in robots.txt for Googlebot / for AI search crawlers?
+  var AI_SEARCH_BOTS = [
+    { token: 'oai-searchbot', name: 'OAI-SearchBot (ChatGPT search)' },
+    { token: 'perplexitybot', name: 'PerplexityBot (Perplexity)' },
+    { token: 'claude-searchbot', name: 'Claude-SearchBot (Claude search)' },
+    { token: 'claude-user', name: 'Claude-User (Claude fetching pages for users)' }
+  ];
+  function checkRobotsForPage() {
+    var CAT = 'Technical / crawlability';
+    var target = LOC.pathname + LOC.search;
+    var stagingNote = /\.webflow\.io$/.test(LOC.hostname)
+      ? ' This is the webflow.io staging domain: with "Staging indexing" turned off, Webflow publishes a robots.txt on the staging subdomain that tells search engines to ignore it — expected here; check the live domain.' : '';
+    var ROBOTS_FIX = 'In Webflow: Site settings > SEO > Indexing — edit the robots.txt rules (also check the Traffic control toggles there, which generate robots.txt rules for known bots), save and publish. A page blocked in robots.txt still stays in Webflow\'s auto-generated sitemap.';
+    var NOTE = 'Relevant to both SEO and AEO — a page Google can\'t crawl can\'t be used as a source for AI Overviews / AI Mode either.';
+    getRobotsTxt().then(function (res) {
+      if (res.error) { reportCheckSkipped('robots.txt check for this page', [res.error]); renderPanel(); return; }
+      if (res.text == null && (res.status >= 500 || res.status === 429)) {
+        addFinding({ check: 'crawl.robots', category: CAT, severity: 'error', title: 'robots.txt answers HTTP ' + res.status,
+          description: LOC.origin + '/robots.txt',
+          why: 'Google treats a robots.txt that can\'t be fetched because of a server error (5xx, or 429) as a server error: for the first 12 hours it stops crawling the site, then for up to 30 days it uses the last good version of the file. RFC 9309 tells crawlers to assume a complete disallow while robots.txt is unreachable.',
+          fix: 'Make /robots.txt answer HTTP 200. On Webflow hosting the file is generated from Site settings > SEO > Indexing; if a proxy or CDN sits in front of the site, the error comes from there.',
+          ownerNote: 'If a proxy / CDN (e.g. Cloudflare) sits in front of the site, whoever manages it has to fix the response.', element: null });
+        renderPanel(); return;
+      }
+      var noFile = res.text == null;                    // 4xx (except 429) = no robots.txt = no restrictions
+      var groups = noFile ? [] : parseRobotsTxt(res.text);
+      var g = robotsVerdict(groups, 'googlebot', target);
+      if (g.blocked) {
+        addFinding({ check: 'crawl.robots', category: CAT, severity: 'error', title: 'Page is blocked in robots.txt for Googlebot',
+          description: 'Path: ' + target + '\nRule: ' + g.rule + ' (group: User-agent: ' + g.group + ')',
+          why: 'Google can\'t crawl this page, so it can\'t read its content. Google Search Central: a page blocked in robots.txt can still appear in search results (for example when other sites link to it), but the result won\'t have a description; and for AI Overviews / AI Mode, crawling must be allowed in robots.txt.' + stagingNote,
+          fix: ROBOTS_FIX, element: null, crossRelevant: true, crossNote: NOTE, crossNoteReverse: NOTE });
+      } else {
+        addSuccess({ check: 'crawl.robots', category: CAT, title: 'Page is not blocked in robots.txt for Googlebot',
+          description: noFile ? 'There is no robots.txt (HTTP ' + res.status + '), so there are no crawl restrictions.'
+            : (g.rule ? 'Applicable rule: ' + g.rule + ' (group: User-agent: ' + g.group + ')'
+              : (g.group ? 'No rule in the applicable group (User-agent: ' + g.group + ') covers this path.' : 'No group in robots.txt applies to Googlebot.')),
+          element: null, crossRelevant: true, crossNote: NOTE, crossNoteReverse: NOTE });
+      }
+      var blockedAi = [];
+      AI_SEARCH_BOTS.forEach(function (b) {
+        var v = robotsVerdict(groups, b.token, target);
+        if (v.blocked) blockedAi.push(b.name + ': ' + v.rule + ' (group: User-agent: ' + v.group + ')');
+      });
+      if (blockedAi.length) {
+        addFinding({ check: 'aeo.robots', group: 'aeo', category: CAT, severity: 'warning',
+          title: 'Page is blocked in robots.txt for AI search crawlers (' + blockedAi.length + ' of ' + AI_SEARCH_BOTS.length + ')',
+          description: blockedAi.join('\n'),
+          why: 'OpenAI uses OAI-SearchBot to show websites in ChatGPT search and recommends allowing it in robots.txt; Perplexity recommends allowing PerplexityBot so pages can be surfaced and linked in its answers; Anthropic says that disabling Claude-SearchBot or Claude-User may reduce the site\'s visibility in Claude\'s search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.' + stagingNote,
+          fix: ROBOTS_FIX, element: null });
+      } else {
+        addSuccess({ check: 'aeo.robots', group: 'aeo', category: CAT, title: 'Page is not blocked in robots.txt for AI search crawlers',
+          description: AI_SEARCH_BOTS.map(function (b) { return b.name; }).join(', '), element: null });
+      }
+      renderPanel();
+    });
+  }
+
+  // A2 — is the canonical tag itself valid (one, absolute, in <head>, no fragment)?
+  function checkCanonicalValid() {
+    var all = canonicalLinks(document);
+    var CK = 'meta.canonicalValid', CAT = 'URL & page duplication', problems = 0;
+    var tagText = function (l) { return '<link rel="canonical" href="' + (l.getAttribute('href') || '') + '">'; };
+    var inHead = all.filter(inHeadOf(document));
+    var outside = all.filter(function (l) { return inHead.indexOf(l) === -1; });
+    // No canonical in <head> = Google sees none: "Canonical tag is missing" reports it (and names a stray one in <body>).
+    if (!inHead.length) return;
+    if (outside.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical tag is outside <head> (' + outside.length + ')',
+        description: outside.map(tagText).join('\n'),
+        why: 'Google Search Central: the rel="canonical" link element is only accepted if it appears in the <head> section of the HTML — this extra one is ignored, but it shows that the head code has a problem. ' + HEAD_PARSE_NOTE,
+        fix: 'Move the canonical into <head> and remove from the head code above it anything that isn\'t allowed in <head> (only <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> and <template> belong there). ' + CANON_FIX,
+        element: outside[0] });
+    }
+    if (inHead.length > 1) {
+      problems++;
+      var urls = [];
+      inHead.forEach(function (l) { var u = absUrl(l.getAttribute('href') || ''); if (u && urls.indexOf(u) === -1) urls.push(u); });
+      if (urls.length > 1) {
+        addFinding({ check: CK, category: CAT, severity: 'error', title: 'More than one canonical tag, with different URLs (' + inHead.length + ')',
+          description: inHead.map(tagText).join('\n'),
+          why: 'Google Search Central: conflicting or multiple rel="canonical" link tags may lead to unexpected results — make sure there is only one. Lighthouse fails a page that has more than one canonical link.',
+          fix: 'Keep exactly one canonical. ' + CANON_FIX, element: inHead[1] });
+      } else {
+        addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical tag appears ' + inHead.length + ' times (same URL)',
+          description: inHead.map(tagText).join('\n'),
+          why: 'Google Search Central asks that the rel="canonical" link tag is the only one on the page, and Lighthouse fails a page that has more than one canonical link even when they agree. Usually one comes from the Webflow settings and another from custom code.',
+          fix: 'Remove the extra canonical. ' + CANON_FIX, element: inHead[1] });
+      }
+    }
+    var relative = inHead.filter(function (l) { var h = (l.getAttribute('href') || '').trim(); return h && !/^https?:\/\//i.test(h); });
+    if (relative.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical uses a relative URL (' + (relative[0].getAttribute('href') || '').trim().slice(0, 80) + ')',
+        description: relative.map(tagText).join('\n'),
+        why: 'Google Search Central: use absolute URLs rather than relative paths in rel="canonical". Relative paths are supported, but Google doesn\'t recommend them because they can cause problems in the long run (for example, if a testing site gets crawled).',
+        fix: 'Use a full URL starting with https://. ' + CANON_FIX, element: relative[0] });
+    }
+    var frag = inHead.filter(function (l) { return (l.getAttribute('href') || '').indexOf('#') > -1; });
+    if (frag.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical URL contains a fragment (#)',
+        description: frag.map(tagText).join('\n'),
+        why: 'Google Search Central: don\'t specify a URL fragment as canonical — Google generally doesn\'t support URL fragments.',
+        fix: 'Remove the #... part from the canonical URL. ' + CANON_FIX, element: frag[0] });
+    }
+    if (!problems) addSuccess({ check: CK, category: CAT, title: 'Canonical tag is valid (one absolute URL, in <head>)', description: tagText(inHead[0]), element: inHead[0] });
+  }
+
+  // A3 — does JavaScript change what the original HTML says about noindex / canonical?
+  function checkOriginalVsRendered() {
+    var CK = 'crawl.jsMismatch', CAT = 'Technical / crawlability';
+    getRawDoc().then(function (raw) {
+      if (raw.error) { reportCheckSkipped('Original vs rendered HTML check', [raw.error]); renderPanel(); return; }
+      var issues = 0;
+      var rawNoindex = docNoindexTag(raw.doc), liveNoindex = docNoindexTag(document);
+      if (rawNoindex && !liveNoindex) {
+        issues++;
+        addFinding({ check: CK, category: CAT, severity: 'error', title: 'noindex is in the original HTML but removed by JavaScript',
+          description: 'Original HTML: ' + rawNoindex + '\nAfter JavaScript: no noindex',
+          why: 'Google Search Central (JavaScript SEO basics): when Google encounters the noindex tag, it may skip rendering and JavaScript execution, so using JavaScript to change or remove the robots meta tag from noindex may not work as expected. If the page should be indexed, don\'t use a noindex tag in the original page code.',
+          fix: 'Remove the noindex from the original HTML and remove the script that deletes it. In Webflow, Page settings > SEO settings > "Sitemap indexing" turned off is what adds <meta name="robots" content="noindex"> — turn it on (for a CMS item: the Collection item > Item details > Sitemap indexing); a noindex can also come from ' + CUSTOM_CODE_PLACES + '. Publish.',
+          element: null });
+      }
+      var rawC = canonicalLinks(raw.doc).filter(inHeadOf(raw.doc)).map(function (l) { return absUrl(l.getAttribute('href') || ''); }).filter(Boolean);
+      var liveC = canonicalLinks(document).filter(inHeadOf(document)).map(function (l) { return absUrl(l.getAttribute('href') || ''); }).filter(Boolean);
+      if (rawC.length && liveC.length && rawC[0] !== liveC[0]) {
+        issues++;
+        addFinding({ check: CK, category: CAT, severity: 'error', title: 'Canonical in the original HTML differs from the canonical after JavaScript',
+          description: 'Original HTML: ' + rawC[0] + '\nAfter JavaScript: ' + liveC[0],
+          why: 'Google Search Central (JavaScript SEO basics): you shouldn\'t use JavaScript to change the canonical URL to something else than the URL you specified as the canonical URL in the original HTML — if JavaScript sets it, it must set the same value as the original HTML.',
+          fix: 'Find the script that changes the canonical (custom code, Google Tag Manager or another tool) and stop it, so only one source sets the canonical. ' + CANON_FIX,
+          element: null });
+      }
+      if (!issues) {
+        addSuccess({ check: CK, category: CAT, title: 'Original HTML and the page after JavaScript agree on noindex and canonical',
+          description: 'noindex: ' + (rawNoindex ? 'yes' : 'no') + ' / ' + (liveNoindex ? 'yes' : 'no') + ' — canonical: ' + (rawC[0] || '(none)') + ' / ' + (liveC[0] || '(none)'), element: null });
+      }
+      renderPanel();
+    });
+  }
+
+  // A4 — meta refresh redirect (in the live page, the original HTML, or the HTTP "Refresh" header)
+  function parseRefresh(content) {
+    var m = /^\s*(\d+(?:\.\d*)?)\s*(?:[;,]\s*(?:url\s*=\s*)?([\s\S]*))?$/i.exec(content || '');
+    if (!m) return null;
+    return { delay: parseFloat(m[1]), url: (m[2] || '').trim().replace(/^['"]|['"]$/g, '') };
+  }
+  function checkMetaRefresh() {
+    var CK = 'crawl.metaRefresh', CAT = 'Technical / crawlability';
+    var seen = {}, list = [];
+    var collect = function (doc) {
+      Array.prototype.forEach.call(doc.querySelectorAll('meta[http-equiv]'), function (m) {
+        if (!/^\s*refresh\s*$/i.test(m.getAttribute('http-equiv') || '')) return;
+        var c = m.getAttribute('content') || '';
+        if (seen['m:' + c]) return;
+        seen['m:' + c] = true;
+        list.push({ content: c, header: false, el: doc === document ? m : null });
+      });
+    };
+    collect(document);
+    getRawDoc().then(function (raw) {
+      if (!raw.error) {
+        collect(raw.doc);
+        if (raw.refreshHeader) list.push({ content: raw.refreshHeader, header: true, el: null });
+      }
+      var redirects = [];
+      list.forEach(function (x) {
+        var p = parseRefresh(x.content);
+        if (!p || !p.url) return;                       // no URL = the page only reloads itself, not a redirect
+        var to = absUrl(p.url);
+        if (!to || to.split('#')[0] === LOC.href.split('#')[0]) return;
+        redirects.push({ delay: p.delay, to: to, x: x });
+      });
+      redirects.forEach(function (r) {
+        addFinding({ check: CK, category: CAT, severity: 'error',
+          title: r.delay === 0 ? 'Page redirects instantly with a meta refresh' : 'Page redirects with a meta refresh after ' + r.delay + ' s',
+          description: (r.x.header ? 'HTTP header "Refresh: ' + r.x.content + '"' : '<meta http-equiv="refresh" content="' + r.x.content + '">') + '\nTarget: ' + r.to,
+          why: 'Google Search Central treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect, and recommends a permanent server-side redirect whenever possible — meta refresh only where the platform can\'t do server-side redirects. Ahrefs reports a meta refresh redirect as a critical issue and Screaming Frog as a redirection to fix.',
+          fix: 'Webflow can do server-side 301 redirects: Site settings > Publishing > 301 redirects — enter the old path and the new URL, then publish. Remove the meta refresh from ' + CUSTOM_CODE_PLACES + '.',
+          element: r.x.el });
+      });
+      if (!redirects.length) addSuccess({ check: CK, category: CAT, title: 'No meta refresh redirect on the page', description: '', element: null });
+      renderPanel();
+    });
+  }
+
+  // A5 — hreflang (only when the page has hreflang tags)
+  function hreflangLinks(doc) {
+    return Array.prototype.filter.call(doc.querySelectorAll('link[hreflang]'), function (l) { return /(^|\s)alternate(\s|$)/i.test(l.getAttribute('rel') || ''); });
+  }
+  function validHreflang(v) {
+    v = (v || '').trim();
+    if (/^x-default$/i.test(v)) return true;
+    var m = /^([A-Za-z]{2})(?:-([A-Za-z]{4}))?(?:-([A-Za-z]{2}))?$/.exec(v);
+    if (!m) return false;
+    if (ISO_639_1.indexOf(m[1].toLowerCase()) === -1) return false;
+    if (m[2] && ISO_15924.indexOf(m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase()) === -1) return false;
+    if (m[3] && ISO_3166_1.indexOf(m[3].toUpperCase()) === -1) return false;
+    return true;
+  }
+  function checkHreflang() {
+    var all = hreflangLinks(document);
+    if (!all.length) return;                            // single-language page: the check doesn't apply
+    var CK = 'intl.hreflang', CAT = 'International (hreflang)', problems = 0;
+    var HREFLANG_FIX = 'In Webflow, Localization generates the hreflang tags by itself: Settings panel > Localization lets you turn automatic generation on or off and choose the base URL (the published/canonical URL or a custom one). Hreflang tags written in ' + CUSTOM_CODE_PLACES + ' have to be fixed there.';
+    var tagText = function (l) { return '<link rel="alternate" hreflang="' + (l.getAttribute('hreflang') || '') + '" href="' + (l.getAttribute('href') || '') + '">'; };
+    var inHead = all.filter(inHeadOf(document));
+    var outside = all.filter(function (l) { return inHead.indexOf(l) === -1; });
+    if (outside.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang tags are outside <head> (' + outside.length + ')',
+        description: outside.map(tagText).join('\n'),
+        why: 'Google Search Central: the hreflang <link> tags must be inside a well-formed <head> section of the HTML. ' + HEAD_PARSE_NOTE,
+        fix: HREFLANG_FIX, element: outside[0] });
+      if (!inHead.length) return;                       // nothing in <head> to validate further
+    }
+    var badVal = inHead.filter(function (l) { return !validHreflang(l.getAttribute('hreflang')); });
+    if (badVal.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'error',
+        title: 'Invalid hreflang value: ' + badVal.map(function (l) { return '"' + (l.getAttribute('hreflang') || '') + '"'; }).join(', '),
+        description: badVal.map(tagText).join('\n'),
+        why: 'The hreflang value must always specify a language code in ISO 639-1 format (e.g. "en", "de"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. "en-GB", "es-mx"), or be "x-default". A region alone (e.g. "us") is not valid, and "en-UK" is not valid because the ISO 3166-1 code of the United Kingdom is "GB". (Google Search Central, Lighthouse)',
+        fix: 'Correct the language/region code. ' + HREFLANG_FIX, element: badVal[0] });
+    }
+    var notAbs = inHead.filter(function (l) { return !/^https?:\/\//i.test((l.getAttribute('href') || '').trim()); });
+    if (notAbs.length) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang URL is not fully qualified (' + notAbs.length + ')',
+        description: notAbs.map(tagText).join('\n'),
+        why: 'Google Search Central: alternate URLs must be fully-qualified, including the transport method (http/https) — "https://example.com/foo", not "//example.com/foo" or "/foo".',
+        fix: 'Use full URLs starting with https://. ' + HREFLANG_FIX, element: notAbs[0] });
+    }
+    var selfKeys = [pageKey(LOC.href)];
+    var canon = canonicalLinks(document).filter(inHeadOf(document))[0];
+    if (canon) { var ck = pageKey(canon.getAttribute('href') || ''); if (ck && selfKeys.indexOf(ck) === -1) selfKeys.push(ck); }
+    var hasSelf = inHead.some(function (l) { return selfKeys.indexOf(pageKey(l.getAttribute('href') || '')) > -1; });
+    if (!hasSelf) {
+      problems++;
+      addFinding({ check: CK, category: CAT, severity: 'error', title: 'This page is missing from its own hreflang set (no self-reference)',
+        description: 'This page: ' + LOC.href.split('#')[0] + '\n' + inHead.map(tagText).join('\n'),
+        why: 'Google Search Central: each language version must list itself as well as all other language versions — for each variation of the page, include one <link> for each page variant, including itself.',
+        fix: HREFLANG_FIX, element: inHead[0] || all[0] });
+    }
+    if (!inHead.some(function (l) { return /^x-default$/i.test((l.getAttribute('hreflang') || '').trim()); })) {
+      addFinding({ check: CK, category: CAT, severity: 'info', title: 'No x-default hreflang',
+        description: '',
+        why: 'Google Search Central: x-default matches any language not explicitly listed, and Google suggests considering a fallback page for unmatched languages, especially on language/country selectors or auto-redirecting home pages. Recommended, not required.',
+        fix: HREFLANG_FIX, element: inHead[0] || all[0] });
+    }
+    // Return links: every other version must point back to this page. Only same-origin versions can be read from the browser.
+    var targets = [];
+    inHead.forEach(function (l) {
+      var h = (l.getAttribute('href') || '').trim();
+      if (!/^https?:\/\//i.test(h)) return;
+      var k = pageKey(h);
+      if (!k || selfKeys.indexOf(k) > -1 || targets.some(function (t) { return t.key === k; })) return;
+      targets.push({ key: k, url: h, lang: (l.getAttribute('hreflang') || '').trim() });
+    });
+    var same = targets.filter(function (t) { try { return new URL(t.url).origin === LOC.origin; } catch (e) { return false; } });
+    var cross = targets.filter(function (t) { return same.indexOf(t) === -1; });
+    var toCheck = same.slice(0, 12);
+    var broken = [], noReturn = [], nonCanon = [], failed = [];
+    var finish = function () {
+      if (broken.length) {
+        problems++;
+        addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang points to a page that does not load directly (' + broken.length + ')',
+          description: broken.join('\n'),
+          why: 'The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can\'t work. Screaming Frog (Non-200 Hreflang URLs) and Ahrefs (Hreflang to broken page) report this.',
+          fix: 'Point the hreflang to the final URL of each version. ' + HREFLANG_FIX, element: null });
+      }
+      if (noReturn.length) {
+        problems++;
+        addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang return link missing on ' + noReturn.length + ' version(s)',
+          description: noReturn.join('\n'),
+          why: 'Google Search Central: if two pages don\'t both point to each other, the tags will be ignored. Each version listed here has hreflang tags, or none, that don\'t point back to this page.',
+          fix: 'Every version must list all versions, including this page. ' + HREFLANG_FIX, element: null });
+      }
+      if (nonCanon.length) {
+        problems++;
+        addFinding({ check: CK, category: CAT, severity: 'warning', title: 'hreflang points to a URL whose canonical is a different page (' + nonCanon.length + ')',
+          description: nonCanon.join('\n'),
+          why: 'The alternate version says another URL is its primary (canonical) version. Google Search Central asks that hreflang and canonical agree (specify a canonical page in the same language); Ahrefs (Hreflang to non-canonical) and Screaming Frog (Hreflang: Not Using Canonical) report this.',
+          fix: 'Point the hreflang to the canonical URL of each version, or fix that version\'s canonical. ' + HREFLANG_FIX, element: null });
+      }
+      var skippedReasons = [];
+      if (cross.length) skippedReasons.push(cross.length + ' version(s) on another domain can\'t be read from the browser (' + cross.map(function (t) { return t.url; }).join(', ').slice(0, 200) + ')');
+      if (same.length > toCheck.length) skippedReasons.push('only the first ' + toCheck.length + ' versions were checked');
+      if (failed.length) skippedReasons.push(CSP_OR_NETWORK);
+      if (skippedReasons.length) reportCheckSkipped('hreflang return-link check (some versions)', skippedReasons);
+      if (!problems) {
+        addSuccess({ check: CK, category: CAT, title: 'hreflang tags are valid (' + inHead.length + ' versions) and the checked versions link back',
+          description: inHead.map(tagText).join('\n'), element: inHead[0] });
+      }
+      renderPanel();
+    };
+    if (!toCheck.length) { finish(); return; }
+    var left = toCheck.length;
+    toCheck.forEach(function (t) {
+      fetch(t.url, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) { broken.push(t.lang + ' → ' + t.url + ' — HTTP ' + r.status); return null; }
+        if (r.redirected && pageKey(r.url) !== t.key) { broken.push(t.lang + ' → ' + t.url + ' — redirects to ' + r.url); return null; }
+        return r.text();
+      }).then(function (html) {
+        if (html == null) return;
+        var d = new DOMParser().parseFromString(html, 'text/html');
+        var back = hreflangLinks(d).filter(inHeadOf(d)).some(function (l) { return selfKeys.indexOf(pageKey(l.getAttribute('href') || '', t.url)) > -1; });
+        if (!back) noReturn.push(t.lang + ' → ' + t.url);
+        var c = canonicalLinks(d).filter(inHeadOf(d))[0];
+        if (c) { var ckey = pageKey(c.getAttribute('href') || '', t.url); if (ckey && ckey !== t.key) nonCanon.push(t.lang + ' → ' + t.url + ' (canonical: ' + c.getAttribute('href') + ')'); }
+      }).catch(function () { failed.push(t.url); }).then(function () { if (--left === 0) finish(); });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // 5.3d Group B (05.11.2026): broken images, links Google can't crawl / qualify, schema required properties and
+  // visible text, mobile vs desktop content, tap targets. Sources quoted in SPEC.md (05.11.2026).
+  // ---------------------------------------------------------------------
+  // Text normalised for comparing: case, quotes/dashes, punctuation and whitespace don't matter.
+  function normText(s) {
+    s = String(s || '');
+    try { s = s.normalize('NFKC'); } catch (e) {}
+    return s.toLowerCase().replace(/[‘’‚‛′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  // B8 — images that don't load (404, wrong URL, deleted file). Loaded with an Image object, which also works for the CDN.
+  function checkBrokenImages() {
+    var CK = 'img.broken', byUrl = {}, order = [];
+    Array.prototype.forEach.call(document.images, function (img) {
+      if (img.closest('#seo-audit-host')) return;
+      var raw = img.currentSrc || img.getAttribute('src') || '';
+      if (!raw || /^(data|blob):/i.test(raw)) return;
+      var u = absUrl(raw);
+      if (!u) return;
+      if (!byUrl[u]) { byUrl[u] = []; order.push(u); }
+      byUrl[u].push(img);
+    });
+    var urls = order.slice(0, 150);
+    setCheckTotal(CK, urls.length);
+    if (!urls.length) return;
+    var left = urls.length, broken = 0;
+    urls.forEach(function (u) {
+      auditPending++;
+      var probe = new Image(), settled = false;
+      var end = function (ok) {
+        if (settled) return;
+        settled = true; auditPending--;
+        if (!ok) {
+          broken++;
+          var el = byUrl[u][0];
+          addFinding({ check: CK, category: 'Images', severity: 'error', title: 'Image does not load (broken image)',
+            description: u.slice(0, 200) + (byUrl[u].length > 1 ? '\n(used ' + byUrl[u].length + ' times on this page)' : '') + (el.getAttribute('alt') ? '\nalt: "' + el.getAttribute('alt').slice(0, 80) + '"' : ''),
+            why: 'The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot. Semrush reports broken internal images as an error, Ahrefs as "Image broken".',
+            fix: 'Replace the image: select it > Element settings panel > Image settings > Replace image (or fix the URL in the CMS field / custom code it comes from). Publish.', element: el });
+        }
+        if (--left === 0) {
+          if (!broken) addSuccess({ check: CK, category: 'Images', title: 'All images load (' + urls.length + ' checked)', description: '', element: null });
+          renderPanel();
+        }
+      };
+      probe.onload = function () { end(true); };
+      probe.onerror = function () { end(false); };
+      setTimeout(function () { end(true); }, 20000);   // no answer in 20 s: not reported (unknown, not broken)
+      probe.src = u;
+    });
+  }
+
+  // B9 / B10 / B12 — links: navigation Google can't crawl, internal nofollow, image links without alt text.
+  // Checked in the HTML regardless of visibility (Google reads hidden links too). Not run in the device frames
+  // (they strip inline handlers such as onclick).
+  function checkLinkCrawl() {
+    var NAV_JS = /\blocation\b|window\.open|\.href\s*=|\bnavigate\s*\(/i;
+    // 9) "Not recommended": <span href>, <a onclick> without href, other tags that act as links through script events.
+    var jsNav = [];
+    Array.prototype.forEach.call(document.querySelectorAll('[onclick], [href], [role="link"]'), function (el) {
+      if (el.closest('#seo-audit-host')) return;
+      var tag = el.tagName;
+      if (/^(A|LINK|AREA|BASE)$/.test(tag)) return;            // <a> without href is reported as "Link doesn't go anywhere"
+      if (el.namespaceURI === 'http://www.w3.org/2000/svg') return;   // SVG <use href> / <image href> are not links
+      var why = null;
+      if (el.hasAttribute('href')) why = 'href on <' + tag.toLowerCase() + '>';
+      else if (el.getAttribute('role') === 'link') why = 'role="link" without <a href>';
+      else if (NAV_JS.test(el.getAttribute('onclick') || '')) why = 'onclick navigation';
+      if (why) jsNav.push({ el: el, why: why });
+    });
+    var anchors = Array.prototype.filter.call(document.querySelectorAll('a[href]'), function (a) { return !a.closest('#seo-audit-host'); });
+    setCheckTotal('links.js', anchors.length + jsNav.length);
+    jsNav.slice(0, 30).forEach(function (x) {
+      addFinding({ check: 'links.js', category: 'Links', severity: 'warning', title: 'Navigation without a crawlable link (' + x.why + ')',
+        description: '"' + (text(x.el) || x.el.getAttribute('aria-label') || '').slice(0, 60) + '" <' + elLabel(x.el) + '>' + (x.el.getAttribute('href') ? ' href="' + x.el.getAttribute('href').slice(0, 100) + '"' : '') + (x.el.getAttribute('onclick') ? ' onclick="' + x.el.getAttribute('onclick').slice(0, 100) + '"' : ''),
+        why: 'Google Search Central: Google can generally only crawl a link if it is an <a> element with an href attribute; it can\'t reliably extract URLs from elements that don\'t have an href or from other tags that act as links through script events (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.',
+        fix: 'Make it a real link: in Webflow use a Link block, Text link or Button and set the destination in the Element settings panel (Link settings); to make an image or a block clickable, drop it inside a Link block. Remove the click script / custom attribute that did the navigation.', element: x.el });
+    });
+    if (!jsNav.length) addSuccess({ check: 'links.js', category: 'Links', title: 'All navigation uses crawlable <a href> links', description: '', element: null });
+
+    // 10) rel="nofollow" on links to the same site
+    var internal = anchors.filter(function (a) { var h = hostnameOf(a.getAttribute('href') || ''); return h && isSameSite(h) && !/^(mailto|tel|javascript):/i.test(a.getAttribute('href')); });
+    var nof = internal.filter(function (a) { return /(^|[\s,])nofollow([\s,]|$)/i.test(a.getAttribute('rel') || ''); });
+    setCheckTotal('links.nofollow', internal.length);
+    nof.slice(0, 30).forEach(function (a) {
+      addFinding({ check: 'links.nofollow', category: 'Links', severity: 'warning', title: 'Internal link has rel="nofollow"',
+        description: '"' + (text(a) || a.getAttribute('aria-label') || '').slice(0, 60) + '" → ' + (a.getAttribute('href') || '').slice(0, 120) + ' (rel="' + a.getAttribute('rel') + '")',
+        why: 'Google Search Central: links with nofollow will generally not be followed, and nofollow is meant for links you don\'t want Google to associate your site with; for links within your own site Google points to the robots.txt disallow rule instead. A nofollow on an internal link holds back crawling of your own page. Semrush and Screaming Frog report internal nofollow links as a warning.',
+        fix: 'Remove rel="nofollow" from the internal link — in Webflow it comes from a custom attribute (Element settings panel > Custom attributes) or from custom code. To keep a page out of Google, use noindex (Page settings > SEO settings > Sitemap indexing off); to stop crawling, robots.txt.', element: a });
+    });
+    if (internal.length && !nof.length) addSuccess({ check: 'links.nofollow', category: 'Links', title: 'No internal link has rel="nofollow" (' + internal.length + ' checked)', description: '', element: null });
+
+    // 12) image links: Google uses the image's alt as the anchor text (title as a fallback for an empty link)
+    var imgLinks = anchors.filter(function (a) { return !(a.textContent || '').trim() && a.querySelector('img'); });
+    var noAlt = imgLinks.filter(function (a) {
+      if ((a.getAttribute('title') || '').trim()) return false;
+      return Array.prototype.every.call(a.querySelectorAll('img'), function (i) { return !(i.getAttribute('alt') || '').trim(); });
+    });
+    setCheckTotal('links.imgAlt', imgLinks.length);
+    noAlt.slice(0, 30).forEach(function (a) {
+      var img = a.querySelector('img');
+      addFinding({ check: 'links.imgAlt', category: 'Links', severity: 'warning', title: 'Image link has no anchor text (image without alt)',
+        description: '→ ' + (a.getAttribute('href') || '').slice(0, 120) + '\nimage: ' + ((img.currentSrc || img.getAttribute('src') || '').replace(/\?.*$/, '').split('/').pop() || '').slice(0, 80) + (a.getAttribute('aria-label') ? '\n(aria-label="' + a.getAttribute('aria-label').slice(0, 60) + '" helps screen readers, but Google uses the image alt as anchor text)' : ''),
+        why: 'Google Search Central: for images as links, Google uses the alt attribute of the img element as anchor text — an image link with empty alt text and no link text is its "bad" example. Without it Google gets no description of the page the link points to.',
+        fix: 'Give the image descriptive alt text: select it > Element settings panel > Image settings > Alt text > Custom description (or in the Assets panel: the image\'s settings > descriptive text; for a CMS image bind the alt text to a field). Or add visible text inside the link.', element: a });
+    });
+    if (imgLinks.length && !noAlt.length) addSuccess({ check: 'links.imgAlt', category: 'Links', title: 'All image links have alt text (' + imgLinks.length + ' checked)', description: '', element: null });
+  }
+
+  // B11 — schema: Google's required properties for the rich-result types a Webflow page usually has, and whether
+  // the marked-up names/headlines are on the page. JSON-LD only (Microdata/RDFa are not read).
+  function schemaTypesOfNode(n) {
+    var t = n && n['@type'];
+    if (!t) return [];
+    return (Array.isArray(t) ? t : [t]).map(function (x) { return String(x).replace(/^.*[\/:#]/, ''); });
+  }
+  function schemaHas(v) {
+    if (v === undefined || v === null) return false;
+    if (typeof v === 'string') return v.trim() !== '';
+    if (Array.isArray(v)) return v.some(schemaHas);
+    if (typeof v === 'number' || typeof v === 'boolean') return true;
+    if (typeof v === 'object') return Object.keys(v).some(function (k) { return k.charAt(0) !== '@' ? schemaHas(v[k]) : (k === '@id' && schemaHas(v[k])); });
+    return false;
+  }
+  function schemaGet(n, path) {
+    var parts = path.split('.'), cur = [n];
+    parts.forEach(function (p) {
+      var next = [];
+      cur.forEach(function (c) { if (c && typeof c === 'object') { var v = c[p]; if (Array.isArray(v)) next = next.concat(v); else if (v !== undefined) next.push(v); } });
+      cur = next;
+    });
+    return cur;
+  }
+  function schemaHasPath(n, path) { return schemaGet(n, path).some(schemaHas); }
+  // -> list of missing required properties (Google Search Central, structured data type pages, read 05.11.2026)
+  function schemaMissing(type, n, nested) {
+    var miss = [], need = function (p) { if (!schemaHasPath(n, p)) miss.push(p); };
+    var oneOf = function (ps) { if (!ps.some(function (p) { return schemaHasPath(n, p); })) miss.push(ps.join(' / ')); };
+    if (type === 'Product') {
+      need('name'); oneOf(['review', 'aggregateRating', 'offers']);
+      schemaGet(n, 'offers').forEach(function (o) {
+        if (!o || typeof o !== 'object') return;
+        var ot = schemaTypesOfNode(o);
+        if (ot.indexOf('AggregateOffer') > -1) { if (!schemaHasPath(o, 'lowPrice')) miss.push('offers.lowPrice'); if (!schemaHasPath(o, 'priceCurrency')) miss.push('offers.priceCurrency'); }
+        else if (!schemaHasPath(o, 'price') && !schemaHasPath(o, 'priceSpecification.price')) miss.push('offers.price / offers.priceSpecification.price');
+      });
+      schemaGet(n, 'review').forEach(function (r) { if (r && typeof r === 'object') schemaMissing('Review', r, true).forEach(function (m) { miss.push('review.' + m); }); });
+      schemaGet(n, 'aggregateRating').forEach(function (r) { if (r && typeof r === 'object') schemaMissing('AggregateRating', r, true).forEach(function (m) { miss.push('aggregateRating.' + m); }); });
+    } else if (type === 'SoftwareApplication' || type === 'MobileApplication' || type === 'WebApplication') {
+      need('name'); need('offers.price'); oneOf(['aggregateRating', 'review']);
+    } else if (type === 'Review') {
+      need('author'); if (!nested) { need('itemReviewed'); need('itemReviewed.name'); } need('reviewRating'); need('reviewRating.ratingValue');
+    } else if (type === 'AggregateRating') {
+      if (!nested) { need('itemReviewed'); need('itemReviewed.name'); } need('ratingValue'); oneOf(['ratingCount', 'reviewCount']);
+    } else if (type === 'Event') {
+      need('name'); need('startDate'); need('location');
+      var locs = schemaGet(n, 'location').filter(function (l) { return l && typeof l === 'object'; });
+      if (locs.length && !locs.some(function (l) { return schemaTypesOfNode(l).indexOf('VirtualLocation') > -1; })) need('location.address');
+    } else if (type === 'VideoObject') {
+      need('name'); need('thumbnailUrl'); need('uploadDate');
+    } else if (type === 'BreadcrumbList') {
+      var items = schemaGet(n, 'itemListElement').filter(function (i) { return i && typeof i === 'object'; });
+      if (!items.length) miss.push('itemListElement');
+      items.forEach(function (it, idx) {
+        var label = 'itemListElement[' + (idx + 1) + ']';
+        if (!schemaHasPath(it, 'position')) miss.push(label + '.position');
+        var itm = it.item, itemIsThingWithName = itm && typeof itm === 'object' && schemaHasPath(itm, 'name');
+        if (!schemaHasPath(it, 'name') && !itemIsThingWithName) miss.push(label + '.name');
+        if (idx < items.length - 1 && !schemaHasPath(it, 'item')) miss.push(label + '.item');
+      });
+    } else if (type === 'LocalBusiness') {
+      need('name'); need('address');
+    } else if (type === 'JobPosting') {
+      need('title'); need('description'); need('datePosted'); need('hiringOrganization');
+      if (!schemaHasPath(n, 'applicantLocationRequirements')) need('jobLocation');
+    }
+    return miss;
+  }
+  var SCHEMA_REQUIRED_TYPES = ['Product', 'SoftwareApplication', 'MobileApplication', 'WebApplication', 'Review', 'AggregateRating', 'Event', 'VideoObject', 'BreadcrumbList', 'LocalBusiness', 'JobPosting'];
+  // Which property holds the name/headline that the page should show
+  var SCHEMA_VISIBLE_PROPS = { Article: 'headline', BlogPosting: 'headline', NewsArticle: 'headline', Product: 'name', Event: 'name', SoftwareApplication: 'name', VideoObject: 'name', JobPosting: 'title', Course: 'name', Recipe: 'name', Question: 'name' };
+  function pageTextNorm() {
+    var parts = [];
+    try {
+      var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: function (t) {
+        var p = t.parentElement;
+        return p && !p.closest('script,style,noscript,template,#seo-audit-host') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      } });
+      var t; while ((t = w.nextNode())) parts.push(t.nodeValue);
+    } catch (e) {}
+    return ' ' + normText(parts.join(' ')) + ' ';
+  }
+  function checkSchemaGoogle(blocks) {
+    var CAT = 'AEO - Structured data (Schema.org)';
+    var SCHEMA_FIX = 'In Webflow: Pages panel > the page\'s Settings > Schema markup field (or the custom code where the JSON-LD was added); on a Collection page bind the CMS fields so every item gets its own values. Publish.';
+    // Walk every node (top level, @graph members and nested objects)
+    // A nested item is a rich-result candidate of its own only when it hangs off a "container" property (WebPage.breadcrumb,
+    // mainEntity, ItemList.itemListElement...). Items that only describe another one (itemReviewed, author, offers, location...)
+    // are checked through their parent.
+    var CONTAINER_PROPS = ['breadcrumb', 'mainEntity', 'mainEntityOfPage', 'hasPart', 'subjectOf', 'video', 'itemListElement', 'workExample', 'about'];
+    var nodes = [];
+    (function walk(v, depth, nested, viaProp) {
+      if (!v || typeof v !== 'object' || depth > 8) return;
+      if (Array.isArray(v)) { v.forEach(function (x) { walk(x, depth + 1, nested, viaProp); }); return; }
+      if (v['@type']) nodes.push({ n: v, nested: nested && CONTAINER_PROPS.indexOf(viaProp) === -1 });
+      Object.keys(v).forEach(function (k) { if (k.charAt(0) !== '@' || k === '@graph') walk(v[k], depth + 1, (k !== '@graph' && !!v['@type']) || (nested && k !== '@graph'), k === '@graph' ? viaProp : k); });
+    })(blocks.map(function (b) { return b.raw; }), 0, false, null);
+    // Required properties (a Review / AggregateRating nested in another item is checked through that item, without itemReviewed)
+    var checkedTypes = [], incomplete = 0;
+    nodes.forEach(function (x) {
+      schemaTypesOfNode(x.n).forEach(function (t) {
+        if (SCHEMA_REQUIRED_TYPES.indexOf(t) === -1) return;
+        if (x.nested) return;                           // checked through the item it belongs to (a nested Review / AggregateRating without itemReviewed)
+        if (checkedTypes.indexOf(t) === -1) checkedTypes.push(t);
+        var miss = schemaMissing(t, x.n, false);
+        if (!miss.length) return;
+        incomplete++;
+        var nm = schemaGet(x.n, 'name').concat(schemaGet(x.n, 'title')).filter(function (v) { return typeof v === 'string'; })[0] || '';
+        addFinding({ check: 'aeo.schemaRequired', group: 'aeo', category: CAT, severity: 'warning',
+          title: t + ' schema is missing properties Google requires: ' + miss.slice(0, 6).join(', ') + (miss.length > 6 ? ' (+' + (miss.length - 6) + ')' : ''),
+          description: nm ? '"' + nm.slice(0, 80) + '"' : '',
+          why: 'Google Search Central lists these as required for the ' + t + ' rich result: without them the item is not eligible for that rich result (Google says structured data enables a feature, it doesn\'t guarantee it, and it doesn\'t affect ranking).',
+          fix: 'Add the missing properties. ' + SCHEMA_FIX, element: null });
+      });
+    });
+    if (checkedTypes.length && !incomplete) addSuccess({ check: 'aeo.schemaRequired', group: 'aeo', category: CAT, title: 'Schema has the properties Google requires (' + checkedTypes.join(', ') + ')', description: '', element: null });
+    // Marked-up names / headlines that don't appear in the page text
+    var pageNorm = null, notFound = [], checked = 0;
+    nodes.forEach(function (x) {
+      schemaTypesOfNode(x.n).forEach(function (t) {
+        var prop = SCHEMA_VISIBLE_PROPS[t];
+        if (!prop) return;
+        var v = x.n[prop];
+        if (typeof v !== 'string' || !v.trim()) return;
+        var key = normText(v);
+        if (key.length < 3) return;
+        if (key.length > 100) key = key.slice(0, 100).replace(/\s\S*$/, '');
+        if (pageNorm === null) pageNorm = pageTextNorm();
+        checked++;
+        if (pageNorm.indexOf(' ' + key + ' ') === -1 && pageNorm.indexOf(' ' + key) === -1) notFound.push(t + '.' + prop + ': "' + v.trim().slice(0, 90) + '"');
+      });
+    });
+    if (notFound.length) {
+      addFinding({ check: 'aeo.schemaVisible', group: 'aeo', category: CAT, severity: 'warning',
+        title: 'Schema text not found on the page (' + notFound.length + ')',
+        description: notFound.slice(0, 8).join('\n') + (notFound.length > 8 ? '\n… +' + (notFound.length - 8) : ''),
+        why: 'Google Search Central: don\'t mark up content that is not visible to readers of the page — if the JSON-LD describes something, the HTML body must describe that same thing, and structured data must be a true representation of the page content. These names/headlines from the schema don\'t appear in the page text (compared without case and punctuation).',
+        fix: 'Make the schema match what the page shows (same headline / name), or show that text on the page. ' + SCHEMA_FIX, element: null });
+    } else if (checked) {
+      addSuccess({ check: 'aeo.schemaVisible', group: 'aeo', category: CAT, title: 'Schema names/headlines appear on the page (' + checked + ' checked)', description: '', element: null });
+    }
+  }
+
+  // B7 — mobile vs desktop content. Every frame (and the main window) lists its headings, text blocks and images
+  // with alt text, and whether each is visible or reachable (inside a tab, accordion, dropdown, slider or menu).
+  // Compared by CONTENT, not by element, because Webflow layouts often duplicate a block for mobile.
+  function collectParityUnits() {
+    var out = [], seen = {}, KINDS = ['tab', 'accordion', 'dropdown', 'slider', 'menu'];
+    var add = function (el, k, keyText, label) {
+      if (out.length >= 800 || el.closest('#seo-audit-host')) return;
+      var key = normText(keyText);
+      if (!key) return;
+      if (k === 'txt') key = key.slice(0, 120);
+      var id = k + '|' + key, r = isReachable(el, KINDS);
+      if (seen[id] !== undefined) { if (r && !out[seen[id]].r) out[seen[id]].r = true; return; }
+      seen[id] = out.length;
+      out.push({ k: k, key: key, d: String(label).replace(/\s+/g, ' ').trim().slice(0, 90), r: r, p: elPath(el), tag: el.tagName });
+    };
+    Array.prototype.forEach.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6'), function (h) { add(h, 'h', h.textContent, h.tagName + ': ' + h.textContent); });
+    Array.prototype.forEach.call(document.querySelectorAll('p,li,blockquote,figcaption,dd,td'), function (el) {
+      if (el.closest('h1,h2,h3,h4,h5,h6')) return;
+      var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t.length >= 40) add(el, 'txt', t, t);
+    });
+    Array.prototype.forEach.call(document.images, function (img) { var a = (img.getAttribute('alt') || '').trim(); if (a) add(img, 'img', a, 'alt: ' + a); });
+    return out;
+  }
+  function checkMobileParity(curDevice, results) {
+    var desk = deviceOfWidth(window.innerWidth) === 'desktop' ? collectParityUnits()
+      : (results.desktop && results.desktop.ok && results.desktop.data.units) || null;
+    var mob = window.innerWidth <= 478 ? collectParityUnits()
+      : (results['mobile-p'] && results['mobile-p'].ok && results['mobile-p'].data.units) || null;
+    if (!desk || !mob) return;                          // a frame failed: not evaluated
+    var onMobile = {};
+    mob.forEach(function (u) { if (u.r) onMobile[u.k + '|' + u.key] = true; });
+    var shown = desk.filter(function (u) { return u.r; });
+    var missing = shown.filter(function (u) {
+      if (onMobile[u.k + '|' + u.key]) return false;
+      if (u.k === 'txt') return !Object.keys(onMobile).some(function (k) { return k.indexOf('txt|' + u.key.slice(0, 60)) === 0; });
+      return true;
+    });
+    var KIND = { h: 'Heading', txt: 'Text', img: 'Image' };
+    if (missing.length) {
+      // The same blocks also show up in the mobile-only "Hidden content" note — that is this problem seen from the other
+      // side, so that note is dropped (one cause, one finding).
+      var missingFlat = missing.map(function (u) { return u.key; }).join('').replace(/\s+/g, '');
+      for (var fi = findings.length - 1; fi >= 0; fi--) {
+        var hf = findings[fi];
+        if (!hf.deviceOnly || !/^Hidden content with a substantial amount of text/.test(hf.title || '') || (hf.devices || []).join() !== 'mobile') continue;
+        var snippets = (hf.description || '').split('\n').slice(1).map(function (l) { return normText(l.replace(/\.\.\."?$/, '')).replace(/\s+/g, '').slice(0, 40); }).filter(Boolean);
+        if (snippets.length && snippets.every(function (sn) { return missingFlat.indexOf(sn) > -1; })) findings.splice(fi, 1);
+      }
+      var first = missing[0], el = null;
+      try { el = elByPath(first.p); } catch (e) {}
+      addFinding({ check: 'mobile.parity', category: 'Mobile', severity: 'warning',
+        title: 'Content visible on desktop is missing on mobile (' + missing.length + ')',
+        description: missing.slice(0, 10).map(function (u) { return KIND[u.k] + ' — ' + u.d; }).join('\n') + (missing.length > 10 ? '\n… +' + (missing.length - 10) : ''),
+        why: 'Google indexes and ranks the mobile version of the page (mobile-first indexing). Google Search Central: make sure the mobile site contains the same content as the desktop site and uses the same headings and image alt text; content may be moved into accordions or tabs on mobile, but content that is removed is content Google can\'t use. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.',
+        fix: 'Show this content on the Mobile breakpoint, or move it into a tab/accordion instead of hiding it. In Webflow an element is hidden per breakpoint with Style panel > Layout > display: none — select the breakpoint in the canvas bar and change it; display is a class style, so it applies to every element with the same class and cascades to smaller breakpoints.',
+        element: el });
+    } else {
+      addSuccess({ check: 'mobile.parity', category: 'Mobile', title: 'Mobile shows the same content as desktop (' + shown.length + ' items compared)', description: '', element: null });
+    }
+  }
+
+  // B13 — tap targets on mobile (WCAG 2.2 SC 2.5.8 Target Size (Minimum), level AA): a target smaller than 24x24 CSS px
+  // fails unless a 24 px circle centred on it doesn't intersect another target or another small target's circle.
+  // Exceptions handled: inline links in a sentence; hidden elements. Runs only at mobile widths (the mobile frames,
+  // or the main window when it is that narrow).
+  function checkTapTargets() {
+    if (window.innerWidth > 767) return;
+    var sel = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="menuitem"], [role="switch"]';
+    var all = Array.prototype.filter.call(document.querySelectorAll(sel), function (el) {
+      if (el.closest('#seo-audit-host') || !isVisible(el)) return false;
+      var st = window.getComputedStyle(el);
+      if (st.pointerEvents === 'none' || st.visibility === 'hidden') return false;
+      if (zeroHeightClipper(el)) return false;
+      return true;
+    });
+    // nested targets (a button inside a link): keep the outermost
+    all = all.filter(function (el) { return !all.some(function (o) { return o !== el && o.contains(el); }); });
+    var T = all.map(function (el) {
+      var r = el.getBoundingClientRect();
+      return { el: el, x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2, small: r.width < 24 || r.height < 24 };
+    }).filter(function (t) { return t.w > 0 && t.h > 0; });
+    var isInline = function (el) {
+      if (window.getComputedStyle(el).display !== 'inline') return false;
+      var b = el.parentElement;
+      while (b && window.getComputedStyle(b).display === 'inline') b = b.parentElement;
+      return !!b && (b.textContent || '').replace(/\s+/g, ' ').trim().length > (el.textContent || '').replace(/\s+/g, ' ').trim().length + 2;
+    };
+    setCheckTotal('mobile.tapTargets', T.length);
+    var fails = 0;
+    T.forEach(function (a) {
+      if (!a.small || isInline(a.el)) return;
+      var clash = T.some(function (b) {
+        if (b === a) return false;
+        if (b.small) return Math.hypot(a.cx - b.cx, a.cy - b.cy) < 24;
+        var dx = Math.max(b.x - a.cx, 0, a.cx - (b.x + b.w)), dy = Math.max(b.y - a.cy, 0, a.cy - (b.y + b.h));
+        return Math.hypot(dx, dy) < 12;
+      });
+      if (!clash || fails >= 40) return;
+      fails++;
+      addFinding({ category: 'Mobile', severity: 'warning', title: 'Tap target is too small and too close to another (' + Math.round(a.w) + 'x' + Math.round(a.h) + ' px)',
+        description: '"' + (text(a.el) || a.el.getAttribute('aria-label') || a.el.getAttribute('title') || '').slice(0, 60) + '" <' + elLabel(a.el) + '>',
+        why: 'WCAG 2.2 (2.5.8 Target Size, level AA): a tap target must be at least 24 by 24 CSS pixels, unless a 24 px circle centred on it does not touch another target. This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. (Lighthouse\'s older SEO audit is stricter: it recommends 48 by 48 px.)',
+        fix: 'On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.', element: a.el });
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -1352,7 +2157,7 @@
             description: 'Checked ' + LOC.origin + '/sitemap.xml (' + locs.length + ' URLs)',
             why: 'The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant.' +
               (intentional ? ' This looks intentional here (the page is noindex or its canonical points elsewhere).' : ''),
-            fix: 'In the Webflow Designer: Pages > this page > Settings > SEO — make sure "Exclude this page from the sitemap" is off, then publish. Also check Project Settings > SEO > Sitemap is enabled (auto-generate).',
+            fix: 'In Webflow: Page settings > SEO settings > "Sitemap indexing" must be on (for a CMS item: the Collection item > Item details > Sitemap indexing); it works only when the site\'s auto-generated sitemap is enabled. Publish after the change.',
             element: null });
         }
         renderPanel();
@@ -1712,18 +2517,6 @@
       addSuccess({ category: 'Content', title: 'No placeholder/Lorem ipsum text on the page', description: '', element: null });
     }
 
-    // Manual <br> line breaks inside headings/paragraphs
-    var brCandidates = Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p'));
-    brCandidates.forEach(function (el) {
-      if (!isVisible(el)) return;
-      var brCount = el.querySelectorAll('br').length;
-      if (brCount >= 1) {
-        addFinding({ category: 'Content', severity: 'info', title: 'Manual <br> line break inside a ' + el.tagName.toLowerCase() + ' element',
-          description: '"' + text(el).slice(0, 80) + '"',
-          why: 'This doesn\'t directly affect SEO ranking, but a line break fixed for desktop layout can "break" and wrap the text oddly on mobile (a mobile-first indexing experience signal).',
-          fix: 'Consider a CSS solution (max-width, responsive font-size) instead of a manual <br>.', element: el });
-      }
-    });
   }
 
   // ---------------------------------------------------------------------
@@ -1989,6 +2782,10 @@
   // always 0). Observers deliver their buffered entries asynchronously, so run() starts the audit from the callback of
   // startPerfObservers() (about 120 ms later) and the checks that need the LCP element read it from perfLcp.
   var perfLcp = [], perfShifts = [];
+  // INP (05.11.2026): Event Timing entries. With buffered:true the browser hands over the PAST interactions that lasted
+  // 104 ms or more (W3C Event Timing: the default buffering threshold) plus the "first-input" entry (always buffered);
+  // new interactions while the panel is open arrive live (see updateInp()).
+  var perfEvents = [], perfFirstInput = [], perfAuditStart = 0;
   function lastLcpEntry() { return perfLcp.length ? perfLcp[perfLcp.length - 1] : null; }
   function startPerfObservers(cb) {
     try {
@@ -1998,6 +2795,17 @@
         var o2 = new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { perfShifts.push(e); }); });
         o2.observe({ type: 'layout-shift', buffered: true });
       }
+    } catch (e) {}
+    perfAuditStart = performance.now();
+    try {
+      // durationThreshold 16 (the minimum): while the panel is open even short interactions are recorded; the
+      // buffered (earlier) ones are only those of 104 ms or longer, plus the first one.
+      new PerformanceObserver(function (l) {
+        var added = false;
+        l.getEntries().forEach(function (e) { perfEvents.push(e); if (e.interactionId) added = true; });
+        if (added) scheduleInpUpdate();
+      }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+      new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { perfFirstInput.push(e); }); scheduleInpUpdate(); }).observe({ type: 'first-input', buffered: true });
     } catch (e) {}
     setTimeout(cb, 120);
   }
@@ -2013,6 +2821,65 @@
       if (cur > best) best = cur;
     });
     return Math.round(best * 1000) / 1000;
+  }
+
+  // INP — Interaction to Next Paint (05.11.2026). Only a real click / tap / key press creates it: events fired by a
+  // script (like this bookmarklet) are "untrusted" and get no interactionId (W3C Event Timing; checked in Chromium).
+  // So the visitor has to interact: interactions made before the audit count, and so do the ones made on the page
+  // while the panel is open — the result and the score update live. Clicks inside the panel are not counted
+  // (the browser reports them on the panel's host element). An interaction's latency = the longest event duration
+  // with the same interactionId; the page's INP = the worst interaction (web.dev: Google ignores one highest
+  // interaction per 50 — only relevant with 50+ interactions). Thresholds (web.dev): <= 200 ms good, > 500 ms poor.
+  var inpReady = false, inpTimer = null;
+  function scheduleInpUpdate() {
+    if (!inpReady) return;
+    clearTimeout(inpTimer);
+    inpTimer = setTimeout(function () {
+      updateInp();
+      try { tagGlobalFindings(); } catch (e) {}
+      renderPanel();
+      try { if (!analysis.busy) saveCurrentRun(); } catch (e) {}
+    }, 250);
+  }
+  function updateInp() {
+    var CWV_NOTE = 'Relevant to both SEO and AEO — Core Web Vitals are part of the Tier-1 technical signals that AEO research links to the likelihood of AI citation.';
+    var CWV_NOTE_REV = 'Relevant to both SEO and AEO — Core Web Vitals (TTFB, LCP, CLS) have been an official Google ranking signal since 2021 (the Page Experience update).';
+    try {
+      // drop the previous INP result (it is replaced, never duplicated)
+      for (var i = findings.length - 1; i >= 0; i--) if (findings[i].inpItem) findings.splice(i, 1);
+      for (var j = successes.length - 1; j >= 0; j--) if (successes[j].inpItem) successes.splice(j, 1);
+      var host = document.getElementById('seo-audit-host');
+      var byId = {}, nInter = 0, worst = null;
+      perfEvents.concat(perfFirstInput).forEach(function (e) {
+        if (!e.interactionId) return;
+        if (host && e.target && (e.target === host || host.contains(e.target))) return;   // a click in the audit panel
+        var prevE = byId[e.interactionId];
+        if (!prevE) { nInter++; byId[e.interactionId] = e; } else if (e.duration > prevE.duration) byId[e.interactionId] = e;
+      });
+      Object.keys(byId).forEach(function (k) { if (!worst || byId[k].duration > worst.duration) worst = byId[k]; });
+      var HOW = 'With this panel open, click or tap things on the page that open or change something on the same page — the menu, tabs, accordions, sliders, dropdowns, form fields. The INP result appears here right away and updates the score. Avoid ordinary links: they open another page and close the panel. Clicks inside this panel are not counted.';
+      if (!worst) {
+        addFinding({ inpItem: true, category: 'Performance (CWV)', severity: 'info', noScore: true, title: 'INP not measured yet — click something on the page',
+          description: '',
+          why: 'INP (Interaction to Next Paint) is the Core Web Vital for responsiveness. Only a real click, tap or key press creates it — scrolling and hovering don\'t count, and the bookmarklet can\'t click for you (clicks made by a script are not counted by the browser). Until you interact, INP has no value and does not affect the score.',
+          fix: HOW, element: null });
+        return;
+      }
+      var inp = Math.round(worst.duration), tgt = worst.target && worst.target.nodeType === 1 ? worst.target : null;
+      var tgtTxt = tgt ? ('<' + elLabel(tgt) + '>') : '';
+      var inpDesc = 'Slowest of ' + nInter + ' interaction(s) measured: ' + worst.name + (tgtTxt ? ' on ' + tgtTxt : '') + '. Keep clicking the menu, tabs, accordions... to measure more — the result updates here.';
+      if (inp > 200) {
+        var inpPoor = inp > 500;
+        addFinding({ inpItem: true, check: 'cwv.inp', category: 'Performance (CWV)', severity: inpPoor ? 'error' : 'warning', title: 'Slow INP (Interaction to Next Paint): ' + inp + 'ms',
+          description: inpDesc,
+          why: 'web.dev: an INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor' + (inpPoor ? ' — this one is poor' : '') + '. INP is a Core Web Vital, and Google says Core Web Vitals are used by its ranking systems. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).',
+          fix: 'Record the slow interaction in Chrome DevTools > Performance and see what runs on that click (custom code, third-party scripts, heavy animations), then make it lighter or defer it.', element: tgt,
+          crossRelevant: true, crossNote: CWV_NOTE, crossNoteReverse: CWV_NOTE_REV });
+      } else {
+        addSuccess({ inpItem: true, check: 'cwv.inp', category: 'Performance (CWV)', title: 'INP is good (' + inp + 'ms, at or under Google\'s 200ms threshold)', description: inpDesc, element: null,
+          crossRelevant: true, crossNote: CWV_NOTE, crossNoteReverse: CWV_NOTE_REV });
+      }
+    } catch (e) {}
   }
 
   function measureCWV(done) {
@@ -2084,6 +2951,10 @@
       addSuccess({ category: 'Performance (CWV)', title: 'CLS is good (' + cwv.cls + ', under Google\'s 0.1 threshold)', description: '', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     }
+
+    // INP — see updateInp(): measured from the interactions made before the audit and, live, while the panel is open.
+    inpReady = true;
+    updateInp();
 
     if (done) setTimeout(done, 300);
   }
@@ -2164,6 +3035,7 @@
 
   function checkAEO() {
     var blocks = getJsonLdBlocks();
+    try { checkSchemaGoogle(blocks); } catch (e) { (window.__SeoAuditorErrors = window.__SeoAuditorErrors || []).push('checkSchemaGoogle: ' + (e && e.message)); }
 
     // FAQPage
     var faqSchemas = findSchemaByType(blocks, 'FAQPage');
@@ -2395,10 +3267,9 @@
 
     // JS-render dependency (best-effort heuristic)
     try {
-      fetch(LOC.href, { method: 'GET' }).then(function (r) { return r.text(); }).then(function (rawHtml) {
-        // DOMParser builds an inert document: nothing in it loads or runs (innerHTML on a detached <div> would still start
-        // downloading every <img> and fire its onload handlers on the live site).
-        var tmp = new DOMParser().parseFromString(rawHtml, 'text/html');
+      getRawDoc().then(function (raw) {
+        if (raw.error) return;                          // reported by the original-vs-rendered check
+        var tmp = raw.doc.cloneNode(true);              // a copy: the shared original document stays intact for the other checks
         Array.prototype.forEach.call(tmp.querySelectorAll('script,style,noscript'), function (n) { n.remove(); });
         var rawText = ((tmp.body || tmp.documentElement).textContent || '').replace(/\s+/g, ' ').trim();
         var renderedText = text(document.body).replace(/\s+/g, ' ').trim();
@@ -2410,7 +3281,7 @@
             fix: 'Check "View Page Source" (Ctrl/Cmd+U) and compare it with what\'s visible on screen — if key text is missing from the raw HTML, consider making that content part of the server\'s initial HTML response.', element: null });
           renderPanel();
         }
-      }).catch(function () { /* CORS or network error — skip */ });
+      });
     } catch (e) {}
   }
 
@@ -2518,9 +3389,24 @@
     { id: 'meta.viewport', w: 4, re: /^Viewport meta tag/ },
     { id: 'meta.zoom', w: 2, re: /^Viewport (prevents|allows)/ },
     { id: 'fav.present', w: 2, re: /^Favicon is (missing or fails|present and loads)/ },
-    { id: 'fav.quality', w: 1, re: /^Favicon (is in an unusual|dimensions|is square)/, evalIfSuccessOf: ['fav.present'] },
+    { id: 'fav.quality', w: 1, re: /^Favicon (is not in a format|dimensions|is square)/, evalIfSuccessOf: ['fav.present'] },
     { id: 'fav.robots', w: 2, re: /^Favicon is blocked/, evalIfSuccessOf: ['fav.present'] },
     { id: 'url.canonical', w: 4, re: /^Canonical (points|tag is present)/ },
+    { id: 'meta.canonicalValid', w: 4, re: /^(Canonical tag is (outside|valid)|More than one canonical tag|Canonical tag appears|Canonical uses a relative|Canonical URL contains a fragment)/ },
+    { id: 'crawl.robots', w: 4, re: /^(Page is (not )?blocked in robots\.txt for Googlebot|robots\.txt answers HTTP)/ },
+    { id: 'aeo.robots', w: 4, re: /^Page is (not )?blocked in robots\.txt for AI search crawlers/ },
+    { id: 'crawl.jsMismatch', w: 4, re: /^(noindex is in the original HTML|Canonical in the original HTML|Original HTML and the page after JavaScript)/ },
+    { id: 'crawl.metaRefresh', w: 4, re: /^(Page redirects (instantly )?with a meta refresh|No meta refresh redirect)/ },
+    { id: 'intl.hreflang', w: 4, re: /^(hreflang |Invalid hreflang|This page is missing from its own hreflang|No x-default hreflang)/ },
+    { id: 'cwv.inp', w: 4, re: /^(Slow INP|INP is good)/ },
+    { id: 'img.broken', w: 2, re: /^(Image does not load|All images load)/, total: true },
+    { id: 'links.js', w: 2, re: /^(Navigation without a crawlable link|All navigation uses crawlable)/, total: true },
+    { id: 'links.nofollow', w: 2, re: /^(Internal link has rel="nofollow"|No internal link has rel="nofollow")/, total: true },
+    { id: 'links.imgAlt', w: 2, re: /^(Image link has no anchor text|All image links have alt text)/, total: true },
+    { id: 'aeo.schemaRequired', w: 2, re: /^(\w+ schema is missing properties Google requires|Schema has the properties Google requires)/ },
+    { id: 'aeo.schemaVisible', w: 2, re: /^(Schema text not found on the page|Schema names\/headlines appear on the page)/ },
+    { id: 'mobile.parity', w: 2, re: /^(Content visible on desktop is missing on mobile|Mobile shows the same content as desktop)/ },
+    { id: 'mobile.tapTargets', w: 2, re: /^Tap target is too small/, total: true, always: true },
     { id: 'url.slug', w: 4, re: /^URL slug/ },
     { id: 'h.h1', w: 4, re: /^(H1 is missing|There is more than one H1|Exactly one H1)/ },
     { id: 'h.skip', w: 2, re: /^Heading hierarchy/ },
@@ -2547,7 +3433,6 @@
     { id: 'content.hidden', w: 1, re: /^Hidden content/, always: true },
     { id: 'content.repeated', w: 2, re: /^(Repeated word|No repeated words)/ },
     { id: 'content.placeholder', w: 4, re: /^(Placeholder\/Lorem|No placeholder)/ },
-    { id: 'content.br', w: 1, re: /^Manual <br>/, always: true },
     { id: 'fonts.count', w: 2, re: /^The page uses/, always: true },
     { id: 'fonts.google', w: 2, re: /^(The page dynamically loads Google Fonts|No dynamic loading of Google Fonts)/ },
     { id: 'fonts.format', w: 1, re: /^(Font file in an older|All @font-face)/ },
@@ -2577,14 +3462,14 @@
     'meta.noindex': 'noindex directive', 'meta.nosnippet': 'Robots directives (nosnippet etc.)', 'meta.xrobots': 'X-Robots-Tag header',
     'meta.sitemap': 'Page listed in sitemap.xml', 'meta.lang': 'lang attribute', 'meta.viewport': 'Viewport meta tag', 'meta.zoom': 'Viewport allows zoom',
     'fav.present': 'Favicon present', 'fav.quality': 'Favicon quality', 'fav.robots': 'Favicon not blocked by robots',
-    'url.canonical': 'Canonical points to this page', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
+    'url.canonical': 'Canonical points to this page', 'meta.canonicalValid': 'Canonical tag is valid', 'crawl.robots': 'Not blocked in robots.txt (Googlebot)', 'aeo.robots': 'Not blocked for AI search crawlers', 'crawl.jsMismatch': 'Original HTML matches the rendered page', 'crawl.metaRefresh': 'No meta refresh redirect', 'intl.hreflang': 'hreflang tags', 'cwv.inp': 'INP (interaction to next paint)', 'img.broken': 'Images load (no broken images)', 'links.js': 'Navigation uses crawlable links', 'links.nofollow': 'No nofollow on internal links', 'links.imgAlt': 'Image links have alt text', 'aeo.schemaRequired': 'Schema has Google-required properties', 'aeo.schemaVisible': 'Schema text is on the page', 'mobile.parity': 'Same content on mobile as on desktop', 'mobile.tapTargets': 'Tap targets on mobile (24x24 px)', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
     'h.fake': 'Text styled as a heading', 'img.alt': 'Image alt text', 'img.height': 'Image height (layout shift)',
     'img.external': 'Images hosted on the same domain', 'img.oversize': 'Image size vs displayed size',
     'img.lazy': 'Below-the-fold images lazy-loaded', 'img.format': 'Modern image format', 'img.size': 'Image file size (up to 500KB)',
     'links.nowhere': 'Links that go nowhere', 'links.anchor': 'In-page anchor links', 'links.noText': 'Links with visible text',
     'links.generic': 'Generic anchor text', 'links.internal': 'Internal links working', 'content.thin': 'Enough visible text',
     'content.hidden': 'Hidden content', 'content.repeated': 'Repeated words', 'content.placeholder': 'Placeholder / Lorem ipsum text',
-    'content.br': 'Manual <br> line breaks', 'fonts.count': 'Number of fonts', 'fonts.google': 'Google Fonts loading', 'fonts.format': 'Font file format',
+    'fonts.count': 'Number of fonts', 'fonts.google': 'Google Fonts loading', 'fonts.format': 'Font file format',
     'tech.dupId': 'Duplicate IDs', 'tech.dom': 'DOM size / depth', 'tech.mixed': 'Mixed content (HTTP on HTTPS)', 'tech.thirdParty': 'Third-party scripts',
     'cwv.ttfb': 'TTFB (server response)', 'cwv.lcp': 'LCP (largest contentful paint)', 'cwv.cls': 'CLS (layout shift)', 'cwv.lcpLazy': 'LCP image not lazy-loaded',
     'aeo.jsonld': 'JSON-LD schema validity', 'aeo.faq': 'FAQPage schema', 'aeo.article': 'Article schema', 'aeo.articleDates': 'Article dates',
@@ -4168,7 +5053,9 @@
       }
       return { key: keys[i], f: o, info: info };
     });
-    return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth });
+    var units = null;
+    try { units = collectParityUnits(); } catch (e) {}
+    return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth, units: units });
   }
 
   // Runs one check; an exception is logged (window.__SeoAuditorErrors) instead of stopping the whole audit.
@@ -4182,7 +5069,7 @@
   function runHeadless() {
     // Only the checks whose outcome depends on the viewport. Site-level checks (meta, sitemap, robots,
     // fonts, CWV, schema) are identical on every device and already covered by the main run.
-    [checkHeadings, checkImages, checkVideos, checkForms, checkLinks, checkContent].forEach(runCheckSafely);
+    [checkHeadings, checkImages, checkVideos, checkForms, checkLinks, checkContent, checkTapTargets].forEach(runCheckSafely);
     window.__SeoAuditorHeadlessExport = exportHeadless;
     window.__SeoAuditorHeadlessDone = true;
   }
@@ -4293,6 +5180,7 @@
     (function next(i) {
       if (i >= todo.length) {
         try { mergeDeviceResults(cur, results, todo); } catch (e) { try { console.warn('[SeoAuditor] device merge failed', e); } catch (e2) {} }
+        try { checkMobileParity(cur, results); } catch (e) { (window.__SeoAuditorErrors = window.__SeoAuditorErrors || []).push('checkMobileParity: ' + (e && e.message)); }
         deviceScan.state = 'done';
         return done();
       }
@@ -4308,7 +5196,7 @@
   // Only the checks that the frames actually run can be compared across devices. Findings of the other
   // checks (meta tags, sitemap, schema, fonts, CWV, internal-link 404s...) are the same on every device,
   // so they get no device tag.
-  var DEVICE_SCOPED_RE = /^(img\.|video\.|form\.|h\.|links\.(nowhere|anchor|noText|generic)$|content\.)/;
+  var DEVICE_SCOPED_RE = /^(img\.(?!broken)|video\.|form\.|h\.|links\.(nowhere|anchor|noText|generic)$|content\.|mobile\.tapTargets$)/;
   function isDeviceScoped(f) { return DEVICE_SCOPED_RE.test(matchCheckId(f.title || '') || ''); }
   function baseKeyOf(k) { return k.replace(/#\d+$/, ''); }
 
@@ -4409,8 +5297,9 @@
     }
 
     // Each check runs on its own: an unexpected error inside one (a page with unusual markup) must not take the others down.
-    [checkPreliminary, checkSlug, checkMetaHead, checkFavicon, checkIndexingSignals, checkHeadings, checkImages, checkVideos,
-     checkForms, checkLinks, checkContent, checkFonts, checkTechnical, checkAEO].forEach(runCheckSafely);
+    [checkPreliminary, checkSlug, checkMetaHead, checkFavicon, checkIndexingSignals, checkRobotsForPage, checkCanonicalValid,
+     checkOriginalVsRendered, checkMetaRefresh, checkHreflang, checkHeadings, checkImages, checkBrokenImages, checkVideos,
+     checkForms, checkLinks, checkLinkCrawl, checkContent, checkTapTargets, checkFonts, checkTechnical, checkAEO].forEach(runCheckSafely);
     tagGlobalFindings();
     renderPanel();
 
@@ -4459,6 +5348,186 @@
   // ---------------------------------------------------------------------
   function srDictData() {
     return {
+    "INP not measured yet — click something on the page": "INP još nije izmeren — klikni nešto na stranici",
+    "INP (Interaction to Next Paint) is the Core Web Vital for responsiveness. Only a real click, tap or key press creates it — scrolling and hovering don't count, and the bookmarklet can't click for you (clicks made by a script are not counted by the browser). Until you interact, INP has no value and does not affect the score.": "INP (Interaction to Next Paint) je Core Web Vital za brzinu odziva. Stvara ga samo pravi klik, dodir ili pritisak tastera — skrolovanje i prelazak mišem se ne računaju, a bookmarklet ne može da klikne umesto tebe (browser ne računa klikove koje napravi skripta). Dok ne klikneš, INP nema vrednost i ne utiče na skor.",
+    "With this panel open, click or tap things on the page that open or change something on the same page — the menu, tabs, accordions, sliders, dropdowns, form fields. The INP result appears here right away and updates the score. Avoid ordinary links: they open another page and close the panel. Clicks inside this panel are not counted.": "Dok je ovaj panel otvoren, klikni ili dodirni na stranici ono što otvara ili menja nešto na istoj stranici — meni, tabove, accordion-e, slajdere, dropdown-e, polja forme. Rezultat INP-a se odmah pojavljuje ovde i ažurira skor. Izbegavaj obične linkove: otvaraju drugu stranicu i zatvaraju panel. Klikovi unutar ovog panela se ne računaju.",
+    "Slowest of {0} interaction(s) measured: {1} on {2}. Keep clicking the menu, tabs, accordions... to measure more — the result updates here.": "Najsporija od izmerenih interakcija ({0}): {1} na {2}. Nastavi da klikćeš meni, tabove, accordion-e... da izmeriš više — rezultat se ažurira ovde.",
+    "Slowest of {0} interaction(s) measured: {1}. Keep clicking the menu, tabs, accordions... to measure more — the result updates here.": "Najsporija od izmerenih interakcija ({0}): {1}. Nastavi da klikćeš meni, tabove, accordion-e... da izmeriš više — rezultat se ažurira ovde.",
+    "Slow INP (Interaction to Next Paint): {0}ms": "Spor INP (Interaction to Next Paint): {0}ms",
+    "web.dev: an INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor{0}. INP is a Core Web Vital, and Google says Core Web Vitals are used by its ranking systems. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).": "web.dev: INP do 200 ms je dobar, iznad 200 ms treba poboljšanje, a iznad 500 ms je loš{0}. INP je Core Web Vital, a Google navodi da njegovi sistemi rangiranja koriste Core Web Vitals. Izmereno ovde, u ovom browseru na ovom računaru; Google koristi podatke stvarnih posetilaca (75. percentil učitavanja).",
+    " — this one is poor": " — ovaj je loš",
+    "Record the slow interaction in Chrome DevTools > Performance and see what runs on that click (custom code, third-party scripts, heavy animations), then make it lighter or defer it.": "Snimi sporu interakciju u Chrome DevTools > Performance i vidi šta se izvršava na taj klik (custom code, skripte trećih strana, teške animacije), pa to olakšaj ili odloži.",
+    "INP is good ({0}ms, at or under Google's 200ms threshold)": "INP je dobar ({0}ms, do Google-ovog praga od 200ms)",
+    "INP (interaction to next paint)": "INP (interaction to next paint)",
+    "Image does not load (broken image)": "Slika se ne učitava (polomljena slika)",
+    "(used {0} times on this page)": "(korišćena {0} puta na ovoj stranici)",
+    "The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot. Semrush reports broken internal images as an error, Ahrefs as \"Image broken\".": "Browser nije mogao da učita ovaj fajl slike (više ne postoji, URL je pogrešno napisan ili je putanja pogrešna), pa posetioci i Google vide prazno mesto. Semrush polomljene interne slike prijavljuje kao grešku, a Ahrefs kao \"Image broken\".",
+    "Replace the image: select it > Element settings panel > Image settings > Replace image (or fix the URL in the CMS field / custom code it comes from). Publish.": "Zameni sliku: izaberi je > Element settings panel > Image settings > Replace image (ili ispravi URL u CMS polju / custom code-u odakle dolazi). Objavi.",
+    "All images load ({0} checked)": "Sve slike se učitavaju (provereno: {0})",
+    "Images load (no broken images)": "Slike se učitavaju (nema polomljenih)",
+    "Navigation without a crawlable link ({0})": "Navigacija bez linka koji Google može da prati ({0})",
+    "href on <{0}>": "href na <{0}>",
+    "role=\"link\" without <a href>": "role=\"link\" bez <a href>",
+    "onclick navigation": "navigacija preko onclick",
+    "Google Search Central: Google can generally only crawl a link if it is an <a> element with an href attribute; it can't reliably extract URLs from elements that don't have an href or from other tags that act as links through script events (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.": "Google Search Central: Google generalno može da prati link samo ako je to <a> element sa href atributom; ne može pouzdano da izvuče URL iz elemenata bez href-a ili iz drugih tagova koji se ponašaju kao linkovi preko skripti (na primer <span href> ili <a onclick>). Stranica iza ovog elementa možda neće biti otkrivena preko ovog linka.",
+    "Make it a real link: in Webflow use a Link block, Text link or Button and set the destination in the Element settings panel (Link settings); to make an image or a block clickable, drop it inside a Link block. Remove the click script / custom attribute that did the navigation.": "Napravi pravi link: u Webflow-u koristi Link block, Text link ili Button i podesi odredište u Element settings panel-u (Link settings); da bi slika ili blok bili klikabilni, stavi ih unutar Link block-a. Ukloni skriptu / custom attribute koji je radio navigaciju.",
+    "All navigation uses crawlable <a href> links": "Sva navigacija koristi <a href> linkove koje Google može da prati",
+    "Navigation uses crawlable links": "Navigacija koristi linkove koje Google prati",
+    "Internal link has rel=\"nofollow\"": "Interni link ima rel=\"nofollow\"",
+    "Google Search Central: links with nofollow will generally not be followed, and nofollow is meant for links you don't want Google to associate your site with; for links within your own site Google points to the robots.txt disallow rule instead. A nofollow on an internal link holds back crawling of your own page. Semrush and Screaming Frog report internal nofollow links as a warning.": "Google Search Central: linkovi sa nofollow generalno neće biti praćeni, a nofollow je namenjen linkovima sa kojima ne želiš da Google povezuje tvoj sajt; za linkove unutar sopstvenog sajta Google upućuje na robots.txt disallow pravilo. Nofollow na internom linku koči crawl tvoje sopstvene stranice. Semrush i Screaming Frog interne nofollow linkove prijavljuju kao upozorenje.",
+    "Remove rel=\"nofollow\" from the internal link — in Webflow it comes from a custom attribute (Element settings panel > Custom attributes) or from custom code. To keep a page out of Google, use noindex (Page settings > SEO settings > Sitemap indexing off); to stop crawling, robots.txt.": "Ukloni rel=\"nofollow\" sa internog linka — u Webflow-u dolazi iz custom attribute-a (Element settings panel > Custom attributes) ili iz custom code-a. Da stranica ne bi bila u Google-u koristi noindex (Page settings > SEO settings > Sitemap indexing isključen); da se ne bi crawl-ovala, robots.txt.",
+    "No internal link has rel=\"nofollow\" ({0} checked)": "Nijedan interni link nema rel=\"nofollow\" (provereno: {0})",
+    "No nofollow on internal links": "Nema nofollow na internim linkovima",
+    "Image link has no anchor text (image without alt)": "Link sa slikom nema anchor tekst (slika bez alt-a)",
+    "image: {0}": "slika: {0}",
+    "(aria-label=\"{0}\" helps screen readers, but Google uses the image alt as anchor text)": "(aria-label=\"{0}\" pomaže čitačima ekrana, ali Google kao anchor tekst koristi alt slike)",
+    "Google Search Central: for images as links, Google uses the alt attribute of the img element as anchor text — an image link with empty alt text and no link text is its \"bad\" example. Without it Google gets no description of the page the link points to.": "Google Search Central: kod slika kao linkova Google koristi alt atribut img elementa kao anchor tekst — link sa slikom sa praznim alt-om i bez teksta linka je njegov primer \"loše\" prakse. Bez toga Google ne dobija opis stranice na koju link vodi.",
+    "Give the image descriptive alt text: select it > Element settings panel > Image settings > Alt text > Custom description (or in the Assets panel: the image's settings > descriptive text; for a CMS image bind the alt text to a field). Or add visible text inside the link.": "Daj slici opisni alt tekst: izaberi je > Element settings panel > Image settings > Alt text > Custom description (ili u Assets panel-u: podešavanja slike > opisni tekst; za CMS sliku poveži alt tekst sa poljem). Ili dodaj vidljiv tekst unutar linka.",
+    "All image links have alt text ({0} checked)": "Svi linkovi sa slikom imaju alt tekst (provereno: {0})",
+    "Image links have alt text": "Linkovi sa slikom imaju alt tekst",
+    "{0} schema is missing properties Google requires: {1}": "{0} schema nema svojstva koja Google zahteva: {1}",
+    "Google Search Central lists these as required for the {0} rich result: without them the item is not eligible for that rich result (Google says structured data enables a feature, it doesn't guarantee it, and it doesn't affect ranking).": "Google Search Central ih navodi kao obavezna za {0} rich result: bez njih stavka nema pravo na taj rich result (Google kaže da structured data omogućava funkciju, ne garantuje je i ne utiče na rangiranje).",
+    "In Webflow: Pages panel > the page's Settings > Schema markup field (or the custom code where the JSON-LD was added); on a Collection page bind the CMS fields so every item gets its own values. Publish.": "U Webflow-u: Pages panel > Settings stranice > polje Schema markup (ili custom code u koji je JSON-LD dodat); na Collection stranici poveži CMS polja da svaka stavka dobije svoje vrednosti. Objavi.",
+    "Add the missing properties. {0}": "Dodaj svojstva koja nedostaju. {0}",
+    "Schema has the properties Google requires ({0})": "Schema ima svojstva koja Google zahteva ({0})",
+    "Schema has Google-required properties": "Schema ima svojstva koja Google zahteva",
+    "Schema text not found on the page ({0})": "Tekst iz schema nije pronađen na stranici ({0})",
+    "Google Search Central: don't mark up content that is not visible to readers of the page — if the JSON-LD describes something, the HTML body must describe that same thing, and structured data must be a true representation of the page content. These names/headlines from the schema don't appear in the page text (compared without case and punctuation).": "Google Search Central: ne označavaj sadržaj koji čitaoci stranice ne vide — ako JSON-LD nešto opisuje, HTML body mora da opisuje to isto, a structured data mora verno da predstavlja sadržaj stranice. Ovi nazivi/naslovi iz schema se ne pojavljuju u tekstu stranice (poređeno bez velikih/malih slova i interpunkcije).",
+    "Make the schema match what the page shows (same headline / name), or show that text on the page. {0}": "Uskladi schema sa onim što stranica prikazuje (isti naslov / naziv) ili prikaži taj tekst na stranici. {0}",
+    "Schema names/headlines appear on the page ({0} checked)": "Nazivi/naslovi iz schema se pojavljuju na stranici (provereno: {0})",
+    "Schema text is on the page": "Tekst iz schema je na stranici",
+    "Content visible on desktop is missing on mobile ({0})": "Sadržaj vidljiv na desktopu nedostaje na mobilnom ({0})",
+    "Heading — {0}": "Naslov — {0}",
+    "Text — {0}": "Tekst — {0}",
+    "Image — {0}": "Slika — {0}",
+    "Google indexes and ranks the mobile version of the page (mobile-first indexing). Google Search Central: make sure the mobile site contains the same content as the desktop site and uses the same headings and image alt text; content may be moved into accordions or tabs on mobile, but content that is removed is content Google can't use. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.": "Google indeksira i rangira mobilnu verziju stranice (mobile-first indexing). Google Search Central: postaraj se da mobilni sajt ima isti sadržaj kao desktop i iste naslove i alt tekst slika; sadržaj na mobilnom može da se premesti u accordion-e ili tabove, ali uklonjen sadržaj Google ne može da koristi. Ove stavke su vidljive na desktopu, a skrivene (display: none) u mobilnom okviru (375 px) i tamo nisu ni u tabu, accordion-u, dropdown-u, slajderu ili meniju.",
+    "Show this content on the Mobile breakpoint, or move it into a tab/accordion instead of hiding it. In Webflow an element is hidden per breakpoint with Style panel > Layout > display: none — select the breakpoint in the canvas bar and change it; display is a class style, so it applies to every element with the same class and cascades to smaller breakpoints.": "Prikaži ovaj sadržaj na Mobile breakpoint-u ili ga premesti u tab/accordion umesto da ga skrivaš. U Webflow-u se element skriva po breakpoint-u preko Style panel > Layout > display: none — izaberi breakpoint u traci iznad canvas-a i promeni ga; display je stil klase, pa važi za svaki element sa istom klasom i prenosi se na manje breakpoint-e.",
+    "Mobile shows the same content as desktop ({0} items compared)": "Mobilni prikazuje isti sadržaj kao desktop (upoređeno stavki: {0})",
+    "Same content on mobile as on desktop": "Isti sadržaj na mobilnom kao na desktopu",
+    "Tap target is too small and too close to another ({0} px)": "Element za dodir je premali i preblizu drugom ({0} px)",
+    "WCAG 2.2 (2.5.8 Target Size, level AA): a tap target must be at least 24 by 24 CSS pixels, unless a 24 px circle centred on it does not touch another target. This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. (Lighthouse's older SEO audit is stricter: it recommends 48 by 48 px.)": "WCAG 2.2 (2.5.8 Target Size, nivo AA): element za dodir mora biti najmanje 24 sa 24 CSS piksela, osim ako krug od 24 px sa centrom na njemu ne dodiruje drugi element. Ovaj je manji i ima toliko blizu suseda, pa je na telefonu lako dodirnuti pogrešan. (Starija Lighthouse SEO provera je stroža: preporučuje 48 sa 48 px.)",
+    "On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.": "Na Mobile breakpoint-u napravi element od najmanje 24x24 px (padding se računa) ili mu daj više prostora od suseda — u Webflow-u, Style panel (veličina / padding / margin) sa izabranim Mobile breakpoint-om.",
+    "Tap targets on mobile (24x24 px)": "Elementi za dodir na mobilnom (24x24 px)",
+    "custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code)": "custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code)",
+    "In Webflow the canonical comes from Site settings > SEO > Global canonical tag URL (the site's base URL, e.g. https://www.yourdomain.com, without a trailing slash — Webflow adds each page's slug) or, for one static page, from Page settings > SEO settings > Page canonical URL (a full URL starting with https://). Any other canonical comes from custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code) or from a tool such as Google Tag Manager — Webflow advises not to set the global canonical tag when another tool injects it. Publish after the change.": "U Webflow-u canonical dolazi iz Site settings > SEO > Global canonical tag URL (osnovni URL sajta, npr. https://www.yourdomain.com, bez kose crte na kraju — Webflow dodaje slug svake stranice) ili, za jednu statičnu stranicu, iz Page settings > SEO settings > Page canonical URL (pun URL koji počinje sa https://). Svaki drugi canonical dolazi iz custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code) ili iz alata kao što je Google Tag Manager — Webflow savetuje da se globalni canonical tag ne podešava kada ga drugi alat ubacuje. Objavi sajt posle izmene.",
+    "A tag written in the head custom code can still end up in <body>: when an element that isn't allowed in <head> (for example a <div>, <img>, <p> or plain text) comes before it, the browser closes <head> early and everything after it lands in <body>.": "Tag napisan u head custom code-u ipak može da završi u <body>: kada pre njega stoji element koji nije dozvoljen u <head> (na primer <div>, <img>, <p> ili običan tekst), browser ranije zatvara <head> i sve posle toga završava u <body>.",
+    "In Webflow: Site settings > General tab > Icons — upload one square image (PNG is safest). Webflow then generates the 32x32 and 48x48 favicons, 180x180 and 192x192 touch icons and a 256x256 webclip by itself (Webflow update, May 2026), so upload at least 256x256px — then no generated size is enlarged from a smaller image. Publish the site afterwards.": "U Webflow-u: Site settings > General tab > Icons — otpremi jednu kvadratnu sliku (PNG je najsigurniji). Webflow zatim sam generiše favicon-e 32x32 i 48x48, touch ikonice 180x180 i 192x192 i webclip 256x256 (Webflow ažuriranje, maj 2026), zato otpremi bar 256x256px — tada se nijedna generisana veličina ne uvećava iz manje slike. Zatim objavi sajt.",
+    "In Webflow, Localization generates the hreflang tags by itself: Settings panel > Localization lets you turn automatic generation on or off and choose the base URL (the published/canonical URL or a custom one). Hreflang tags written in custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code) have to be fixed there.": "U Webflow-u Localization sama generiše hreflang tagove: Settings panel > Localization omogućava da uključiš ili isključiš automatsko generisanje i izabereš osnovni URL (objavljeni/canonical URL ili prilagođeni). Hreflang tagovi napisani u custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code) moraju da se isprave tamo.",
+    "In Webflow: Site settings > SEO > Indexing — edit the robots.txt rules (also check the Traffic control toggles there, which generate robots.txt rules for known bots), save and publish. A page blocked in robots.txt still stays in Webflow's auto-generated sitemap.": "U Webflow-u: Site settings > SEO > Indexing — izmeni robots.txt pravila (proveri i Traffic control prekidače tamo, koji generišu robots.txt pravila za poznate botove), sačuvaj i objavi. Stranica blokirana u robots.txt i dalje ostaje u Webflow automatski generisanom sitemap-u.",
+    " This is the webflow.io staging domain: with \"Staging indexing\" turned off, Webflow publishes a robots.txt on the staging subdomain that tells search engines to ignore it — expected here; check the live domain.": " Ovo je webflow.io staging domen: kada je \"Staging indexing\" isključen, Webflow na staging poddomenu objavljuje robots.txt koji pretraživačima kaže da ga ignorišu — ovde je to očekivano; proveri live domen.",
+    "Favicon is not in a format Google Search supports ({0})": "Favicon nije u formatu koji Google Search podržava ({0})",
+    "Google Search supports these favicon formats: BMP, GIF, ICO, PNG, JPEG, PPM and TIFF. An SVG (or WebP) favicon works in browsers, but Google Search can't use it, so the result may show a generic icon.": "Google Search podržava ove formate favicon-a: BMP, GIF, ICO, PNG, JPEG, PPM i TIFF. SVG (ili WebP) favicon radi u browserima, ali Google Search ne može da ga koristi, pa rezultat može da prikaže generičku ikonicu.",
+    "Also provide a PNG or ICO favicon. {0} (Webflow converts an SVG upload to PNG.)": "Obezbedi i PNG ili ICO favicon. {0} (Webflow otpremljeni SVG pretvara u PNG.)",
+    "Favicon dimensions do not meet Google's requirement (square, at least 8x8px): {0}": "Dimenzije favicon-a ne ispunjavaju Google-ov uslov (kvadrat, najmanje 8x8px): {0}",
+    "Google Search shows a favicon only if it is a square (1:1 aspect ratio) of at least 8x8px. None of the icons declared on this page is.": "Google Search prikazuje favicon samo ako je kvadrat (odnos 1:1) od najmanje 8x8px. Nijedna ikonica navedena na ovoj stranici to nije.",
+    "Favicon dimensions: no icon is larger than 48x48px (largest: {0})": "Dimenzije favicon-a: nijedna ikonica nije veća od 48x48px (najveća: {0})",
+    "Google Search requires at least 8x8px, but recommends a favicon larger than 48x48px so it looks good on various surfaces.": "Google Search zahteva najmanje 8x8px, ali preporučuje favicon veći od 48x48px kako bi lepo izgledao na različitim površinama.",
+    "Favicon is square and larger than 48x48px ({0})": "Favicon je kvadratni i veći od 48x48px ({0})",
+    "The path \"{0}\" is blocked by \"{1}\" (group: User-agent: {2}).": "Putanju \"{0}\" blokira \"{1}\" (grupa: User-agent: {2}).",
+    "Google Search Central: Googlebot-Image must be able to crawl the favicon file — it must not be blocked by robots.txt. Otherwise Google can't show it in search results.": "Google Search Central: Googlebot-Image mora moći da crawl-uje fajl favicon-a — ne sme biti blokiran u robots.txt. U suprotnom Google ne može da ga prikaže u rezultatima pretrage.",
+    "In Webflow: Site settings > SEO > Indexing — change the robots.txt rules so they don't cover the favicon path (add an Allow rule for it or narrow the Disallow rule), save and publish.": "U Webflow-u: Site settings > SEO > Indexing — izmeni robots.txt pravila tako da ne pokrivaju putanju favicon-a (dodaj Allow pravilo za nju ili suzi Disallow pravilo), sačuvaj i objavi.",
+    "Page is blocked in robots.txt for Googlebot": "Stranica je blokirana u robots.txt za Googlebot",
+    "Rule: {0} (group: User-agent: {1})": "Pravilo: {0} (grupa: User-agent: {1})",
+    "Google can't crawl this page, so it can't read its content. Google Search Central: a page blocked in robots.txt can still appear in search results (for example when other sites link to it), but the result won't have a description; and for AI Overviews / AI Mode, crawling must be allowed in robots.txt.{0}": "Google ne može da crawl-uje ovu stranicu, pa ne može da pročita njen sadržaj. Google Search Central: stranica blokirana u robots.txt i dalje može da se pojavi u rezultatima pretrage (na primer kada drugi sajtovi linkuju na nju), ali rezultat neće imati opis; a za AI Overviews / AI Mode crawl mora biti dozvoljen u robots.txt.{0}",
+    "Relevant to both SEO and AEO — a page Google can't crawl can't be used as a source for AI Overviews / AI Mode either.": "Relevantno i za SEO i za AEO — stranica koju Google ne može da crawl-uje ne može da bude ni izvor za AI Overviews / AI Mode.",
+    "Page is not blocked in robots.txt for Googlebot": "Stranica nije blokirana u robots.txt za Googlebot",
+    "There is no robots.txt (HTTP {0}), so there are no crawl restrictions.": "Nema robots.txt fajla (HTTP {0}), pa nema ograničenja za crawl.",
+    "Applicable rule: {0} (group: User-agent: {1})": "Pravilo koje važi: {0} (grupa: User-agent: {1})",
+    "No rule in the applicable group (User-agent: {0}) covers this path.": "Nijedno pravilo u grupi koja važi (User-agent: {0}) ne pokriva ovu putanju.",
+    "No group in robots.txt applies to Googlebot.": "Nijedna grupa u robots.txt se ne odnosi na Googlebot.",
+    "robots.txt answers HTTP {0}": "robots.txt odgovara sa HTTP {0}",
+    "Google treats a robots.txt that can't be fetched because of a server error (5xx, or 429) as a server error: for the first 12 hours it stops crawling the site, then for up to 30 days it uses the last good version of the file. RFC 9309 tells crawlers to assume a complete disallow while robots.txt is unreachable.": "Google robots.txt koji ne može da preuzme zbog greške servera (5xx ili 429) tretira kao grešku servera: prvih 12 sati prestaje da crawl-uje sajt, a zatim do 30 dana koristi poslednju ispravnu verziju fajla. RFC 9309 nalaže crawlerima da, dok je robots.txt nedostupan, smatraju da je sve zabranjeno.",
+    "Make /robots.txt answer HTTP 200. On Webflow hosting the file is generated from Site settings > SEO > Indexing; if a proxy or CDN sits in front of the site, the error comes from there.": "Podesi da /robots.txt odgovara sa HTTP 200. Na Webflow hostingu fajl se generiše iz Site settings > SEO > Indexing; ako ispred sajta stoji proxy ili CDN, greška dolazi odatle.",
+    "If a proxy / CDN (e.g. Cloudflare) sits in front of the site, whoever manages it has to fix the response.": "Ako ispred sajta stoji proxy / CDN (npr. Cloudflare), odgovor mora da ispravi onaj ko njime upravlja.",
+    "Page is blocked in robots.txt for AI search crawlers ({0} of {1})": "Stranica je blokirana u robots.txt za AI crawlere pretrage ({0} od {1})",
+    "{0}: {1} (group: User-agent: {2})": "{0}: {1} (grupa: User-agent: {2})",
+    "OpenAI uses OAI-SearchBot to show websites in ChatGPT search and recommends allowing it in robots.txt; Perplexity recommends allowing PerplexityBot so pages can be surfaced and linked in its answers; Anthropic says that disabling Claude-SearchBot or Claude-User may reduce the site's visibility in Claude's search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.{0}": "OpenAI koristi OAI-SearchBot da prikazuje sajtove u ChatGPT pretrazi i preporučuje da mu se pristup dozvoli u robots.txt; Perplexity preporučuje da se dozvoli PerplexityBot kako bi stranice mogle da se prikažu i linkuju u njegovim odgovorima; Anthropic navodi da isključivanje Claude-SearchBot ili Claude-User može da smanji vidljivost sajta u Claude rezultatima pretrage. (Crawleri za treniranje GPTBot i ClaudeBot se ne proveravaju — njihovo blokiranje samo isključuje sajt iz treniranja AI modela.) Ako je blokiranje ovih crawlera namerna odluka, ova napomena može da se zanemari.{0}",
+    "Page is not blocked in robots.txt for AI search crawlers": "Stranica nije blokirana u robots.txt za AI crawlere pretrage",
+    "OAI-SearchBot (ChatGPT search), PerplexityBot (Perplexity), Claude-SearchBot (Claude search), Claude-User (Claude fetching pages for users)": "OAI-SearchBot (ChatGPT pretraga), PerplexityBot (Perplexity), Claude-SearchBot (Claude pretraga), Claude-User (Claude učitava stranice za korisnike)",
+    "OAI-SearchBot (ChatGPT search)": "OAI-SearchBot (ChatGPT pretraga)",
+    "Claude-SearchBot (Claude search)": "Claude-SearchBot (Claude pretraga)",
+    "Claude-User (Claude fetching pages for users)": "Claude-User (Claude učitava stranice za korisnike)",
+    "robots.txt check for this page": "Provera robots.txt za ovu stranicu",
+    "Canonical tag is outside <head> ({0})": "Canonical tag je van <head> ({0})",
+    "Google Search Central: the rel=\"canonical\" link element is only accepted if it appears in the <head> section of the HTML — this extra one is ignored, but it shows that the head code has a problem. {0}": "Google Search Central: rel=\"canonical\" link element se prihvata samo ako je u <head> delu HTML-a — ovaj dodatni se ignoriše, ali pokazuje da head kod ima problem. {0}",
+    "Move the canonical into <head> and remove from the head code above it anything that isn't allowed in <head> (only <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> and <template> belong there). {0}": "Premesti canonical u <head> i iz head koda iznad njega ukloni sve što nije dozvoljeno u <head> (tamo pripadaju samo <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> i <template>). {0}",
+    "More than one canonical tag, with different URLs ({0})": "Više od jednog canonical taga, sa različitim URL-ovima ({0})",
+    "Google Search Central: conflicting or multiple rel=\"canonical\" link tags may lead to unexpected results — make sure there is only one. Lighthouse fails a page that has more than one canonical link.": "Google Search Central: konfliktni ili višestruki rel=\"canonical\" link tagovi mogu da dovedu do neočekivanih rezultata — postaraj se da postoji samo jedan. Lighthouse obara stranicu koja ima više od jednog canonical linka.",
+    "Keep exactly one canonical. {0}": "Zadrži tačno jedan canonical. {0}",
+    "Canonical tag appears {0} times (same URL)": "Canonical tag se pojavljuje {0} puta (isti URL)",
+    "Google Search Central asks that the rel=\"canonical\" link tag is the only one on the page, and Lighthouse fails a page that has more than one canonical link even when they agree. Usually one comes from the Webflow settings and another from custom code.": "Google Search Central traži da rel=\"canonical\" link tag bude jedini na stranici, a Lighthouse obara stranicu koja ima više od jednog canonical linka čak i kada se slažu. Obično jedan dolazi iz Webflow podešavanja, a drugi iz custom code-a.",
+    "Remove the extra canonical. {0}": "Ukloni višak canonical-a. {0}",
+    "Canonical uses a relative URL ({0})": "Canonical koristi relativni URL ({0})",
+    "Google Search Central: use absolute URLs rather than relative paths in rel=\"canonical\". Relative paths are supported, but Google doesn't recommend them because they can cause problems in the long run (for example, if a testing site gets crawled).": "Google Search Central: u rel=\"canonical\" koristi apsolutne URL-ove umesto relativnih putanja. Relativne putanje su podržane, ali ih Google ne preporučuje jer dugoročno mogu da izazovu probleme (na primer, ako se crawl-uje test sajt).",
+    "Use a full URL starting with https://. {0}": "Koristi pun URL koji počinje sa https://. {0}",
+    "Canonical URL contains a fragment (#)": "Canonical URL sadrži fragment (#)",
+    "Google Search Central: don't specify a URL fragment as canonical — Google generally doesn't support URL fragments.": "Google Search Central: ne navodi URL fragment kao canonical — Google generalno ne podržava URL fragmente.",
+    "Remove the #... part from the canonical URL. {0}": "Ukloni #... deo iz canonical URL-a. {0}",
+    "Canonical tag is valid (one absolute URL, in <head>)": "Canonical tag je ispravan (jedan apsolutni URL, u <head>)",
+    "There is a <link rel=\"canonical\"> (href: {0}), but it is outside <head>, where Google ignores it. {1}": "Postoji <link rel=\"canonical\"> (href: {0}), ali je van <head>, gde ga Google ignoriše. {1}",
+    "Add a canonical tag pointing to this page. {0}": "Dodaj canonical tag koji pokazuje na ovu stranicu. {0}",
+    "If it is not intentional, make the canonical point to this page's own URL. {0}": "Ako nije namerno, podesi da canonical pokazuje na URL ove stranice. {0}",
+    "Check whether this is intentional. If not, make the canonical point to this page. {0}": "Proveri da li je ovo namerno. Ako nije, podesi da canonical pokazuje na ovu stranicu. {0}",
+    "If the page should be visible in search: in Webflow, Page settings > SEO settings > turn \"Sitemap indexing\" back on (turned off, it adds <meta name=\"robots\" content=\"noindex\">); for a CMS item: the Collection item > Item details > Sitemap indexing. A noindex can also come from custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code). Publish after the change.": "Ako stranica treba da bude vidljiva u pretrazi: u Webflow-u, Page settings > SEO settings > ponovo uključi \"Sitemap indexing\" (kada je isključen, dodaje <meta name=\"robots\" content=\"noindex\">); za CMS stavku: stavka kolekcije > Item details > Sitemap indexing. Noindex može da dolazi i iz custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code). Objavi sajt posle izmene.",
+    "In Webflow: Page settings > SEO settings > \"Sitemap indexing\" must be on (for a CMS item: the Collection item > Item details > Sitemap indexing); it works only when the site's auto-generated sitemap is enabled. Publish after the change.": "U Webflow-u: Page settings > SEO settings > \"Sitemap indexing\" mora biti uključen (za CMS stavku: stavka kolekcije > Item details > Sitemap indexing); radi samo kada je uključen automatski generisan sitemap sajta. Objavi sajt posle izmene.",
+    "noindex is in the original HTML but removed by JavaScript": "noindex je u originalnom HTML-u, ali ga JavaScript uklanja",
+    "Original HTML: {0}": "Originalni HTML: {0}",
+    "After JavaScript: no noindex": "Posle JavaScript-a: nema noindex-a",
+    "After JavaScript: {0}": "Posle JavaScript-a: {0}",
+    "Google Search Central (JavaScript SEO basics): when Google encounters the noindex tag, it may skip rendering and JavaScript execution, so using JavaScript to change or remove the robots meta tag from noindex may not work as expected. If the page should be indexed, don't use a noindex tag in the original page code.": "Google Search Central (JavaScript SEO basics): kada Google naiđe na noindex tag, može da preskoči renderovanje i izvršavanje JavaScript-a, pa menjanje ili uklanjanje noindex-a iz robots meta taga pomoću JavaScript-a možda neće raditi kako se očekuje. Ako stranica treba da bude indeksirana, ne koristi noindex tag u originalnom kodu stranice.",
+    "Remove the noindex from the original HTML and remove the script that deletes it. In Webflow, Page settings > SEO settings > \"Sitemap indexing\" turned off is what adds <meta name=\"robots\" content=\"noindex\"> — turn it on (for a CMS item: the Collection item > Item details > Sitemap indexing); a noindex can also come from {0}. Publish.": "Ukloni noindex iz originalnog HTML-a i ukloni skriptu koja ga briše. U Webflow-u <meta name=\"robots\" content=\"noindex\"> dodaje isključen Page settings > SEO settings > \"Sitemap indexing\" — uključi ga (za CMS stavku: stavka kolekcije > Item details > Sitemap indexing); noindex može da dolazi i iz {0}. Objavi.",
+    "Canonical in the original HTML differs from the canonical after JavaScript": "Canonical u originalnom HTML-u se razlikuje od canonical-a posle JavaScript-a",
+    "Google Search Central (JavaScript SEO basics): you shouldn't use JavaScript to change the canonical URL to something else than the URL you specified as the canonical URL in the original HTML — if JavaScript sets it, it must set the same value as the original HTML.": "Google Search Central (JavaScript SEO basics): JavaScript ne bi trebalo da menja canonical URL u nešto drugo od URL-a navedenog kao canonical u originalnom HTML-u — ako ga JavaScript postavlja, mora da postavi istu vrednost kao originalni HTML.",
+    "Find the script that changes the canonical (custom code, Google Tag Manager or another tool) and stop it, so only one source sets the canonical. {0}": "Pronađi skriptu koja menja canonical (custom code, Google Tag Manager ili drugi alat) i zaustavi je, tako da canonical postavlja samo jedan izvor. {0}",
+    "Original HTML and the page after JavaScript agree on noindex and canonical": "Originalni HTML i stranica posle JavaScript-a se slažu oko noindex-a i canonical-a",
+    "noindex: {0} / {1} — canonical: {2} / {3}": "noindex: {0} / {1} — canonical: {2} / {3}",
+    "yes": "da",
+    "no": "ne",
+    "(none)": "(nema)",
+    "Original vs rendered HTML check": "Provera originalnog i renderovanog HTML-a",
+    "the server answered HTTP {0} to the request for the original HTML": "server je na zahtev za originalni HTML odgovorio sa HTTP {0}",
+    "Page redirects instantly with a meta refresh": "Stranica odmah preusmerava pomoću meta refresh-a",
+    "Page redirects with a meta refresh after {0} s": "Stranica preusmerava pomoću meta refresh-a posle {0} s",
+    "HTTP header \"Refresh: {0}\"": "HTTP header \"Refresh: {0}\"",
+    "Target: {0}": "Odredište: {0}",
+    "Google Search Central treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect, and recommends a permanent server-side redirect whenever possible — meta refresh only where the platform can't do server-side redirects. Ahrefs reports a meta refresh redirect as a critical issue and Screaming Frog as a redirection to fix.": "Google Search Central trenutni meta refresh (0 sekundi) tretira kao trajno preusmerenje, a odloženi kao privremeno, i preporučuje trajno preusmerenje na serveru kad god je moguće — meta refresh samo tamo gde platforma ne može da preusmerava na serveru. Ahrefs meta refresh preusmerenje prijavljuje kao kritičan problem, a Screaming Frog kao preusmerenje koje treba ispraviti.",
+    "Webflow can do server-side 301 redirects: Site settings > Publishing > 301 redirects — enter the old path and the new URL, then publish. Remove the meta refresh from {0}.": "Webflow podržava 301 preusmerenja na serveru: Site settings > Publishing > 301 redirects — unesi staru putanju i novi URL, zatim objavi. Ukloni meta refresh iz {0}.",
+    "No meta refresh redirect on the page": "Na stranici nema meta refresh preusmerenja",
+    "International (hreflang)": "Međunarodno (hreflang)",
+    "hreflang tags are outside <head> ({0})": "hreflang tagovi su van <head> ({0})",
+    "Google Search Central: the hreflang <link> tags must be inside a well-formed <head> section of the HTML. {0}": "Google Search Central: hreflang <link> tagovi moraju biti unutar ispravno formiranog <head> dela HTML-a. {0}",
+    "Invalid hreflang value: {0}": "Neispravna hreflang vrednost: {0}",
+    "The hreflang value must always specify a language code in ISO 639-1 format (e.g. \"en\", \"de\"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. \"en-GB\", \"es-mx\"), or be \"x-default\". A region alone (e.g. \"us\") is not valid, and \"en-UK\" is not valid because the ISO 3166-1 code of the United Kingdom is \"GB\". (Google Search Central, Lighthouse)": "hreflang vrednost uvek mora da navede kod jezika u ISO 639-1 formatu (npr. \"en\", \"de\"), uz opcioni kod regiona u ISO 3166-1 alpha-2 formatu (npr. \"en-GB\", \"es-mx\"), ili da bude \"x-default\". Sam region (npr. \"us\") nije ispravan, a \"en-UK\" nije ispravan jer je ISO 3166-1 kod Ujedinjenog Kraljevstva \"GB\". (Google Search Central, Lighthouse)",
+    "Correct the language/region code. {0}": "Ispravi kod jezika/regiona. {0}",
+    "hreflang URL is not fully qualified ({0})": "hreflang URL nije pun (apsolutni) URL ({0})",
+    "Google Search Central: alternate URLs must be fully-qualified, including the transport method (http/https) — \"https://example.com/foo\", not \"//example.com/foo\" or \"/foo\".": "Google Search Central: alternativni URL-ovi moraju biti puni, uključujući protokol (http/https) — \"https://example.com/foo\", a ne \"//example.com/foo\" ili \"/foo\".",
+    "Use full URLs starting with https://. {0}": "Koristi pune URL-ove koji počinju sa https://. {0}",
+    "This page is missing from its own hreflang set (no self-reference)": "Ova stranica nedostaje u sopstvenom hreflang skupu (nema samoreference)",
+    "This page: {0}": "Ova stranica: {0}",
+    "Google Search Central: each language version must list itself as well as all other language versions — for each variation of the page, include one <link> for each page variant, including itself.": "Google Search Central: svaka jezička verzija mora da navede sebe i sve ostale jezičke verzije — za svaku varijantu stranice uključi po jedan <link> za svaku varijantu, uključujući i nju samu.",
+    "No x-default hreflang": "Nema x-default hreflang-a",
+    "Google Search Central: x-default matches any language not explicitly listed, and Google suggests considering a fallback page for unmatched languages, especially on language/country selectors or auto-redirecting home pages. Recommended, not required.": "Google Search Central: x-default pokriva svaki jezik koji nije izričito naveden, a Google predlaže da se razmotri rezervna stranica za jezike bez odgovarajuće verzije, posebno na stranicama za izbor jezika/zemlje ili početnim stranicama sa automatskim preusmeravanjem. Preporučeno, nije obavezno.",
+    "hreflang points to a page that does not load directly ({0})": "hreflang pokazuje na stranicu koja se ne učitava direktno ({0})",
+    "{0} → {1} — HTTP {2}": "{0} → {1} — HTTP {2}",
+    "{0} → {1} — redirects to {2}": "{0} → {1} — preusmerava na {2}",
+    "The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can't work. Screaming Frog (Non-200 Hreflang URLs) and Ahrefs (Hreflang to broken page) report this.": "Alternativna verzija odgovara greškom ili preusmerenjem umesto same stranice, pa hreflang par ne može da radi. Screaming Frog (Non-200 Hreflang URLs) i Ahrefs (Hreflang to broken page) ovo prijavljuju.",
+    "Point the hreflang to the final URL of each version. {0}": "Usmeri hreflang na krajnji URL svake verzije. {0}",
+    "hreflang return link missing on {0} version(s)": "Nedostaje povratni hreflang link na verzijama: {0}",
+    "Google Search Central: if two pages don't both point to each other, the tags will be ignored. Each version listed here has hreflang tags, or none, that don't point back to this page.": "Google Search Central: ako dve stranice ne pokazuju jedna na drugu, tagovi će biti ignorisani. Svaka verzija navedena ovde ima hreflang tagove (ili ih nema) koji ne pokazuju nazad na ovu stranicu.",
+    "Every version must list all versions, including this page. {0}": "Svaka verzija mora da navede sve verzije, uključujući ovu stranicu. {0}",
+    "hreflang points to a URL whose canonical is a different page ({0})": "hreflang pokazuje na URL čiji je canonical druga stranica ({0})",
+    "The alternate version says another URL is its primary (canonical) version. Google Search Central asks that hreflang and canonical agree (specify a canonical page in the same language); Ahrefs (Hreflang to non-canonical) and Screaming Frog (Hreflang: Not Using Canonical) report this.": "Alternativna verzija navodi da je drugi URL njena primarna (canonical) verzija. Google Search Central traži da se hreflang i canonical slažu (navedi canonical stranicu na istom jeziku); Ahrefs (Hreflang to non-canonical) i Screaming Frog (Hreflang: Not Using Canonical) ovo prijavljuju.",
+    "Point the hreflang to the canonical URL of each version, or fix that version's canonical. {0}": "Usmeri hreflang na canonical URL svake verzije ili ispravi canonical te verzije. {0}",
+    "{0} version(s) on another domain can't be read from the browser ({1})": "verzije na drugom domenu ({0}) ne mogu da se pročitaju iz browsera ({1})",
+    "only the first {0} versions were checked": "provereno je samo prvih {0} verzija",
+    "hreflang tags are valid ({0} versions) and the checked versions link back": "hreflang tagovi su ispravni ({0} verzija) i proverene verzije linkuju nazad",
+    "hreflang return-link check (some versions)": "Provera povratnih hreflang linkova (neke verzije)",
+    "Canonical tag is valid": "Canonical tag je ispravan",
+    "Not blocked in robots.txt (Googlebot)": "Nije blokirana u robots.txt (Googlebot)",
+    "Not blocked for AI search crawlers": "Nije blokirana za AI crawlere pretrage",
+    "Original HTML matches the rendered page": "Originalni HTML odgovara renderovanoj stranici",
+    "No meta refresh redirect": "Nema meta refresh preusmerenja",
+    "hreflang tags": "hreflang tagovi",
     "Preliminary check": "Preliminarna provera",
     "Page was loaded via a redirect": "Stranica je učitana preko preusmeravanja",
     "The browser followed {0} redirect(s) before arriving at: {1}": "Browser je pratio preusmeravanja ({0}) pre dolaska na: {1}",
@@ -4533,13 +5602,11 @@
     "Canonical tag is missing": "Canonical tag nedostaje",
     "There is no <link rel=\"canonical\">.": "Nema <link rel=\"canonical\">.",
     "Without a canonical, Google chooses on its own which version of the URL it considers primary — and Google officially recommends that EVERY page have an explicit canonical, regardless of whether a duplicate currently exists. This is something a developer should add before publishing, not a \"nice to have\".": "Bez canonical-a, Google sam bira koju verziju URL-a smatra primarnom — a Google zvanično preporučuje da SVAKA stranica ima eksplicitan canonical, bez obzira na to da li trenutno postoji duplikat. Ovo treba dodati pre objavljivanja; nije \"nice to have\".",
-    "Add a canonical tag pointing to this page.": "Dodaj canonical tag koji pokazuje na ovu stranicu.",
     "Relevant to both SEO and AEO — an unclear \"primary\" URL makes it harder for AI answer engines to know which version of the page to cite.": "Relevantno i za SEO i za AEO — nejasan \"primarni\" URL otežava AI answer engine-ima da znaju koju verziju stranice da citiraju.",
     "Relevant to both SEO and AEO — a canonical prevents duplicate content issues and consolidates ranking signals onto a single URL in the Google index.": "Relevantno i za SEO i za AEO — canonical sprečava probleme sa duplim sadržajem i objedinjuje signale rangiranja na jedan URL u Google indeksu.",
     "Page is marked as noindex": "Stranica je označena kao noindex",
     "meta robots = \"{0}\"": "meta robots = \"{0}\"",
     "This page will not be indexed by Google as long as this remains in place.": "Google neće indeksirati ovu stranicu dok god ovo ostaje na snazi.",
-    "If the page should be visible in search, remove noindex in Page Settings > SEO > \"Exclude from search results\".": "Ako stranica treba da bude vidljiva u pretrazi, ukloni noindex u Page Settings > SEO > \"Exclude from search results\".",
     "Relevant to both SEO and AEO — a noindex page won't appear in the sources AI answer engines (partly) rely on via the Google index either.": "Relevantno i za SEO i za AEO — noindex stranica neće se pojaviti ni u izvorima na koje se AI answer engine-i (delimično) oslanjaju preko Google indeksa.",
     "Relevant to both SEO and AEO — a noindex directive completely removes the page from Google search, which is the most direct possible SEO problem.": "Relevantno i za SEO i za AEO — noindex direktiva potpuno uklanja stranicu iz Google pretrage, što je najdirektniji mogući SEO problem.",
     "Page is not marked as noindex": "Stranica nije označena kao noindex",
@@ -4587,18 +5654,7 @@
     "A <link> tag was found, but the resource ({0}) does not load.": "Pronađen je <link> tag, ali se resurs ({0}) ne učitava.",
     "There is no <link rel=\"icon\"> in the head, and no fallback /favicon.ico exists either.": "U head-u nema <link rel=\"icon\">, a ne postoji ni fallback /favicon.ico.",
     "Google Search Central explicitly documents favicon requirements so a site shows up with its own icon in mobile search results and in Chrome tabs/bookmarks — without it a generic icon is shown, which reduces brand recognition and CTR in the SERP.": "Google Search Central eksplicitno dokumentuje zahteve za favicon kako bi se sajt prikazivao sa sopstvenom ikonicom u mobilnim rezultatima pretrage i u Chrome tabovima/bookmarkovima — bez nje se prikazuje generička ikonica, što smanjuje prepoznatljivost brenda i CTR u SERP-u.",
-    "Add a favicon in Webflow Site Settings > Icons (square, minimum 48x48px, .ico/.png/.svg).": "Dodaj favicon u Webflow Site Settings > Icons (kvadratni, minimum 48x48px, .ico/.png/.svg).",
-    "Favicon is in an unusual format ({0})": "Favicon je u neuobičajenom formatu ({0})",
-    "The widest support (browsers, Google Search) is for .ico, .png and .svg formats — other formats can behave unpredictably in browser UI.": "Najšira podrška (browseri, Google Search) je za .ico, .png i .svg formate — drugi formati mogu se ponašati nepredvidivo u browser UI-ju.",
-    "Use the .ico, .png or .svg format for the favicon.": "Koristi .ico, .png ili .svg format za favicon.",
-    "Favicon dimensions are not ideal ({0})": "Dimenzije favicon-a nisu idealne ({0})",
-    "Google recommends a square favicon, minimum 48x48px (in a multiple of that size), so it renders cleanly in search results and browser UI at all resolutions.": "Google preporučuje kvadratni favicon, minimum 48x48px (u umnošku te veličine), kako bi se čisto prikazivao u rezultatima pretrage i browser UI-ju na svim rezolucijama.",
-    "Replace the favicon with a square image at least 48x48px (ideally 128x128px for retina screens).": "Zameni favicon kvadratnom slikom od najmanje 48x48px (idealno 128x128px za retina ekrane).",
-    "Favicon is square and an appropriate size ({0}x{1})": "Favicon je kvadratni i odgovarajuće veličine ({0}x{1})",
     "Favicon is blocked in robots.txt": "Favicon je blokiran u robots.txt",
-    "The path \"{0}\" is covered by a Disallow rule in /robots.txt (User-agent: *).": "Putanja \"{0}\" je pokrivena Disallow pravilom u /robots.txt (User-agent: *).",
-    "If Googlebot can't access the favicon file, it can't display it in mobile search results either — Google Search Central explicitly requires the favicon URL to be crawlable.": "Ako Googlebot ne može da pristupi favicon fajlu, ne može ga ni prikazati u mobilnim rezultatima pretrage — Google Search Central eksplicitno zahteva da favicon URL bude dostupan za indeksiranje.",
-    "Add an Allow rule for the favicon path in robots.txt, or narrow the Disallow rule so it doesn't cover it.": "Dodaj Allow pravilo za putanju favicon-a u robots.txt, ili suzi Disallow pravilo da je ne pokriva.",
     "Favicon is present and loads successfully": "Favicon postoji i uspešno se učitava",
     "URL & page duplication": "URL & dupliranje stranica",
     "Canonical points to a different path on the same site": "Canonical pokazuje na drugu putanju na istom sajtu",
@@ -4610,12 +5666,10 @@
     "the element itself (display:none)": "sam element (display:none)",
     "Canonical points to a different domain": "Canonical pokazuje na drugi domen",
     "The canonical tells Google that another website holds the \"real\" version of this page, so this page is left out of the results in favour of that one. That is correct for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.": "Canonical govori Google-u da \"pravu\" verziju ove stranice drži drugi sajt, pa ova stranica ostaje van rezultata u korist te. To je ispravno za namerno sindikovan sadržaj, ali pogrešno kada je zaostatak iz template-a, staging kopije ili drugog sajta.",
-    "If it is not intentional, set the canonical in Page Settings to this page's own URL.": "Ako nije namerno, postavi canonical u Page Settings na URL ove stranice.",
     "Canonical points to a different host or protocol version": "Canonical pokazuje na drugu verziju hosta ili protokola",
     "The canonical names the www / non-www or http / https variant that is not the one this page was opened on. Google then treats the other variant as the primary URL, which is only right if the site redirects to it.": "Canonical navodi www / non-www ili http / https varijantu koja nije ona na kojoj je ova stranica otvorena. Google tada drugu varijantu smatra primarnim URL-om, što je ispravno samo ako sajt preusmerava na nju.",
     "Make the canonical, the site's default domain (Project Settings > Hosting) and the redirects agree on one variant.": "Uskladi canonical, podrazumevani domen sajta (Project Settings > Hosting) i preusmeravanja na jednu varijantu.",
     "A common cause: the page was duplicated in Webflow and the canonical was left pointing at the original — Google then ignores this page in favor of that other one.": "Čest uzrok: stranica je duplirana u Webflow-u, a canonical je ostao da pokazuje na original — Google tada ignoriše ovu stranicu u korist one druge.",
-    "Check whether this is intentional. If not, fix the canonical in Page Settings to point to this page.": "Proveri da li je ovo namerno. Ako nije, ispravi canonical u Page Settings tako da pokazuje na ovu stranicu.",
     "Relevant to both SEO and AEO — an incorrect canonical also confuses AI answer engines about which is the \"real\" version of the page to cite.": "Relevantno i za SEO i za AEO — pogrešan canonical takođe zbunjuje AI answer engine-e oko toga koja je \"prava\" verzija stranice za citiranje.",
     "Relevant to both SEO and AEO — an incorrect canonical splits ranking signals (links, authority) across multiple URLs instead of consolidating them on one page.": "Relevantno i za SEO i za AEO — pogrešan canonical deli signale rangiranja (linkove, autoritet) na više URL-ova umesto da ih objedini na jednoj stranici.",
     "Canonical tag is present and points to this page": "Canonical tag postoji i pokazuje na ovu stranicu",
@@ -4787,7 +5841,6 @@
     "Checked {0}/sitemap.xml ({1} URLs)": "Provereno: {0}/sitemap.xml ({1} URL-ova)",
     "The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant. This looks intentional here (the page is noindex or its canonical points elsewhere).": "Sitemap govori pretraživačima koje URL-ove da indeksiraju. Stranica koja nedostaje u njemu i dalje može biti indeksirana preko linkova, ali se otkriva sporije i signalizira da je možda nevažna. Ovde izgleda namerno (stranica je noindex ili njen canonical pokazuje drugde).",
     "The sitemap tells search engines which URLs to crawl. A page missing from it can still be indexed through links, but it is discovered slower and signals that it may be unimportant.": "Sitemap govori pretraživačima koje URL-ove da indeksiraju. Stranica koja nedostaje u njemu i dalje može biti indeksirana preko linkova, ali se otkriva sporije i signalizira da je možda nevažna.",
-    "In the Webflow Designer: Pages > this page > Settings > SEO — make sure \"Exclude this page from the sitemap\" is off, then publish. Also check Project Settings > SEO > Sitemap is enabled (auto-generate).": "U Webflow Designer-u: Pages > ova stranica > Settings > SEO — proveri da je \"Exclude this page from the sitemap\" isključeno, pa objavi. Takođe proveri da je Project Settings > SEO > Sitemap uključen (auto-generate).",
     "Links": "Linkovi",
     "Link doesn't go anywhere (href=\"{0}\")": "Link ne vodi nigde (href=\"{0}\")",
     "Link doesn't go anywhere (href=\"\")": "Link ne vodi nigde (href=\"\")",
@@ -4840,9 +5893,6 @@
     "A common case is when a CMS Rich Text element isn't properly bound to the real data, so the default value is left in place.": "Čest slučaj je kada CMS Rich Text element nije pravilno povezan sa stvarnim podacima, pa ostaje podrazumevana vrednost.",
     "Replace the placeholder text with real content before publishing.": "Zameni placeholder tekst pravim sadržajem pre objavljivanja.",
     "No placeholder/Lorem ipsum text on the page": "Nema placeholder/Lorem ipsum teksta na stranici",
-    "Manual <br> line break inside a {0} element": "Ručni <br> prelom reda unutar {0} elementa",
-    "This doesn't directly affect SEO ranking, but a line break fixed for desktop layout can \"break\" and wrap the text oddly on mobile (a mobile-first indexing experience signal).": "Ovo direktno ne utiče na SEO rangiranje, ali prelom reda fiksiran za desktop raspored može da se \"pokvari\" i čudno prelomi tekst na mobilnom (signal iskustva mobile-first indeksiranja).",
-    "Consider a CSS solution (max-width, responsive font-size) instead of a manual <br>.": "Razmisli o CSS rešenju (max-width, responsive font-size) umesto ručnog <br>.",
     "Fonts": "Fontovi",
     "The page uses {0} different fonts: {1}": "Stranica koristi različite fontove ({0}): {1}",
     "Every additional font is another file to download and a risk of FOUT/FOIT, which hurts performance.": "Svaki dodatni font je još jedan fajl za preuzimanje i rizik od FOUT/FOIT-a, što šteti performansama.",
@@ -5083,7 +6133,6 @@
     "Hidden content": "Skriveni sadržaj",
     "Repeated words": "Ponovljene reči",
     "Placeholder / Lorem ipsum text": "Placeholder / Lorem ipsum tekst",
-    "Manual <br> line breaks": "Ručni <br> prelomi",
     "Number of fonts": "Broj fontova",
     "Google Fonts loading": "Učitavanje Google Fonts",
     "Font file format": "Format font fajla",
@@ -5121,4 +6170,5 @@
   run();
 
   window.__SeoAuditorResults = findings;
+  window.__SeoAuditorSuccesses = successes;
 })();
