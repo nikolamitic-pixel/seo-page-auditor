@@ -330,13 +330,13 @@
     var charsetMeta = document.querySelector('meta[charset]') || document.querySelector('meta[http-equiv="Content-Type" i]');
     if (!charsetMeta) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta charset declaration is missing',
-        description: 'There is no <meta charset="..."> in the head.', why: 'Lighthouse (Best Practices) expects the character encoding to be declared: a <meta charset> completely within the first 1024 bytes of the HTML, a charset in the Content-Type HTTP header, or a byte-order mark. Without it, the browser doesn\'t know which character each byte represents and may show characters incorrectly.',
+        description: 'There is no <meta charset="..."> in the head.', why: 'The character encoding must be declared: a <meta charset> within the first 1024 bytes of the HTML, a charset in the Content-Type HTTP header, or a byte-order mark. Without it, the browser doesn\'t know which character each byte represents and may show characters incorrectly.',
         fix: 'Webflow adds this automatically — check that custom code in the <head> hasn\'t accidentally removed or moved the tag.', element: document.head });
     } else {
       var charsetVal = charsetMeta.hasAttribute('charset') ? charsetMeta.getAttribute('charset') : (charsetMeta.getAttribute('content') || '');
       if (!/utf-8/i.test(charsetVal)) {
         addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta charset is not UTF-8',
-          description: 'Value found: "' + charsetVal + '".', why: 'The HTML standard allows only UTF-8: the value of <meta charset> must be "utf-8".',
+          description: 'Value found: "' + charsetVal + '".', why: 'HTML allows only UTF-8: the value of <meta charset> must be "utf-8".',
           fix: 'Set the charset to UTF-8.', element: document.head });
       } else {
         addSuccess({ category: 'Meta & head tags', title: 'Meta charset is present and set to UTF-8', description: '', element: document.head });
@@ -348,7 +348,7 @@
     if (titleTags.length > 1) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one <title> tag in the head (' + titleTags.length + ')',
         description: Array.prototype.map.call(titleTags, function (t) { return '"' + t.textContent + '"'; }).join(', '),
-        why: 'The HTML standard allows no more than one <title> element per document, and Screaming Frog reports multiple page titles as an issue (high priority). Usually a <title> was added in custom code next to the one Webflow outputs.',
+        why: 'A page may have only one <title>. Usually a second <title> was added in custom code next to the one Webflow outputs.',
         fix: 'Remove all but one <title> tag — set the title in Pages panel > Page settings > SEO settings > Title tag, not manually in custom code.', element: document.head });
     }
 
@@ -356,7 +356,7 @@
     if (descTags.length > 1) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one meta description tag (' + descTags.length + ')',
         description: Array.prototype.map.call(descTags, function (m) { return '"' + (m.getAttribute('content') || '') + '"'; }).join(' | '),
-        why: 'The HTML standard allows only one meta description per document, and Screaming Frog reports multiple meta descriptions as an issue. Usually one comes from Page settings and another from custom code.',
+        why: 'A page may have only one meta description. Usually one comes from Page settings and another from custom code.',
         fix: 'Remove all but one meta description tag.', element: document.head });
     }
 
@@ -364,15 +364,15 @@
     var titleLengthOk = false;
     if (!title.trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Title tag is missing or empty',
-        description: 'The <title> is empty.', why: 'Google uses the <title> for the title link in search results — Google: "Title links are critical to giving users a quick insight into the content of a result and why it\'s relevant to their query."',
+        description: 'The <title> is empty.', why: 'Google uses the <title> as the clickable headline of the result in search, and it is often the main thing people read before deciding to click.',
         fix: 'Add a unique, descriptive title in Pages panel > Page settings > SEO settings > Title tag (Webflow recommends under 60 characters).', element: document.head });
     } else if (title.length > 60) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is too long (' + title.length + ' characters)',
-        description: 'Title: "' + title + '"', why: 'Google says there is no limit on title length, but the title link is truncated as needed to fit the device width. Screaming Frog flags titles over 60 characters, and Webflow recommends keeping titles under 60 characters.',
-        fix: 'Shorten the title to 60 characters or fewer (Screaming Frog\'s limit; Webflow recommends under 60), with the most important words first.', element: document.head });
+        description: 'Title: "' + title + '"', why: 'There is no hard limit on title length, but Google shortens the title in search results to fit the screen width. Keeping it under 60 characters keeps the whole title visible.',
+        fix: 'Shorten the title to 60 characters or fewer, with the most important words first.', element: document.head });
     } else if (title.length < 30) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Title is very short (' + title.length + ' characters)',
-        description: 'Title: "' + title + '"', why: 'Screaming Frog flags titles below 30 characters (an opportunity): such a short title often doesn\'t describe the page well. (Google truncates by display width, not by character count.)',
+        description: 'Title: "' + title + '"', why: 'A title under 30 characters usually doesn\'t describe the page well. (Google shortens titles by display width, not by character count.)',
         fix: 'Expand the title to better describe the page content.', element: document.head });
     } else {
       titleLengthOk = true;
@@ -391,15 +391,15 @@
     var desc = getMeta('description');
     if (!desc || !desc.trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Meta description is missing',
-        description: 'There is no meta description tag, or it is empty.', why: 'Google sometimes uses the meta description for the snippet in search results "if we think it gives users a more accurate description than would be possible purely from the on-page content". Without it, the snippet is built from the page text only.',
-        fix: 'Add a meta description (Screaming Frog\'s range: 70–155 characters) in Pages panel > Page settings > SEO settings > Meta description.', element: document.head });
+        description: 'There is no meta description tag, or it is empty.', why: 'Google sometimes shows the meta description as the text under the result in search; without one, that text is taken from the page content only.',
+        fix: 'Add a meta description of 70–155 characters in Pages panel > Page settings > SEO settings > Meta description.', element: document.head });
     } else if (desc.length < 70) {
       addFinding({ category: 'Meta & head tags', severity: 'info', title: 'Meta description is short (' + desc.length + ' characters)',
-        description: desc, why: 'Screaming Frog flags meta descriptions below 70 characters (low priority). Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.',
-        fix: 'Expand it to at least 70 characters (Screaming Frog\'s lower limit) so it describes the page.', element: document.head });
+        description: desc, why: 'A meta description under 70 characters usually doesn\'t describe the page well. Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.',
+        fix: 'Expand it to at least 70 characters so it describes the page.', element: document.head });
     } else if (desc.length > 155) {   // Screaming Frog: Meta Description Over 155 Characters (06.11.2026)
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta description is too long (' + desc.length + ' characters)',
-        description: desc, why: 'Google says there is no limit on meta description length, but the snippet is truncated as needed to fit the device width. Screaming Frog flags meta descriptions over 155 characters.', fix: 'Shorten it to 155 characters or fewer (Screaming Frog\'s limit).', element: document.head });
+        description: desc, why: 'There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 155 characters the end is usually cut off.', fix: 'Shorten it to 155 characters or fewer.', element: document.head });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Meta description is present and of appropriate length (' + desc.length + ' characters)',
         description: desc, element: document.head });
@@ -426,7 +426,7 @@
     if (!ogImage) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'og:image is missing',
         description: 'There is no Open Graph image.', why: 'Links without an OG image look bare when shared on social media.',
-        fix: 'Add it in Pages panel > Page settings > Open Graph settings > Open Graph image (an image link or an image from the Assets panel; the Open Graph image field in Webflow says: "Use an image that\'s at least 1200px by 630px minimum (1.91:1 ratio) for the best results"). On a Collection page choose an Image field.', element: document.head });
+        fix: 'Add it in Pages panel > Page settings > Open Graph settings > Open Graph image (an image link or an image from the Assets panel; use at least 1200×630 px, ratio 1.91:1). On a Collection page choose an Image field.', element: document.head });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'og:image is present', description: ogImage, element: document.head });
       checkOgImage(ogImage);
@@ -435,7 +435,7 @@
     var twitterCard = getMeta('twitter:card');
     if (!twitterCard) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Twitter/X Card meta tag (twitter:card) is missing',
-        description: 'There is no <meta name="twitter:card">.', why: 'X\'s Cards documentation: if twitter:card is absent but og:type, og:title and og:description exist, "a summary card may be rendered" — the small card, not the large-image card. twitter:card chooses the card type explicitly.',
+        description: 'There is no <meta name="twitter:card">.', why: 'Without twitter:card, X can still show a preview from the Open Graph tags, but only as the small card, not the large-image card. twitter:card chooses the card type.',
         fix: 'Add <meta name="twitter:card" content="summary_large_image"> (and ideally twitter:title/twitter:image) via Custom Code in the head section.', element: document.head });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Twitter/X Card meta tag is present (' + twitterCard + ')', description: '', element: document.head });
@@ -448,7 +448,7 @@
     if (!canonical || !(canonical.getAttribute('href') || '').trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Canonical tag is missing',
         description: canonical ? 'The <link rel="canonical"> is there, but its href is empty.'
-          : (canonicalOutside ? 'There is a <link rel="canonical"> (href: ' + (canonicalOutside.getAttribute('href') || '') + '), but it is outside <head>, where Google ignores it. ' + HEAD_PARSE_NOTE : 'There is no <link rel="canonical">.'), why: 'Google: a canonical is not required — "your site will likely do just fine without specifying a canonical preference" — but Google recommends a self-referential rel="canonical" on the canonical page, and Screaming Frog reports a missing canonical as a warning. Without it, Google picks the canonical URL on its own.',
+          : (canonicalOutside ? 'There is a <link rel="canonical"> (href: ' + (canonicalOutside.getAttribute('href') || '') + '), but it is outside <head>, where Google ignores it. ' + HEAD_PARSE_NOTE : 'There is no <link rel="canonical">.'), why: 'A canonical is not strictly required, but a canonical that points to the page itself is the recommended setup. Without it, Google decides on its own which URL is the main one.',
         fix: 'Add a canonical tag pointing to this page. ' + CANON_FIX, element: document.head });
     } else {
       checkCanonicalDuplication(canonical);
@@ -462,11 +462,11 @@
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Page is marked as noindex',
         description: robotsNoindex(robots) ? 'meta robots = "' + robots + '"' : 'meta googlebot = "' + googlebotMeta + '"', why: 'This page will not be indexed by Google as long as this remains in place.',
         fix: 'If the page should be visible in search: in Webflow, Page settings > SEO settings > turn "Sitemap indexing" back on (turned off, it adds <meta name="robots" content="noindex">); for a CMS item: the Collection item > Item details > Sitemap indexing. A noindex can also come from custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code). Publish after the change.', element: document.head,
-        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google: to be shown as a supporting link in AI Overviews or AI Mode, a page must be indexed and eligible to be shown in Google Search with a snippet.',
-        crossNoteReverse: 'Relevant to both SEO and AEO — Google: noindex means "Do not show this page, media, or resource in search results."' });
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — to be shown as a source in Google\'s AI Overviews or AI Mode, a page must be indexed and allowed to show a snippet.',
+        crossNoteReverse: 'Relevant to both SEO and AEO — noindex tells Google not to show the page in search results.' });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Page is not marked as noindex', description: '', element: document.head,
-        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google: to be shown as a supporting link in AI Overviews or AI Mode, a page must be indexed and eligible to be shown in Google Search with a snippet.',
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — to be shown as a source in Google\'s AI Overviews or AI Mode, a page must be indexed and allowed to show a snippet.',
         crossNoteReverse: 'Relevant to both SEO and AEO — the page is indexable and can appear in Google search.' });
     }
 
@@ -474,9 +474,9 @@
     if (blocksSnippet) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Robots directive blocks the content snippet (nosnippet/max-snippet:0)',
         description: 'meta robots = "' + robots + '"',
-        why: 'Google: nosnippet means "Do not show a text snippet or video preview in the search results for this page", and it also keeps the content from being used as a direct input for AI Overviews and AI Mode (max-snippet:0 has the same effect on the text).',
+        why: 'nosnippet tells Google not to show a text snippet or video preview for this page, and the content is then not used as a direct source for AI Overviews and AI Mode (max-snippet:0 has the same effect on the text).',
         fix: 'Remove "nosnippet" and "max-snippet:0" from the meta robots tag, unless it\'s intentional (e.g. a page with sensitive content).', element: document.head,
-        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google: with nosnippet the content is not used as a direct input for AI Overviews and AI Mode.',
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — with nosnippet the content is not used as a direct source for AI Overviews and AI Mode.',
         crossNoteReverse: 'Relevant to both SEO and AEO — the Google result for this page is shown without a text snippet.' });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Robots directive does not block the content snippet', description: '', element: document.head,
@@ -487,7 +487,7 @@
     var htmlLang = document.documentElement.getAttribute('lang');
     if (!htmlLang) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'lang attribute is missing on <html>',
-        description: '<html> has no lang attribute.', why: 'Google doesn\'t use it ("We don\'t use any code-level language information such as lang attributes"), but screen readers do: WCAG 2.2 success criterion 3.1.1 Language of Page (level A) requires that "The default human language of each web page can be programmatically determined", so assistive technology reads the text in the right language.',
+        description: '<html> has no lang attribute.', why: 'Google doesn\'t use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement.',
         fix: 'Set the site\'s language code in Webflow: Settings panel > Localization (or the globe icon in the top bar > Localization settings) — choose the primary locale\'s language (and optionally country), save and publish.', element: document.documentElement });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'lang attribute is present on <html> (' + htmlLang + ')', description: '', element: document.documentElement });
@@ -496,7 +496,7 @@
     var viewport = document.querySelector('meta[name="viewport"]');
     if (!viewport) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Viewport meta tag is missing',
-        description: 'There is no <meta name="viewport">.', why: 'Lighthouse: "Without a viewport meta tag, mobile devices render pages at typical desktop screen widths and then scale the pages down, making them difficult to read."',
+        description: 'There is no <meta name="viewport">.', why: 'Without a viewport meta tag, phones render the page at desktop width and then shrink it, so the text is hard to read.',
         fix: 'Webflow usually adds this automatically — check that custom code hasn\'t removed the tag.', element: document.head });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Viewport meta tag is present', description: '', element: document.head });
@@ -505,7 +505,7 @@
       var vpMaxScale = /maximum-scale\s*=\s*([0-9.]+)/i.exec(vpContent);
       if (/user-scalable\s*=\s*(no|0)\b/i.test(vpContent) || (vpMaxScale && parseFloat(vpMaxScale[1]) < 2)) {
         addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Viewport prevents the user from zooming',
-          description: 'viewport = "' + vpContent + '"', why: 'axe — the accessibility engine Lighthouse uses — fails user-scalable=no and any maximum-scale below 2, under WCAG 1.4.4 Resize text (level AA): people with low vision can\'t zoom in on a phone.',
+          description: 'viewport = "' + vpContent + '"', why: 'Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible.',
           fix: 'Remove user-scalable=no from the viewport tag and remove maximum-scale (or set it to at least 2).', element: document.head });
       } else {
         addSuccess({ category: 'Meta & head tags', title: 'Viewport allows the user to zoom the page', description: '', element: document.head });
@@ -519,7 +519,7 @@
     // Facebook's sharing docs list no formats. WebP is therefore no longer flagged (it was, without a source).
     if (ext === 'avif' || ext === 'svg') {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is in a format X does not list as supported (' + ext.toUpperCase() + ')',
-        description: 'og:image: ' + ogImageUrl, why: 'X\'s Cards documentation lists JPG, PNG, WEBP and GIF as the supported image formats and says SVG is not supported, so the link preview on X can end up without an image. (Facebook\'s sharing documentation does not list formats.)',
+        description: 'og:image: ' + ogImageUrl, why: 'X supports JPG, PNG, WEBP and GIF images in link previews; SVG is not supported and AVIF is not on its list, so the preview on X can end up without an image.',
         fix: 'Use a JPG or PNG (or WebP) image as the OG image: Pages panel > Page settings > Open Graph settings > Open Graph image.', element: null });
     }
     var img = new Image();
@@ -528,8 +528,8 @@
       // X large-image card — "minimum dimensions of 300x157". (Old 600x315 / 1200x630 thresholds had no source.)
       if (img.naturalWidth < 600 || img.naturalHeight < 157) {
         addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is too small (' + img.naturalWidth + 'x' + img.naturalHeight + ')',
-          description: 'og:image: ' + ogImageUrl, why: 'Facebook\'s sharing best practices ask for images at least 600 px wide at the minimum and at least 1080 px wide for the best display on high-resolution screens; X\'s large-image card needs at least 300x157 px.',
-          fix: 'Replace it in Pages panel > Page settings > Open Graph settings > Open Graph image — the Open Graph image field in Webflow says: "Use an image that\'s at least 1200px by 630px minimum (1.91:1 ratio) for the best results"; Facebook asks for at least 1080 px wide, and X displays large-image cards at 2:1.', element: null });
+          description: 'og:image: ' + ogImageUrl, why: 'For a sharp preview, Facebook needs an image at least 600 px wide and ideally 1080 px or more; X\'s large-image card needs at least 300x157 px.',
+          fix: 'Replace it in Pages panel > Page settings > Open Graph settings > Open Graph image with an image of at least 1200×630 px (ratio 1.91:1).', element: null });
       }
       renderPanel();
     };
@@ -547,7 +547,7 @@
         // 06.11.2026: X — "Images must be less than 5MB in size". (Old 300KB / WhatsApp claim had no official source.)
         if (len && parseInt(len, 10) >= 5 * 1024 * 1024) {
           addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'OG image is larger than X\'s 5 MB limit (' + fmtBytes(parseInt(len, 10)) + ')',
-            description: 'og:image: ' + ogImageUrl, why: 'X\'s Cards documentation says card images must be less than 5 MB, so the preview on X can end up without an image.',
+            description: 'og:image: ' + ogImageUrl, why: 'X doesn\'t show card images of 5 MB or more, so the preview on X can end up without an image.',
             fix: 'Use a smaller file (compress it, or export it smaller while keeping it at least 1080 px wide) and set it again in Page settings > Open Graph settings.', element: null });
           renderPanel();
         }
@@ -717,7 +717,7 @@
         if (v.blocked) {
           addFinding({ category: 'Favicon', severity: 'warning', title: 'Favicon is blocked in robots.txt',
             description: 'The path "' + u.pathname + '" is blocked by "' + v.rule + '" (group: User-agent: ' + v.group + ').',
-            why: 'Google Search Central: Googlebot-Image must be able to crawl the favicon file — it must not be blocked by robots.txt. Otherwise Google can\'t show it in search results.',
+            why: 'Google must be able to crawl the favicon file (it must not be blocked in robots.txt for Googlebot-Image), otherwise it can\'t show it in search results.',
             fix: 'In Webflow: Site settings > SEO > Indexing — change the robots.txt rules so they don\'t cover the favicon path (add an Allow rule for it or narrow the Disallow rule), save and publish.', element: null });
           renderPanel();
         }
@@ -757,20 +757,20 @@
       addFinding({ category: 'URL & page duplication', severity: 'warning',
         title: 'Canonical points to a different domain',
         description: 'Current page: ' + LOC.hostname + curPath + ' | Canonical: ' + canonicalUrl.hostname + canPath,
-        why: 'The canonical tells Google that another website holds the main version of this page. Google treats rel="canonical" as "a strong signal", so this page may be left out of the results in favour of that one. That is right for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.',
+        why: 'The canonical tells Google that another website holds the main version of this page. rel="canonical" is a strong signal to Google, so this page may be left out of the results in favour of that one. That is right for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.',
         fix: 'If it is not intentional, make the canonical point to this page\'s own URL. ' + CANON_FIX, element: canonicalEl });
     } else if (canonicalUrl.hostname !== LOC.hostname || canonicalUrl.protocol !== LOC.protocol) {
       // Same site, but the www / non-www or http / https variant differs from the one that is open.
       addFinding({ category: 'URL & page duplication', severity: 'warning',
         title: 'Canonical points to a different host or protocol version',
         description: 'Current page: ' + LOC.protocol + '//' + LOC.hostname + curPath + ' | Canonical: ' + canonicalUrl.protocol + '//' + canonicalUrl.hostname + canPath,
-        why: 'The canonical names the www / non-www or http / https variant that is not the one this page was opened on. Google treats rel="canonical" as "a strong signal" to prefer that other variant, which is only right if the site redirects to it.',
+        why: 'The canonical names the www / non-www or http / https variant that is not the one this page was opened on. rel="canonical" is a strong signal to Google to prefer that other variant, which is only right if the site redirects to it.',
         fix: 'Make the canonical, the site\'s default domain and the redirects agree on one variant. In Webflow the default domain is set in Site settings > Publishing tab > Production > Make default; visitors on the other domain are then redirected to it.', element: canonicalEl });
     } else if (canonicalUrl.hostname === LOC.hostname && canPath !== curPath) {
       addFinding({ category: 'URL & page duplication', severity: 'error',
         title: 'Canonical points to a different path on the same site',
         description: 'Current page: ' + curPath + ' | Canonical: ' + canPath,
-        why: 'This happens for example when a page is duplicated in Webflow and the canonical is left pointing at the original. Google treats rel="canonical" as "a strong signal" to prefer that other URL over this page.',
+        why: 'This happens for example when a page is duplicated in Webflow and the canonical is left pointing at the original. rel="canonical" is a strong signal to Google to prefer that other URL over this page.',
         fix: 'Check whether this is intentional. If not, make the canonical point to this page. ' + CANON_FIX, element: canonicalEl });
     } else {
       addSuccess({ category: 'URL & page duplication', title: 'Canonical tag is present and points to this page',
@@ -848,7 +848,7 @@
       if (res.text == null && (res.status >= 500 || res.status === 429)) {
         addFinding({ check: 'crawl.robots', category: CAT, severity: 'error', title: 'robots.txt answers HTTP ' + res.status,
           description: LOC.origin + '/robots.txt',
-          why: 'Google treats a robots.txt that can\'t be fetched because of a server error (5xx, or 429) as a server error: for the first 12 hours it stops crawling the site, then for up to 30 days it uses the last good version of the file. RFC 9309 tells crawlers to assume a complete disallow while robots.txt is unreachable.',
+          why: 'When robots.txt can\'t be fetched because of a server error (5xx or 429), Google stops crawling the site for the first 12 hours and then uses the last good version of the file for up to 30 days; other crawlers may treat the whole site as blocked while robots.txt is unreachable.',
           fix: 'Make /robots.txt answer HTTP 200. On Webflow hosting the file is generated from Site settings > SEO > Indexing; if a proxy or CDN sits in front of the site, the error comes from there.',
           ownerNote: 'If a proxy / CDN (e.g. Cloudflare) sits in front of the site, whoever manages it has to fix the response.', element: null });
         renderPanel(); return;
@@ -859,7 +859,7 @@
       if (g.blocked) {
         addFinding({ check: 'crawl.robots', category: CAT, severity: 'error', title: 'Page is blocked in robots.txt for Googlebot',
           description: 'Path: ' + target + '\nRule: ' + g.rule + ' (group: User-agent: ' + g.group + ')',
-          why: 'Google can\'t crawl this page, so it can\'t read its content. Google Search Central: a page blocked in robots.txt can still appear in search results (for example when other sites link to it), but the result won\'t have a description; and for AI Overviews / AI Mode, crawling must be allowed in robots.txt.' + stagingNote,
+          why: 'Google can\'t crawl this page, so it can\'t read its content. A page blocked in robots.txt can still appear in search results (for example when other sites link to it), but without a description; and AI Overviews / AI Mode can only use pages that may be crawled.' + stagingNote,
           fix: ROBOTS_FIX, element: null, crossRelevant: true, crossNote: NOTE, crossNoteReverse: NOTE });
       } else {
         addSuccess({ check: 'crawl.robots', category: CAT, title: 'Page is not blocked in robots.txt for Googlebot',
@@ -877,7 +877,7 @@
         addFinding({ check: 'aeo.robots', group: 'aeo', category: CAT, severity: 'warning',
           title: 'Page is blocked in robots.txt for AI search crawlers (' + blockedAi.length + ' of ' + AI_SEARCH_BOTS.length + ')',
           description: blockedAi.join('\n'),
-          why: 'OpenAI uses OAI-SearchBot to show websites in ChatGPT search and recommends allowing it in robots.txt; Perplexity recommends allowing PerplexityBot so pages can be surfaced and linked in its answers; Anthropic says that disabling Claude-SearchBot or Claude-User may reduce the site\'s visibility in Claude\'s search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.' + stagingNote,
+          why: 'OpenAI uses OAI-SearchBot to show websites in ChatGPT search, Perplexity uses PerplexityBot to surface and link pages in its answers, and blocking Claude-SearchBot or Claude-User can reduce a site\'s visibility in Claude\'s search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.' + stagingNote,
           fix: ROBOTS_FIX, element: null });
       } else {
         addSuccess({ check: 'aeo.robots', group: 'aeo', category: CAT, title: 'Page is not blocked in robots.txt for AI search crawlers',
@@ -900,7 +900,7 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical tag is outside <head> (' + outside.length + ')',
         description: outside.map(tagText).join('\n'),
-        why: 'Google Search Central: the rel="canonical" link element is only accepted if it appears in the <head> section of the HTML — this extra one is ignored, but it shows that the head code has a problem. ' + HEAD_PARSE_NOTE,
+        why: 'A rel="canonical" link counts only inside the <head> of the HTML — this extra one is ignored, but it shows that the head code has a problem. ' + HEAD_PARSE_NOTE,
         fix: 'Move the canonical into <head> and remove from the head code above it anything that isn\'t allowed in <head> (only <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> and <template> belong there). ' + CANON_FIX,
         element: outside[0] });
     }
@@ -911,12 +911,12 @@
       if (urls.length > 1) {
         addFinding({ check: CK, category: CAT, severity: 'error', title: 'More than one canonical tag, with different URLs (' + inHead.length + ')',
           description: inHead.map(tagText).join('\n'),
-          why: 'Google Search Central: conflicting or multiple rel="canonical" link tags may lead to unexpected results — make sure there is only one. Lighthouse fails a page that has more than one canonical link.',
+          why: 'Several different rel="canonical" tags can lead to unexpected results — there should be only one.',
           fix: 'Keep exactly one canonical. ' + CANON_FIX, element: inHead[1] });
       } else {
         addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical tag appears ' + inHead.length + ' times (same URL)',
           description: inHead.map(tagText).join('\n'),
-          why: 'Google Search Central asks that the rel="canonical" link tag is the only one on the page, and Lighthouse fails a page that has more than one canonical link even when they agree. Usually one comes from the Webflow settings and another from custom code.',
+          why: 'There should be only one rel="canonical" tag on the page, even if they agree. Usually one comes from the Webflow settings and another from custom code.',
           fix: 'Remove the extra canonical. ' + CANON_FIX, element: inHead[1] });
       }
     }
@@ -925,7 +925,7 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical uses a relative URL (' + (relative[0].getAttribute('href') || '').trim().slice(0, 80) + ')',
         description: relative.map(tagText).join('\n'),
-        why: 'Google Search Central: use absolute URLs rather than relative paths in rel="canonical". Relative paths are supported, but Google doesn\'t recommend them because they can cause problems in the long run (for example, if a testing site gets crawled).',
+        why: 'Use an absolute URL in rel="canonical", not a relative path. Relative paths work, but can cause problems later (for example, if a testing site gets crawled).',
         fix: 'Use a full URL starting with https://. ' + CANON_FIX, element: relative[0] });
     }
     var frag = inHead.filter(function (l) { return (l.getAttribute('href') || '').indexOf('#') > -1; });
@@ -933,7 +933,7 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'warning', title: 'Canonical URL contains a fragment (#)',
         description: frag.map(tagText).join('\n'),
-        why: 'Google Search Central: don\'t specify a URL fragment as canonical — Google generally doesn\'t support URL fragments.',
+        why: 'Don\'t use a URL with a #fragment as canonical — Google generally ignores URL fragments.',
         fix: 'Remove the #... part from the canonical URL. ' + CANON_FIX, element: frag[0] });
     }
     if (!problems) addSuccess({ check: CK, category: CAT, title: 'Canonical tag is valid (one absolute URL, in <head>)', description: tagText(inHead[0]), element: inHead[0] });
@@ -950,7 +950,7 @@
         issues++;
         addFinding({ check: CK, category: CAT, severity: 'error', title: 'noindex is in the original HTML but removed by JavaScript',
           description: 'Original HTML: ' + rawNoindex + '\nAfter JavaScript: no noindex',
-          why: 'Google Search Central (JavaScript SEO basics): when Google encounters the noindex tag, it may skip rendering and JavaScript execution, so using JavaScript to change or remove the robots meta tag from noindex may not work as expected. If the page should be indexed, don\'t use a noindex tag in the original page code.',
+          why: 'When Google sees noindex in the original HTML, it may skip running JavaScript, so a script that removes noindex may never take effect. If the page should be indexed, don\'t put noindex in the original page code.',
           fix: 'Remove the noindex from the original HTML and remove the script that deletes it. In Webflow, Page settings > SEO settings > "Sitemap indexing" turned off is what adds <meta name="robots" content="noindex"> — turn it on (for a CMS item: the Collection item > Item details > Sitemap indexing); a noindex can also come from ' + CUSTOM_CODE_PLACES + '. Publish.',
           element: null });
       }
@@ -960,7 +960,7 @@
         issues++;
         addFinding({ check: CK, category: CAT, severity: 'error', title: 'Canonical in the original HTML differs from the canonical after JavaScript',
           description: 'Original HTML: ' + rawC[0] + '\nAfter JavaScript: ' + liveC[0],
-          why: 'Google Search Central (JavaScript SEO basics): you shouldn\'t use JavaScript to change the canonical URL to something else than the URL you specified as the canonical URL in the original HTML — if JavaScript sets it, it must set the same value as the original HTML.',
+          why: 'JavaScript shouldn\'t change the canonical to a different URL than the one in the original HTML — if a script sets it, it must set the same value.',
           fix: 'Find the script that changes the canonical (custom code, Google Tag Manager or another tool) and stop it, so only one source sets the canonical. ' + CANON_FIX,
           element: null });
       }
@@ -1008,7 +1008,7 @@
         addFinding({ check: CK, category: CAT, severity: 'error',
           title: r.delay === 0 ? 'Page redirects instantly with a meta refresh' : 'Page redirects with a meta refresh after ' + r.delay + ' s',
           description: (r.x.header ? 'HTTP header "Refresh: ' + r.x.content + '"' : '<meta http-equiv="refresh" content="' + r.x.content + '">') + '\nTarget: ' + r.to,
-          why: 'Google Search Central treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect, and recommends a permanent server-side redirect whenever possible — meta refresh only where the platform can\'t do server-side redirects. Ahrefs reports a meta refresh redirect as a critical issue and Screaming Frog as a redirection to fix.',
+          why: 'Google treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect; a permanent server-side redirect is the better choice whenever the platform can do it, and meta refresh only where it can\'t.',
           fix: 'Webflow can do server-side 301 redirects: Site settings > Publishing > 301 redirects — enter the old path and the new URL, then publish. Remove the meta refresh from ' + CUSTOM_CODE_PLACES + '.',
           element: r.x.el });
       });
@@ -1043,7 +1043,7 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang tags are outside <head> (' + outside.length + ')',
         description: outside.map(tagText).join('\n'),
-        why: 'Google Search Central: the hreflang <link> tags must be inside a well-formed <head> section of the HTML. ' + HEAD_PARSE_NOTE,
+        why: 'hreflang <link> tags count only inside a well-formed <head> of the HTML. ' + HEAD_PARSE_NOTE,
         fix: HREFLANG_FIX, element: outside[0] });
       if (!inHead.length) return;                       // nothing in <head> to validate further
     }
@@ -1053,7 +1053,7 @@
       addFinding({ check: CK, category: CAT, severity: 'error',
         title: 'Invalid hreflang value: ' + badVal.map(function (l) { return '"' + (l.getAttribute('hreflang') || '') + '"'; }).join(', '),
         description: badVal.map(tagText).join('\n'),
-        why: 'The hreflang value must always specify a language code in ISO 639-1 format (e.g. "en", "de"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. "en-GB", "es-mx"), or be "x-default". A region alone (e.g. "us") is not valid, and "en-UK" is not valid because the ISO 3166-1 code of the United Kingdom is "GB". (Google Search Central, Lighthouse)',
+        why: 'The hreflang value must always specify a language code in ISO 639-1 format (e.g. "en", "de"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. "en-GB", "es-mx"), or be "x-default". A region alone (e.g. "us") is not valid, and "en-UK" is not valid because the ISO 3166-1 code of the United Kingdom is "GB".',
         fix: 'Correct the language/region code. ' + HREFLANG_FIX, element: badVal[0] });
     }
     var notAbs = inHead.filter(function (l) { return !/^https?:\/\//i.test((l.getAttribute('href') || '').trim()); });
@@ -1061,7 +1061,7 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang URL is not fully qualified (' + notAbs.length + ')',
         description: notAbs.map(tagText).join('\n'),
-        why: 'Google Search Central: alternate URLs must be fully-qualified, including the transport method (http/https) — "https://example.com/foo", not "//example.com/foo" or "/foo".',
+        why: 'Alternate URLs must be full URLs including https:// — "https://example.com/foo", not "//example.com/foo" or "/foo".',
         fix: 'Use full URLs starting with https://. ' + HREFLANG_FIX, element: notAbs[0] });
     }
     var selfKeys = [pageKey(LOC.href)];
@@ -1072,13 +1072,13 @@
       problems++;
       addFinding({ check: CK, category: CAT, severity: 'error', title: 'This page is missing from its own hreflang set (no self-reference)',
         description: 'This page: ' + LOC.href.split('#')[0] + '\n' + inHead.map(tagText).join('\n'),
-        why: 'Google Search Central: each language version must list itself as well as all other language versions — for each variation of the page, include one <link> for each page variant, including itself.',
+        why: 'Each language version must list itself and all other language versions — one <link> per version, including itself.',
         fix: HREFLANG_FIX, element: inHead[0] || all[0] });
     }
     if (!inHead.some(function (l) { return /^x-default$/i.test((l.getAttribute('hreflang') || '').trim()); })) {
       addFinding({ check: CK, category: CAT, severity: 'info', title: 'No x-default hreflang',
         description: '',
-        why: 'Google Search Central: x-default matches any language not explicitly listed, and Google suggests considering a fallback page for unmatched languages, especially on language/country selectors or auto-redirecting home pages. Recommended, not required.',
+        why: 'x-default is used for any language not listed — useful on language/country selectors or auto-redirecting home pages. Recommended, not required.',
         fix: HREFLANG_FIX, element: inHead[0] || all[0] });
     }
     // Return links: every other version must point back to this page. Only same-origin versions can be read from the browser.
@@ -1099,21 +1099,21 @@
         problems++;
         addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang points to a page that does not load directly (' + broken.length + ')',
           description: broken.join('\n'),
-          why: 'The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can\'t work. Screaming Frog (Non-200 Hreflang URLs) and Ahrefs (Hreflang to broken page) report this.',
+          why: 'The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can\'t work.',
           fix: 'Point the hreflang to the final URL of each version. ' + HREFLANG_FIX, element: null });
       }
       if (noReturn.length) {
         problems++;
         addFinding({ check: CK, category: CAT, severity: 'error', title: 'hreflang return link missing on ' + noReturn.length + ' version(s)',
           description: noReturn.join('\n'),
-          why: 'Google Search Central: if two pages don\'t both point to each other, the tags will be ignored. Each version listed here has hreflang tags, or none, that don\'t point back to this page.',
+          why: 'If two pages don\'t point to each other, Google ignores their hreflang tags. Each version listed here has hreflang tags, or none, that don\'t point back to this page.',
           fix: 'Every version must list all versions, including this page. ' + HREFLANG_FIX, element: null });
       }
       if (nonCanon.length) {
         problems++;
         addFinding({ check: CK, category: CAT, severity: 'warning', title: 'hreflang points to a URL whose canonical is a different page (' + nonCanon.length + ')',
           description: nonCanon.join('\n'),
-          why: 'The alternate version says another URL is its primary (canonical) version. Google Search Central asks that hreflang and canonical agree (specify a canonical page in the same language); Ahrefs (Hreflang to non-canonical) and Screaming Frog (Hreflang: Not Using Canonical) report this.',
+          why: 'The alternate version says another URL is its primary (canonical) version. hreflang should point to canonical URLs in the same language, otherwise the pair can\'t work.',
           fix: 'Point the hreflang to the canonical URL of each version, or fix that version\'s canonical. ' + HREFLANG_FIX, element: null });
       }
       var skippedReasons = [];
@@ -1184,7 +1184,7 @@
           var el = byUrl[u][0];
           addFinding({ check: CK, category: 'Images', severity: 'error', title: 'Image does not load (broken image)',
             description: u.slice(0, 200) + (byUrl[u].length > 1 ? '\n(used ' + byUrl[u].length + ' times on this page)' : '') + (el.getAttribute('alt') ? '\nalt: "' + el.getAttribute('alt').slice(0, 80) + '"' : ''),
-            why: 'The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot. Semrush reports broken internal images as an error, Ahrefs as "Image broken".',
+            why: 'The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot.',
             fix: 'Replace the image: select it > Element settings panel > Image settings > Replace image (or fix the URL in the CMS field / custom code it comes from). Publish.', element: el });
         }
         if (--left === 0) {
@@ -1222,7 +1222,7 @@
     jsNav.slice(0, 30).forEach(function (x) {
       addFinding({ check: 'links.js', category: 'Links', severity: 'warning', title: 'Navigation without a crawlable link (' + x.why + ')',
         description: '"' + (text(x.el) || x.el.getAttribute('aria-label') || '').slice(0, 60) + '" <' + elLabel(x.el) + '>' + (x.el.getAttribute('href') ? ' href="' + x.el.getAttribute('href').slice(0, 100) + '"' : '') + (x.el.getAttribute('onclick') ? ' onclick="' + x.el.getAttribute('onclick').slice(0, 100) + '"' : ''),
-        why: 'Google Search Central: Google can generally only crawl a link if it is an <a> element with an href attribute; it can\'t reliably extract URLs from elements that don\'t have an href or from other tags that act as links through script events (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.',
+        why: 'Google can generally only follow a link that is an <a> element with an href; it can\'t reliably find URLs in elements without an href or in tags that act as links through scripts (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.',
         fix: 'Make it a real link: in Webflow use a Link block, Text link or Button and set the destination in the Element settings panel (Link settings); to make an image or a block clickable, drop it inside a Link block. Remove the click script / custom attribute that did the navigation.', element: x.el });
     });
     if (!jsNav.length) addSuccess({ check: 'links.js', category: 'Links', title: 'All navigation uses crawlable <a href> links', description: '', element: null });
@@ -1234,7 +1234,7 @@
     nof.slice(0, 30).forEach(function (a) {
       addFinding({ check: 'links.nofollow', category: 'Links', severity: 'warning', title: 'Internal link has rel="nofollow"',
         description: '"' + (text(a) || a.getAttribute('aria-label') || '').slice(0, 60) + '" → ' + (a.getAttribute('href') || '').slice(0, 120) + ' (rel="' + a.getAttribute('rel') + '")',
-        why: 'Google Search Central: links with nofollow will generally not be followed, and nofollow is meant for links you don\'t want Google to associate your site with; for links within your own site Google points to the robots.txt disallow rule instead. A nofollow on an internal link holds back crawling of your own page. Semrush and Screaming Frog report internal nofollow links as a warning.',
+        why: 'Google generally doesn\'t follow links with nofollow; nofollow is meant for links you don\'t want associated with your site. On an internal link it holds back crawling of your own page — to keep a page out of search, use noindex or robots.txt instead.',
         fix: 'Remove rel="nofollow" from the internal link — in Webflow it comes from a custom attribute (Element settings panel > Custom attributes) or from custom code. To keep a page out of Google, use noindex (Page settings > SEO settings > Sitemap indexing off); to stop crawling, robots.txt.', element: a });
     });
     if (internal.length && !nof.length) addSuccess({ check: 'links.nofollow', category: 'Links', title: 'No internal link has rel="nofollow" (' + internal.length + ' checked)', description: '', element: null });
@@ -1250,7 +1250,7 @@
       var img = a.querySelector('img');
       addFinding({ check: 'links.imgAlt', category: 'Links', severity: 'warning', title: 'Image link has no anchor text (image without alt)',
         description: '→ ' + (a.getAttribute('href') || '').slice(0, 120) + '\nimage: ' + ((img.currentSrc || img.getAttribute('src') || '').replace(/\?.*$/, '').split('/').pop() || '').slice(0, 80) + (a.getAttribute('aria-label') ? '\n(aria-label="' + a.getAttribute('aria-label').slice(0, 60) + '" helps screen readers, but Google uses the image alt as anchor text)' : ''),
-        why: 'Google Search Central: for images as links, Google uses the alt attribute of the img element as anchor text — an image link with empty alt text and no link text is its "bad" example. Without it Google gets no description of the page the link points to.',
+        why: 'When an image is a link, Google uses its alt text as the link text. An image link with empty alt and no text tells Google nothing about the page it points to.',
         fix: 'Give the image descriptive alt text: select it > Element settings panel > Image settings > Alt text > Custom description (or in the Assets panel: the image\'s settings > descriptive text; for a CMS image bind the alt text to a field). Or add visible text inside the link.', element: a });
     });
     if (imgLinks.length && !noAlt.length) addSuccess({ check: 'links.imgAlt', category: 'Links', title: 'All image links have alt text (' + imgLinks.length + ' checked)', description: '', element: null });
@@ -1368,7 +1368,7 @@
         addFinding({ check: 'aeo.schemaRequired', group: 'aeo', category: CAT, severity: 'warning',
           title: t + ' schema is missing properties Google requires: ' + miss.slice(0, 6).join(', ') + (miss.length > 6 ? ' (+' + (miss.length - 6) + ')' : ''),
           description: nm ? '"' + nm.slice(0, 80) + '"' : '',
-          why: 'Google Search Central lists these as required for the ' + t + ' rich result: without them the item is not eligible for that rich result (Google says structured data enables a feature, it doesn\'t guarantee it, and it doesn\'t affect ranking).',
+          why: 'These properties are required for the ' + t + ' rich result in Google: without them the item is not eligible for it (structured data makes a rich result possible, but doesn\'t guarantee it, and doesn\'t affect ranking).',
           fix: 'Add the missing properties. ' + SCHEMA_FIX, element: null });
       });
     });
@@ -1393,7 +1393,7 @@
       addFinding({ check: 'aeo.schemaVisible', group: 'aeo', category: CAT, severity: 'warning',
         title: 'Schema text not found on the page (' + notFound.length + ')',
         description: notFound.slice(0, 8).join('\n') + (notFound.length > 8 ? '\n… +' + (notFound.length - 8) : ''),
-        why: 'Google Search Central: don\'t mark up content that is not visible to readers of the page — if the JSON-LD describes something, the HTML body must describe that same thing, and structured data must be a true representation of the page content. These names/headlines from the schema don\'t appear in the page text (compared without case and punctuation).',
+        why: 'Structured data must describe what readers actually see on the page — if the JSON-LD describes something, the page text must describe the same thing. These names/headlines from the schema don\'t appear in the page text (compared without case and punctuation).',
         fix: 'Make the schema match what the page shows (same headline / name), or show that text on the page. ' + SCHEMA_FIX, element: null });
     } else if (checked) {
       addSuccess({ check: 'aeo.schemaVisible', group: 'aeo', category: CAT, title: 'Schema names/headlines appear on the page (' + checked + ' checked)', description: '', element: null });
@@ -1454,7 +1454,7 @@
       addFinding({ check: 'mobile.parity', category: 'Mobile', severity: 'warning',
         title: 'Content visible on desktop is missing on mobile (' + missing.length + ')',
         description: missing.slice(0, 10).map(function (u) { return KIND[u.k] + ' — ' + u.d; }).join('\n') + (missing.length > 10 ? '\n… +' + (missing.length - 10) : ''),
-        why: 'Google indexes and ranks the mobile version of the page (mobile-first indexing). Google Search Central: make sure the mobile site contains the same content as the desktop site and uses the same headings and image alt text; content may be moved into accordions or tabs on mobile, but content that is removed is content Google can\'t use. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.',
+        why: 'Google indexes and ranks the mobile version of the page (mobile-first indexing), so the mobile page should have the same content, headings and image alt text as desktop. Content may sit in accordions or tabs on mobile, but content that is removed can\'t be used by Google. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.',
         fix: 'Show this content on the Mobile breakpoint, or move it into a tab/accordion instead of hiding it. In Webflow an element is hidden per breakpoint with Style panel > Layout > display: none — select the breakpoint in the canvas bar and change it; display is a class style, so it applies to every element with the same class and cascades to smaller breakpoints.',
         element: el });
     } else {
@@ -1502,7 +1502,7 @@
       fails++;
       addFinding({ category: 'Mobile', severity: 'warning', title: 'Tap target is too small and too close to another (' + Math.round(a.w) + 'x' + Math.round(a.h) + ' px)',
         description: '"' + (text(a.el) || a.el.getAttribute('aria-label') || a.el.getAttribute('title') || '').slice(0, 60) + '" <' + elLabel(a.el) + '>',
-        why: 'WCAG 2.2 (2.5.8 Target Size, level AA): a tap target must be at least 24 by 24 CSS pixels, unless a 24 px circle centred on it does not touch another target. This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. (Lighthouse\'s older SEO audit is stricter: it recommends 48 by 48 px.)',
+        why: 'A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn\'t touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing.',
         fix: 'On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.', element: a.el });
     });
   }
@@ -1531,8 +1531,8 @@
         title: copySuffix ? 'URL slug ends with "-copy" (' + last + ')' : 'CMS item slug ends with a number like "-2" (' + last + ')',
         description: 'Path: ' + LOC.pathname,
         why: copySuffix
-          ? 'When a page is duplicated in Webflow it is named "<name> Copy" and gets the slug "<slug>-copy" (seen in Webflow projects), so a published "-copy" URL is usually a duplicate whose slug was never renamed. Google recommends readable words in URLs.'
-          : 'A duplicated Webflow CMS item gets a number at the end of its slug ("-2", "-3"...), so this item may be a copy whose slug was never renamed. If the number is part of the real name (e.g. "episode-12"), ignore this. Google recommends readable words in URLs.',
+          ? 'When a page is duplicated in Webflow it is named "<name> Copy" and gets the slug "<slug>-copy", so a published "-copy" URL is usually a duplicate whose slug was never renamed. Readable words in a URL are better.'
+          : 'A duplicated Webflow CMS item gets a number at the end of its slug ("-2", "-3"...), so this item may be a copy whose slug was never renamed. If the number is part of the real name (e.g. "episode-12"), ignore this. Readable words in a URL are better than a number.',
         fix: copySuffix
           ? 'Rename the slug to something descriptive in the Slug field of Page settings, and if the old URL is already indexed add a 301 redirect from it (Site settings > Publishing > 301 redirects).'
           : 'If it is a copy: rename the slug in the CMS item (Collection item > Slug field), or remove the duplicate item. If the old URL is already indexed, add a 301 redirect from it (Site settings > Publishing > 301 redirects).',
@@ -1553,12 +1553,12 @@
 
     if (h1s.length === 0) {
       addFinding({ category: 'Heading structure', severity: 'error', title: 'H1 is missing on the page',
-        description: 'No visible H1 element was found.', why: 'Screaming Frog reports a missing H1 as an issue (medium priority): the H1 is the main heading that states what the page is about.',
+        description: 'No visible H1 element was found.', why: 'The H1 is the main heading that says what the page is about; this page has none.',
         fix: 'Add exactly one H1 describing the page\'s main topic.', element: document.body });
     } else if (h1s.length > 1) {
       h1s.slice(1).forEach(function (h) {
         addFinding({ category: 'Heading structure', severity: 'warning', title: 'There is more than one H1 on the page (' + h1s.length + ' total)',
-          description: 'Extra H1: "' + text(h).slice(0, 80) + '"', why: 'Screaming Frog reports multiple H1s as a warning (medium priority): one H1 makes the main topic of the page unambiguous.',
+          description: 'Extra H1: "' + text(h).slice(0, 80) + '"', why: 'One H1 makes the main topic of the page unambiguous; here there are several.',
           fix: 'Keep only one H1, change the others to H2/H3 as needed.', element: h });
       });
     } else {
@@ -1573,7 +1573,7 @@
       if (lastLevel > 0 && level - lastLevel > 1) {
         hierarchySkipFound = true;
         addFinding({ category: 'Heading structure', severity: 'warning', title: 'Heading hierarchy skips a level (H' + lastLevel + ' → H' + level + ')',
-          description: '"' + text(h).slice(0, 80) + '"', why: 'Screaming Frog reports non-sequential headings as a low-priority warning. Google says that for Google Search "it doesn\'t matter if you\'re using them out of order", so this is about a clear structure for readers and screen readers, not rankings.',
+          description: '"' + text(h).slice(0, 80) + '"', why: 'Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn\'t affect Google rankings.',
           fix: 'Use heading levels in order, without skipping.', element: h });
       }
       lastLevel = level;
@@ -1598,7 +1598,7 @@
       if (fs >= 28 && (fw === 'bold' || parseInt(fw, 10) >= 600)) {
         addFinding({ category: 'Heading structure', severity: 'info', title: 'Text looks like a heading but isn\'t marked up as one',
           description: '"' + t.slice(0, 80) + '" (font-size: ' + fs.toFixed(0) + 'px)',
-          why: 'WCAG failure F2: text whose look conveys meaning (here: a heading) without the matching markup fails success criterion 1.3.1 Info and Relationships — screen readers don\'t announce it as a heading.',
+          why: 'Text that looks like a heading but isn\'t marked up as one is not announced as a heading by screen readers, so the page structure is lost for them.',
           fix: 'If this is actually a section title, mark it up with the appropriate heading tag (H2/H3...).', element: el });
       }
     }
@@ -1770,15 +1770,15 @@
                 addFinding({ category: 'Images', severity: 'info',
                   title: 'PNG image would be ~' + fmtBytes(saved) + ' smaller as WebP',
                   description: job.src.replace(/\?.*$/, '').slice(0, 120) + '\nFile: ' + fmtBytes(blob.size) + ' → about ' + fmtBytes(out.size) + ' (' + Math.round(saved / blob.size * 100) + '% smaller)',
-                  why: 'Lighthouse method ("Serve images in modern formats", since Lighthouse 13 part of the "Improve image delivery" insight): it converts BMP, JPEG and PNG images to WebP and reports the savings, leaving out images that would save less than 8 KiB. This PNG converted to WebP (quality 0.85, Lighthouse\'s setting) would be that much smaller, with the same size on screen; WebP keeps transparency.',
-                  fix: 'In Webflow: Assets panel > the image\'s more options > Compress > WebP or AVIF (works for PNG). Webflow notes that compression replaces the original file.',
+                  why: 'Converted to WebP (quality 85), this PNG would be that much smaller, with the same size on screen; WebP keeps transparency. Images are reported when the saving is 8 KB or more.',
+                  fix: 'In Webflow: Assets panel > the image\'s more options > Compress > WebP or AVIF (works for PNG). Compression replaces the original file.',
                   element: job.el });
                 renderPanel();
               } else if (saved >= rule.min) {
                 addFinding({ category: 'Images', severity: 'info',
                   title: 'Image can be compressed further (~' + fmtBytes(saved) + ' smaller as JPEG at quality 92)',
                   description: job.src.replace(/\?.*$/, '').slice(0, 120) + '\nFile: ' + fmtBytes(blob.size) + ' → about ' + fmtBytes(out.size) + ' (' + Math.round(saved / blob.size * 100) + '% smaller)',
-                  why: 'Lighthouse method ("Efficiently encode images", since Lighthouse 13 part of the "Improve image delivery" insight): it re-compresses JPEG images and flags an image when that saves 4 KiB or more. Lighthouse\'s code measures at JPEG quality 0.92 (its documentation says 85); this check uses 0.92. This file would be that much smaller with no change in size on screen.',
+                  why: 'Re-saved as a JPEG at quality 92, this file would be that much smaller, with the same size on screen. Images are reported when the saving is 4 KB or more.',
                   fix: 'Compress the image: in Webflow, Assets panel > the image\'s more options > Compress > WebP or AVIF (JPG/PNG only), or re-export it as JPEG at quality 85–92 and swap it via Assets panel > more options > Replace (the asset URL changes).',
                   element: job.el });
                 renderPanel();
@@ -1831,14 +1831,14 @@
         addFinding({ category: 'Images', severity: 'info', noScore: true,
           title: 'Alt text is empty (alt="") — "Decorative" or no alt text saved in Webflow',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Webflow outputs an empty alt="" for an image set as "Decorative" (Webflow: "Images set as decorative will have an empty alt tag, and therefore be ignored by screen readers") — correct for purely decorative images. It outputs the same alt="" when no alt text is saved at all (verified on a published Webflow page: Image element set to use the asset\'s alt text, asset with no alt text saved → alt=""). In Asset settings such an asset shows "Descriptive" selected with an empty field, so "Descriptive" being checked does not mean a description exists. So alt="" does not prove anyone chose "Decorative" — only the Designer shows that. It is listed for checking only and does not affect the score.',
+          why: 'Webflow outputs an empty alt="" for an image set as "Decorative", so screen readers skip it — correct for purely decorative images. It outputs the same alt="" when no alt text is saved at all. In Asset settings such an asset shows "Descriptive" selected with an empty field, so "Descriptive" being checked does not mean a description exists. So alt="" does not prove anyone chose "Decorative" — only the Designer shows that. It is listed for checking only and does not affect the score.',
           fix: 'Check in the Designer: select the image > Element settings panel > Image settings > Alt text, and the asset itself: Assets panel > the image\'s more options > Edit settings > Alt text. If it is "Decorative" and the image is purely decorative, no action is needed. If "Descriptive" is selected but the text field is empty, or the image carries meaning, type a description (on the asset, or for this instance: Custom description).',
           element: img });
       } else if (isMissing || isGeneric) {
         addFinding({ category: 'Images', severity: 'error',
           title: isMissing ? 'Image: alt attribute is missing' : 'Image: generic alt text ("' + altText + '")',
           description: (img.currentSrc || img.src || '').slice(0, 120),
-          why: 'Google: alt text "also improves accessibility for people who can\'t see images", and Google uses it "along with computer vision algorithms and the contents of the page to understand the subject matter of the image". Google\'s own "bad" example is an <img> without alt.',
+          why: 'Alt text describes the image to people who can\'t see it (screen readers) and helps Google understand what the image shows. An <img> without alt gives neither.',
           fix: 'Add descriptive alt text: Assets panel > the image\'s more options > Edit settings > Descriptive (applies wherever the image is placed from then on), or for this instance Element settings panel > Image settings > Alt text > Custom description. If the image is purely decorative, choose "Decorative" instead.',
           element: img });
       } else {
@@ -1876,7 +1876,7 @@
             '\nCSS width: ' + (declared.width || 'not found/defined') +
             ' | CSS height: ' + (declared.height || 'not found/defined') +
             (ownHeightPct ? '\nThe height is a percentage, but no parent (up to 5 levels checked) has a fixed height, aspect-ratio or min-height, so nothing reserves the space.' : '\nChecked the image and up to 5 parent elements for a fixed height, aspect-ratio, min-height or padding-bottom ratio box — none found.'),
-          why: 'Neither the HTML height attribute nor CSS fixes the height (the value is "auto" or not defined at all) — the browser can\'t reserve vertical space for the image in advance, which causes layout shift (CLS) while the image loads. CLS is a Core Web Vital (Google: good is below 0.1). Width isn\'t a factor here — a fixed width alone doesn\'t reserve vertical space.',
+          why: 'Neither the HTML height attribute nor CSS fixes the height (the value is "auto" or not defined at all) — the browser can\'t reserve vertical space for the image in advance, which causes layout shift (CLS) while the image loads. CLS is a Core Web Vital (good is below 0.1). Width isn\'t a factor here — a fixed width alone doesn\'t reserve vertical space.',
           fix: 'Add an explicit height (an HTML height attribute, or CSS height in any unit — px, rem, vw...) directly on the <img> tag or in the Style panel. Width can stay auto.',
           element: img });
       }
@@ -1958,7 +1958,7 @@
             var bytes = len ? parseInt(len, 10) : 0;
             if (bytes > 500 * 1024) {
               addFinding({ category: 'Images', severity: 'warning', title: 'Image is larger than 500KB (' + fmtBytes(bytes) + ')',
-                description: src, why: 'Webflow\'s own image optimizer guidance (Webflow MCP "Image Optimizer" prompt) sets the target at "under 500 KB per image" and treats 500 KB or more as "needs compression". A large file takes longer to download; when it is the main image of the first view it delays the Largest Contentful Paint (LCP, a Core Web Vital). The file size is measured (content-length header), not guessed.',
+                description: src, why: 'Images should stay under 500 KB; this one is larger. A large file takes longer to download; when it is the main image of the first view it delays the Largest Contentful Paint (LCP, a Core Web Vital). The file size is measured (content-length header), not guessed.',
                 fix: 'Compress the image (e.g. TinyPNG/Squoosh) or convert it to WebP/AVIF.', element: img });
               renderPanel();
             }
@@ -2002,12 +2002,12 @@
         addFinding({ category: 'Images', severity: 'info',
           title: 'Image is larger than its displayed size (' + c.natW + 'px file shown at ' + c.shownW + 'px)',
           description: c.src.replace(/\?.*$/, '').slice(0, 120) + '\n' + 'File size: ' + fmtBytes(bytes) + ' · estimated wasted: ~' + fmtBytes(Math.round(wasted)),
-          why: 'Lighthouse method ("Properly size images", since Lighthouse 13 part of the "Improve image delivery" insight): it compares the rendered size of an image, including the screen\'s pixel density, with the actual image, and flags it when the right-sized image would be at least 4 KiB smaller. ' +
+          why: 'The image is compared with the size it is shown at, including the screen\'s pixel density, and reported when the right-sized image would be at least 4 KB smaller. ' +
             'Here the file is ' + c.natW + 'px wide but shown ' + c.shownW + 'px wide on a screen with pixel density ' + dprTxt + ', so about ' + c.allowedW + 'px would be enough. ' +
             'Measured at the current window width; the same rule also runs at phone and tablet widths.',
-          fix: '1) Find out why the full-size file is served. Webflow\'s help: responsive variants (srcset) are created for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the "Disable responsiveness" checkbox in Image settings turns them off (Webflow\'s variants have "-p-" plus a width in the file name, e.g. "-p-500"). ' +
+          fix: '1) Find out why the full-size file is served. Webflow creates responsive variants (srcset) for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the "Disable responsiveness" checkbox in Image settings turns them off (Webflow\'s variants have "-p-" plus a width in the file name, e.g. "-p-500"). ' +
             '2) If it is an Image element with responsiveness turned off: select it > Element settings panel > Image settings > uncheck "Disable responsiveness", then publish. ' +
-            '3) Otherwise replace the file: resize it to about ' + c.allowedW + 'px wide (displayed width × pixel density) and compress it, then Assets panel > the image\'s more options > Replace (Webflow notes that the asset URL changes, so update any direct links). ' +
+            '3) Otherwise replace the file: resize it to about ' + c.allowedW + 'px wide (displayed width × pixel density) and compress it, then Assets panel > the image\'s more options > Replace (the asset URL changes, so update any direct links). ' +
             '4) If the file already is a Webflow variant ("-p-" in the name) and the difference is small, there is little to gain — Webflow only makes fixed variant widths.',
           element: c.img });
       }
@@ -2044,7 +2044,7 @@
       addSuccess({ category: 'Images', title: 'None of the ' + lazyAboveConsidered + ' images in the first screen is lazy-loaded', description: '', element: null });
     }
     if (oversizeMeasured > 0 && oversizeCandidates.length === 0) {
-      addSuccess({ category: 'Images', title: 'No image is much larger than its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
+      addSuccess({ category: 'Images', title: 'No image is larger than needed for its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
     }
     if (lazyConsidered > 0 && lazyFound === 0) {
       addSuccess({ category: 'Images', title: 'All ' + lazyConsidered + ' below-the-fold images are lazy-loaded', description: '', element: null });
@@ -2103,7 +2103,7 @@
   var CSP_OR_NETWORK = 'the browser blocked or failed the request (a network error, or the site\'s Content-Security-Policy "connect-src" rule)';
 
   function checkIndexingSignals() {
-    var NOINDEX_NOTE = 'Relevant to both SEO and AEO — Google: to be shown as a supporting link in AI Overviews or AI Mode, a page must be indexed and eligible to be shown in Google Search with a snippet.';
+    var NOINDEX_NOTE = 'Relevant to both SEO and AEO — to be shown as a source in Google\'s AI Overviews or AI Mode, a page must be indexed and allowed to show a snippet.';
 
     // 1) X-Robots-Tag response header (can block indexing without anything visible in the HTML)
     try {
@@ -2125,7 +2125,7 @@
         } else if (/nosnippet|max-snippet:\s*0/.test(h)) {
           addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'X-Robots-Tag header restricts snippets',
             description: 'X-Robots-Tag: ' + raw,
-            why: 'The server tells search engines not to show a text snippet for this page. Google: with nosnippet no text snippet is shown, and the content is not used as a direct input for AI Overviews and AI Mode.',
+            why: 'The server tells search engines not to show a text snippet for this page; the content is then also not used as a direct source for AI Overviews and AI Mode.',
             fix: 'Find where the header is set (reverse proxy / Cloudflare rule / hosting) and remove the snippet restriction if it is unintended.',
             ownerNote: 'Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site.',
             element: null, crossRelevant: true, crossNote: NOINDEX_NOTE, crossNoteReverse: NOINDEX_NOTE });
@@ -2206,7 +2206,7 @@
           addFinding({ category: 'Technical / crawlability', severity: intentional ? 'info' : 'warning',
             title: 'This page is not listed in sitemap.xml',
             description: 'Checked ' + LOC.origin + '/sitemap.xml (' + locs.length + ' URLs)',
-            why: 'Google: a sitemap "tells search engines which pages and files you think are important in your site" and helps them crawl it more efficiently. A page missing from it can still be found through links.' +
+            why: 'A sitemap tells search engines which pages you consider important and helps them crawl the site more efficiently. A page missing from it can still be found through links.' +
               (intentional ? ' This looks intentional here (the page is noindex or its canonical points elsewhere).' : ''),
             fix: 'In Webflow: Page settings > SEO settings > "Sitemap indexing" must be on (for a CMS item: the Collection item > Item details > Sitemap indexing); it works only when the site\'s auto-generated sitemap is enabled. Publish after the change.',
             element: null });
@@ -2253,7 +2253,7 @@
       addFinding({ category: 'Images', severity: slowLcp ? 'warning' : 'info',
         title: 'Above-the-fold video has no poster image',
         description: String(srcEl).replace(/\?.*$/, '').slice(0, 120),
-        why: 'A large video at the top of the page shows an empty box until enough of the file has downloaded. web.dev: for a <video>, LCP uses "the poster image load time or first frame presentation time ... whichever is earlier", so a poster can make the first view and the Largest Contentful Paint (LCP, a Core Web Vital) earlier. Without it, how the video area looks while loading is left to the browser.',
+        why: 'A large video at the top of the page shows an empty box until enough of the file has downloaded. For a <video>, LCP counts whichever comes first — the poster image or the first video frame — so a poster can make the first view and the Largest Contentful Paint (LCP, a Core Web Vital) earlier. Without it, how the video area looks while loading is left to the browser.',
         fix: 'Add a poster attribute to the <video> tag (poster="https://…/poster.avif" — an AVIF/WebP of the first frame) in the embed / custom code the video comes from. A Webflow Background Video element is not affected: Webflow already gives it a poster frame as a CSS background image on the <video>, so it is not reported here. Also provide an MP4 source next to a WebM one so every browser can play it.',
         element: video });
     } else if (considered > 0) {
@@ -2288,7 +2288,7 @@
         description: '<' + el.tagName.toLowerCase() + (el.getAttribute('type') ? ' type="' + el.getAttribute('type') + '"' : '') + (el.getAttribute('name') ? ' name="' + el.getAttribute('name') + '"' : '') + '>' +
           (ph ? '\nplaceholder: "' + ph.slice(0, 60) + '"' : ''),
         why: 'A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect.',
-        fix: 'Webflow\'s method: select the field > Element settings (D) > give it a unique ID; then select the Label element above it > Element settings > Custom attributes > add "for" with the field\'s ID as the value (Webflow notes fully accessible forms currently need this custom setup). Alternatively add the custom attribute aria-label = "what the field is for" on the field itself.',
+        fix: 'In Webflow: select the field > Element settings (D) > give it a unique ID; then select the Label element above it > Element settings > Custom attributes > add "for" with the field\'s ID as the value. Alternatively add the custom attribute aria-label = "what the field is for" on the field itself.',
         element: el });
     });
     setCheckTotal('form.label', fields.length);
@@ -2386,7 +2386,7 @@
         // meaning) — this branch fires exactly when the text IS generic (matches the
         // GENERIC_ANCHOR pattern).
         addFinding({ category: 'Links', severity: 'info', title: 'Generic anchor text: "' + linkText.trim() + '"',
-          description: 'href: ' + href, why: 'Lighthouse (SEO) flags generic link text such as "click here" or "learn more". Google: link text "tells users and Google something about the page you\'re linking to".',
+          description: 'href: ' + href, why: 'Generic link text such as "click here" or "learn more" says nothing about the target page; descriptive link text tells users and Google what the linked page is about.',
           fix: 'Replace it with descriptive text (e.g. "View pricing" instead of "click here").', element: a });
       }
 
@@ -2442,7 +2442,7 @@
           } else if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) {
             linkCheckProblemFound = true;
             addFinding({ category: 'Links', severity: 'info', title: 'Internal link goes through a redirect',
-              description: item.href, why: 'It isn\'t broken, but every visit through this link costs an extra request before the page loads. Screaming Frog reports internal links to redirects (3XX) as a warning.',
+              description: item.href, why: 'It isn\'t broken, but every visit through this link costs an extra request before the page loads.',
               fix: 'If possible, update the link to point directly to the final URL.', element: item.el,
               ownerNote: 'In Webflow you can only point the link straight at the final URL. If the redirect itself is configured at the reverse proxy / Cloudflare / app level (e.g. www → app subdomain), removing it needs access to that platform.' });
             renderPanel();
@@ -2488,13 +2488,13 @@
     var visibleTextLen = (text(main) + ' ' + uiHiddenText).replace(/\s+/g, ' ').trim().length;
     if (visibleTextLen < 200) {
       addFinding({ category: 'Content', severity: 'warning', title: 'Very little visible text on the page (' + visibleTextLen + ' characters)',
-        description: '', why: 'Screaming Frog: "There isn\'t a minimum word count for pages in reality, but the search engines do require descriptive text" — it flags pages under 200 words; this check is more lenient and only flags pages under 200 characters, which are nearly empty.',
+        description: '', why: 'There is no minimum word count, but search engines need descriptive text to understand a page. This page has under 200 characters of visible text, so it is nearly empty.',
         fix: 'Add more relevant, useful content.', element: main,
-        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google lists "making sure that important content is available in textual form" among the SEO practices that also apply to AI Overviews and AI Mode.',
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — important content has to be available as text for AI Overviews and AI Mode too.',
         crossNoteReverse: 'Relevant to both SEO and AEO — search engines need descriptive text to understand what the page is about.' });
     } else {
       addSuccess({ category: 'Content', title: 'The page has enough visible text (' + visibleTextLen + ' characters)', description: '', element: main,
-        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — Google lists "making sure that important content is available in textual form" among the SEO practices that also apply to AI Overviews and AI Mode.',
+        crossRelevant: true, crossNote: 'Relevant to both SEO and AEO — important content has to be available as text for AI Overviews and AI Mode too.',
         crossNoteReverse: 'Relevant to both SEO and AEO — search engines need descriptive text to understand what the page is about.' });
     }
 
@@ -2594,8 +2594,8 @@
     if (distinct.length >= 4) {
       // 06.11.2026: web.dev advises "Use fewer web fonts" but gives no number, so this is a note only (noScore).
       addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' different fonts: ' + distinct.join(', '),
-        description: '', why: 'web.dev ("Best practices for fonts") advises using fewer web fonts — "The fastest font to deliver is a font that isn\'t requested in the first place" — but gives no number, so this is a note only and does not affect the score.',
-        fix: 'If the design allows, use fewer font families, or a variable font (web.dev: one variable font can replace several files, e.g. light, regular and bold).', element: null });
+        description: '', why: 'Each extra font is more to download before the text shows in it, so fewer web fonts are better. There is no exact limit, so this is a note only and does not affect the score.',
+        fix: 'If the design allows, use fewer font families, or a variable font (one file can replace several weights, e.g. light, regular and bold).', element: null });
     } else if (distinct.length >= 2) {
       addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' fonts: ' + distinct.join(', '),
         description: '', why: 'Informational only — doesn\'t affect the SEO score, but worth being aware of.',
@@ -2627,7 +2627,7 @@
     if (usesGoogleFonts) {
       addFinding({ category: 'Fonts', severity: 'warning', title: 'The page dynamically loads Google Fonts from Google\'s servers',
         description: '', why: 'A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor\'s IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.',
-        fix: 'Host the font yourself: download the font files and upload them in Site settings > Fonts tab > Custom fonts (WOFF2 is Webflow\'s recommended format), and stop using the Google font. Webflow\'s help says its Google Fonts integration sends visitors\' IP addresses to Google and may not be GDPR-compliant. If the uploaded font has the same name as a Google font (e.g. Montserrat), rename it (e.g. "Montserrat-Regular-1"), otherwise Webflow may keep loading it from Google.', element: null });
+        fix: 'Host the font yourself: download the font files and upload them in Site settings > Fonts tab > Custom fonts (WOFF2 is the best format), and stop using the Google font. Webflow\'s Google Fonts integration sends visitors\' IP addresses to Google and may not be GDPR-compliant. If the uploaded font has the same name as a Google font (e.g. Montserrat), rename it (e.g. "Montserrat-Regular-1"), otherwise Webflow may keep loading it from Google.', element: null });
     } else {
       addSuccess({ category: 'Fonts', title: 'No dynamic loading of Google Fonts from Google\'s servers (GDPR risk avoided)', description: '', element: null });
     }
@@ -2667,8 +2667,8 @@
     } catch (e) {}
     if (oldFormatFound) {
       addFinding({ category: 'Fonts', severity: 'info', title: 'Font file in an older format (not .woff2)',
-        description: '', why: 'web.dev: WOFF2 "has the widest browser support, and offers the best compression" (30% better than WOFF), and "experts now recommend only using WOFF2". Webflow\'s help also recommends WOFF2 for custom fonts.',
-        fix: 'Convert the font files to .woff2 (Webflow\'s recommended format) and upload them in Site settings > Fonts tab > Custom fonts.', element: null });
+        description: '', why: 'WOFF2 has the widest browser support and the best compression (about 30% smaller than WOFF), so it is the only font format needed today.',
+        fix: 'Convert the font files to .woff2 and upload them in Site settings > Fonts tab > Custom fonts.', element: null });
     } else if (fontFaceRuleFound) {
       addSuccess({ category: 'Fonts', title: 'All @font-face files are in the modern .woff2 format', description: '', element: null });
     }
@@ -2711,7 +2711,7 @@
 
     if (totalNodes > 1400) {   // Lighthouse "Avoid an excessive DOM size": errors above ~1,400 <body> nodes; depth/children limits have no current source (06.11.2026)
       addFinding({ category: 'Technical / crawlability', severity: 'info', title: 'Large/deeply nested DOM (nodes: ' + totalNodes + ', max depth: ' + maxDepth + ', max children of one element: ' + maxChildren + ')',
-        description: '', why: 'Lighthouse failed pages with more than ~1,400 nodes in <body> ("Avoid an excessive DOM size"; since Lighthouse 13 the "Optimize DOM size" insight). This is a recommendation, not an error — if it\'s intentional and doesn\'t cause a visible problem, it can be ignored.',
+        description: '', why: 'A page with more than about 1,400 elements in <body> is considered to have an excessive DOM size. This is a recommendation, not an error — if it\'s intentional and doesn\'t cause a visible problem, it can be ignored.',
         fix: 'Consider simplifying the section structure (fewer nested wrapper divs).', element: null });
     } else {
       addSuccess({ category: 'Technical / crawlability', title: 'DOM size/depth is within reasonable limits (nodes: ' + totalNodes + ', max depth: ' + maxDepth + ')', description: '', element: null });
@@ -2773,9 +2773,9 @@
         // Current/Suggested comparison shown in the panel), so the copy action grabs just
         // the ready-to-paste <script> tag, not the "Current:"/"Suggested:" labels around it.
         suggestedCode: suggested,
-        why: 'Lighthouse flags a <script> in the <head> without defer or async as a render-blocking resource: the first paint of the page waits until it has been downloaded and run.' +
+        why: 'A <script> in the <head> without defer or async blocks the first paint of the page until it has been downloaded and run.' +
           (inHead ? '' : ' This one sits at the end of <body>, where it blocks very little (it mostly delays DOMContentLoaded), so it is only a minor note.'),
-        fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script out of the <head> to Page settings > Custom code > Before </body> tag (site-wide: Site settings > Custom code tab > Footer code) — Webflow\'s help notes that scripts before the closing </body> tag typically improve performance.',
+        fix: 'Add the "defer" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or "async" (for fully independent scripts). Even better: move the script out of the <head> to Page settings > Custom code > Before </body> tag (site-wide: Site settings > Custom code tab > Footer code) — scripts before the closing </body> tag don\'t block the first paint.',
         element: s };
       if (isPlatform) {
         platformScriptFlagged = true;
@@ -2891,8 +2891,8 @@
     }, 250);
   }
   function updateInp() {
-    var CWV_NOTE = 'Relevant to both SEO and AEO — Google lists "providing a great page experience for users" among the SEO practices that also apply to AI Overviews and AI Mode.';
-    var CWV_NOTE_REV = 'Relevant to both SEO and AEO — Google recommends good Core Web Vitals and says this "aligns with what our core ranking systems seek to reward".';
+    var CWV_NOTE = 'Relevant to both SEO and AEO — a good page experience also matters for AI Overviews and AI Mode.';
+    var CWV_NOTE_REV = 'Relevant to both SEO and AEO — good Core Web Vitals are part of what Google\'s ranking systems reward.';
     try {
       // drop the previous INP result (it is replaced, never duplicated)
       for (var i = findings.length - 1; i >= 0; i--) if (findings[i].inpItem) findings.splice(i, 1);
@@ -2921,7 +2921,7 @@
         var inpPoor = inp > 500;
         addFinding({ inpItem: true, check: 'cwv.inp', category: 'Performance (CWV)', severity: inpPoor ? 'error' : 'warning', title: 'Slow INP (Interaction to Next Paint): ' + inp + 'ms',
           description: inpDesc,
-          why: 'web.dev: an INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor' + (inpPoor ? ' — this one is poor' : '') + '. INP is a Core Web Vital, and Google says Core Web Vitals are used by its ranking systems. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).',
+          why: 'An INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor' + (inpPoor ? ' — this one is poor' : '') + '. INP is a Core Web Vital, part of what Google\'s ranking systems reward. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).',
           fix: 'Record the slow interaction in Chrome DevTools > Performance and see what runs on that click (custom code, third-party scripts, heavy animations), then make it lighter or defer it.', element: tgt,
           crossRelevant: true, crossNote: CWV_NOTE, crossNoteReverse: CWV_NOTE_REV });
       } else {
@@ -2945,8 +2945,8 @@
 
     try { cwv.cls = computeCls(); } catch (e) {}
 
-    var CWV_CROSS_NOTE = 'Relevant to both SEO and AEO — Google lists "providing a great page experience for users" among the SEO practices that also apply to AI Overviews and AI Mode.';
-    var CWV_CROSS_NOTE_REVERSE = 'Relevant to both SEO and AEO — Google recommends good Core Web Vitals and says this "aligns with what our core ranking systems seek to reward".';
+    var CWV_CROSS_NOTE = 'Relevant to both SEO and AEO — a good page experience also matters for AI Overviews and AI Mode.';
+    var CWV_CROSS_NOTE_REVERSE = 'Relevant to both SEO and AEO — good Core Web Vitals are part of what Google\'s ranking systems reward.';
 
     // Two thresholds per metric (aligned with Google's official "Needs Improvement" / "Poor"
     // thresholds for LCP and CLS; TTFB isn't an official Core Web Vital, but 1800ms is a common
@@ -2955,7 +2955,7 @@
     if (cwv.ttfb != null && cwv.ttfb > 800) {
       var ttfbPoor = cwv.ttfb > 1800;
       addFinding({ category: 'Performance (CWV)', severity: ttfbPoor ? 'error' : 'warning', title: 'Slow TTFB (Time To First Byte): ' + cwv.ttfb + 'ms',
-        description: '', why: (ttfbPoor ? 'web.dev: a TTFB over 1800ms is poor. ' : 'web.dev: a good TTFB is 800ms or less. ') + 'The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.', fix: 'Check custom code/integrations that could be slowing down the server response.', element: null,
+        description: '', why: (ttfbPoor ? 'A TTFB over 1800ms is poor. ' : 'A good TTFB is 800ms or less. ') + 'The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.', fix: 'Check custom code/integrations that could be slowing down the server response.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.ttfb != null) {
       addSuccess({ category: 'Performance (CWV)', title: 'TTFB is good (' + cwv.ttfb + 'ms, under the 800ms threshold)', description: '', element: null,
@@ -2964,7 +2964,7 @@
     if (cwv.lcp != null && cwv.lcp > 2500) {
       var lcpPoor = cwv.lcp > 4000;
       addFinding({ category: 'Performance (CWV)', severity: lcpPoor ? 'error' : 'warning', title: 'Slow LCP (Largest Contentful Paint): ' + cwv.lcp + 'ms',
-        description: '', why: 'Google considers a good LCP to be under 2500ms' + (lcpPoor ? ', and over 4000ms falls into the "Poor" category' : '') + '. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.',
+        description: '', why: 'A good LCP is under 2500ms' + (lcpPoor ? ', and over 4000ms falls into the "Poor" category' : '') + '. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.',
         fix: 'Optimize/compress the hero image, remove render-blocking resources.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else if (cwv.lcp != null) {
@@ -2993,7 +2993,7 @@
     if (cwv.cls > 0.1) {
       var clsPoor = cwv.cls > 0.25;
       addFinding({ category: 'Performance (CWV)', severity: clsPoor ? 'error' : 'warning', title: 'High CLS (Cumulative Layout Shift): ' + cwv.cls,
-        description: '', why: 'Over 0.1 means noticeable content "jumping" during load' + (clsPoor ? ' (over 0.25 is Google\'s "Poor" threshold)' : '') + ' — most often due to images/fonts without reserved space.',
+        description: '', why: 'Over 0.1 means noticeable content "jumping" during load' + (clsPoor ? ' (over 0.25 is poor)' : '') + ' — most often due to images/fonts without reserved space.',
         fix: 'Add width/height to images, check font-display settings.', element: null,
         crossRelevant: true, crossNote: CWV_CROSS_NOTE, crossNoteReverse: CWV_CROSS_NOTE_REVERSE });
     } else {
@@ -3031,7 +3031,7 @@
         addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
           title: 'JSON-LD schema block contains invalid JSON',
           description: (s.textContent || '').slice(0, 150),
-          why: 'JSON that can\'t be parsed can\'t be read at all, so none of the markup in this <script type="application/ld+json"> block reaches Google or any other reader. Screaming Frog reports it as a structured data parse error.',
+          why: 'JSON that can\'t be parsed can\'t be read at all, so none of the markup in this <script type="application/ld+json"> block reaches Google or any other reader.',
           fix: 'Check the JSON syntax (missing/extra commas, quotes), e.g. at validator.schema.org.', element: s });
       }
     });
@@ -3094,7 +3094,7 @@
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info', noScore: true,
         title: 'Page looks like a FAQ section but has no FAQPage schema markup',
         description: 'FAQ-like elements were found (classes/IDs containing "faq", or 3+ question-style headings) without a corresponding JSON-LD FAQPage schema.',
-        why: 'Note only — not scored. Google stopped showing FAQ rich results on 7 May 2026 and says AI Overviews / AI Mode need no special schema. Studies of AI citations (e.g. a controlled test on 120 pages, March–May 2026) found no clear effect of adding FAQPage markup. The markup is optional; if you add it, it must match the visible questions and answers.',
+        why: 'Note only — not scored. Google stopped showing FAQ rich results on 7 May 2026, no special schema is needed for AI Overviews / AI Mode, and adding FAQPage markup has shown no clear effect on AI citations. The markup is optional; if you add it, it must match the visible questions and answers.',
         fix: 'Optional: add a JSON-LD FAQPage block (a mainEntity array of Question/acceptedAnswer objects) matching the visible questions and answers — in Webflow: Page settings > Schema markup.', element: null });
     } else if (faqSchemas.length) {
       faqSchemas.forEach(function (b) {
@@ -3133,14 +3133,14 @@
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'warning',
         title: 'Page looks like an article/blog post but has no Article schema markup',
         description: 'An <article> element with substantial text, og:type="article", or a blog-style URL was found, without a JSON-LD Article/BlogPosting schema.',
-        why: 'Google: Article markup lets you "more explicitly tell Google what your content is about (for example, that it\'s a news article, who the author is, or what the title of the article is)". Google lists no required properties — author, datePublished, dateModified, headline and image are recommended. (Google also says no special schema is needed to appear in AI Overviews or AI Mode.)',
+        why: 'Article markup tells Google explicitly what the content is: that it is an article, who the author is and what its title is. No property is required; author, datePublished, dateModified, headline and image are recommended. (No special schema is needed to appear in AI Overviews or AI Mode.)',
         fix: 'Add a JSON-LD Article schema with headline, author, datePublished, dateModified.', element: null });
     } else {
       articleSchemas.forEach(function (b) {
         if (!b.raw.dateModified && !b.raw.datePublished) {
           addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
             title: 'Article schema has neither dateModified nor datePublished',
-            description: '', why: 'Google lists datePublished and dateModified among the recommended Article properties; dateModified gives Google more accurate date information about the content.',
+            description: '', why: 'datePublished and dateModified are recommended Article properties; dateModified gives Google more accurate date information about the content.',
             fix: 'Add dateModified (and datePublished) in ISO 8601 format. Best practice: bind the field automatically to the CMS "last modified" value instead of it being manual/hardcoded, so it doesn\'t get forgotten.', element: b.el });
         } else {
           addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -3156,7 +3156,7 @@
                 addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'error',
                   title: 'Author link in the Article schema leads to a 404',
                   description: 'author.url: ' + authorUrl,
-                  why: 'Google recommends author.url (or sameAs) in Article markup: "Google can understand both sameAs and url when disambiguating authors." A link that doesn\'t work gives Google nothing to identify the author with.',
+                  why: 'author.url (or sameAs) lets Google identify the author. A link that doesn\'t work gives it nothing to identify the author with.',
                   fix: 'Fix author.url to point to a valid author page/profile.', element: b.el });
               } else {
                 addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -3168,7 +3168,7 @@
         } else if (!authorObj) {
           addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
             title: 'Article schema has no author field',
-            description: '', why: 'Google lists author (a Person or Organization, with author.name and author.url) among the recommended Article properties, so it can understand who wrote the content.',
+            description: '', why: 'author (a Person or Organization, with author.name and author.url) is a recommended Article property, so Google can understand who wrote the content.',
             fix: 'Add an author (Person or Organization) with name and url.', element: b.el });
         } else {
           addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -3213,7 +3213,7 @@
           addFinding({ category: 'AEO - NAP consistency', group: 'aeo', severity: 'warning',
             title: 'Phone number in the Organization/LocalBusiness schema doesn\'t match the number in the footer',
             description: 'Schema telephone: ' + b.raw.telephone,
-            why: 'Google\'s structured data guidelines: structured data "must be a true representation of the page content", and content that isn\'t visible to readers shouldn\'t be marked up. A phone number in the schema that differs from the one shown on the page breaks that rule.',
+            why: 'Structured data must be a true representation of the page content. A phone number in the schema that differs from the one shown on the page breaks that rule.',
             fix: 'Align the phone number in the schema markup with the one visibly shown in the footer.', element: b.el });
         }
       }
@@ -3229,7 +3229,7 @@
           addFinding({ category: 'AEO - NAP consistency', group: 'aeo', severity: 'warning',
             title: 'Address from the Organization/LocalBusiness schema doesn\'t appear anywhere in the visible footer',
             description: 'Schema address: ' + addrStr,
-            why: 'Google\'s structured data guidelines: "Don\'t mark up content that is not visible to readers of the page". An address in the schema that isn\'t shown in the footer may not be visible anywhere on the page.',
+            why: 'Structured data shouldn\'t describe content that readers can\'t see. An address in the schema that isn\'t shown in the footer may not be visible anywhere on the page.',
             fix: 'Display the same address visibly (e.g. in the footer) or remove it from the schema if it\'s no longer accurate.', element: b.el });
         }
       }
@@ -3282,7 +3282,7 @@
         addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
           title: 'Organization schema has no sameAs (links to the official profiles)',
           description: pageSocial.length ? 'Profiles linked on this page: ' + pageSocial.join(', ') : '',
-          why: 'sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...). Google\'s Organization documentation includes sameAs; Google: Organization markup on the home page "can help Google better understand your organization\'s administrative details and disambiguate your organization in search results".',
+          why: 'sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...), which helps Google understand the organization and tell it apart from others in search results.',
           fix: 'Add a sameAs array with the full URLs of the official profiles to the Organization JSON-LD block — in Webflow: Pages panel > Home > Page settings > Schema markup field (or wherever the block was added: Page settings > Custom code > Inside <head> tag, or Site settings > Custom code tab > Head code).', element: orgB.el });
       } else {
         var missingSocial = pageSocial.filter(function (h) { return !sameAsHosts[h]; });
@@ -3300,7 +3300,7 @@
     } else if (/^\/([a-z]{2}(-[a-z]{2})?\/?)?$/i.test(LOC.pathname)) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
         title: 'Home page has no Organization schema',
-        description: '', why: 'Google: Organization markup on the home page "can help Google better understand your organization\'s administrative details and disambiguate your organization in search results", and it can influence which logo is shown in Search results and the knowledge panel. Google lists no required properties.',
+        description: '', why: 'Organization markup on the home page helps Google understand the organization\'s details and tell it apart from others in search results, and can influence which logo is shown in search results and the knowledge panel. No property is required.',
         fix: 'Add a JSON-LD Organization block (name, url, logo, sameAs with the official profiles) — in Webflow: Pages panel > Home > Page settings > Schema markup field (Webflow advises not to add the same schema there and in custom code as well).', element: null });
     }
 
@@ -3309,7 +3309,7 @@
     if (looksLikeBreadcrumbUI() && breadcrumbSchemas.length === 0) {
       addFinding({ category: 'AEO - Structured data (Schema.org)', group: 'aeo', severity: 'info',
         title: 'A visible breadcrumb UI exists, but there is no BreadcrumbList schema markup',
-        description: '', why: 'Google: "Google Search uses breadcrumb markup in the body of a web page to categorize the information from the page in search results."',
+        description: '', why: 'Google uses breadcrumb markup to categorize the page\'s information in search results.',
         fix: 'Add a JSON-LD BreadcrumbList schema matching the visible breadcrumb navigation.', element: null });
     } else if (breadcrumbSchemas.length) {
       addSuccess({ category: 'AEO - Structured data (Schema.org)', group: 'aeo',
@@ -3328,7 +3328,7 @@
           addFinding({ category: 'AEO - JS rendering dependency', group: 'aeo', severity: 'warning',
             title: 'Most of the content only appears after JavaScript executes (raw HTML: ~' + rawText.length + ' chars, rendered: ~' + renderedText.length + ' chars)',
             description: '',
-            why: 'Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Vercel\'s crawler measurements (December 2024): "none of the major AI crawlers currently render JavaScript" (OpenAI, Anthropic, Perplexity and others; Google\'s crawler does). If key content only appears after JavaScript runs, those crawlers may see an empty or nearly empty page. Webflow pages are server-rendered, so this is rare, but custom code/embeds can inject content afterward.',
+            why: 'Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Most AI crawlers (OpenAI, Anthropic, Perplexity and others) don\'t run JavaScript; Google\'s crawler does. If key content only appears after JavaScript runs, those crawlers may see an empty or nearly empty page. Webflow pages are server-rendered, so this is rare, but custom code/embeds can inject content afterward.',
             fix: 'Check "View Page Source" (Ctrl/Cmd+U) and compare it with what\'s visible on screen — if key text is missing from the raw HTML, consider making that content part of the server\'s initial HTML response.', element: null });
           renderPanel();
         }
@@ -3525,7 +3525,7 @@
     'aeo.jsonld': 'JSON-LD schema validity', 'aeo.faq': 'FAQPage schema', 'aeo.article': 'Article schema', 'aeo.articleDates': 'Article dates',
     'aeo.articleAuthor': 'Article author', 'aeo.authorLink': 'Author link', 'aeo.nap': 'NAP data (phone/address)', 'aeo.breadcrumb': 'Breadcrumbs',
     'aeo.jsRender': 'Content visible without JavaScript',
-    'img.heavy': 'Image compression (Lighthouse: JPEG re-encode, PNG to WebP)', 'img.lazyAbove': 'Above-the-fold images not lazy-loaded',
+    'img.heavy': 'Image compression (JPEG re-encode, PNG to WebP)', 'img.lazyAbove': 'Above-the-fold images not lazy-loaded',
     'video.poster': 'Above-the-fold video poster', 'form.label': 'Form field labels', 'aeo.orgSameAs': 'Organization schema profiles (sameAs)'
   };
   var CHECK_BY_ID = {};
@@ -5399,23 +5399,23 @@
   function srDictData() {
     return {
     "Add a poster attribute to the <video> tag (poster=\"https://…/poster.avif\" — an AVIF/WebP of the first frame) in the embed / custom code the video comes from. A Webflow Background Video element is not affected: Webflow already gives it a poster frame as a CSS background image on the <video>, so it is not reported here. Also provide an MP4 source next to a WebM one so every browser can play it.": "Dodaj poster atribut na <video> tag (poster=\"https://…/poster.avif\" — AVIF/WebP prvog kadra) u embed / custom code iz kog video dolazi. Webflow Background Video element nije obuhvaćen: Webflow mu već daje poster kadar kao CSS pozadinsku sliku na <video>, pa se ovde ne prijavljuje. Dodaj i MP4 izvor pored WebM-a da bi svaki browser mogao da ga pusti.",
-    "Webflow's method: select the field > Element settings (D) > give it a unique ID; then select the Label element above it > Element settings > Custom attributes > add \"for\" with the field's ID as the value (Webflow notes fully accessible forms currently need this custom setup). Alternatively add the custom attribute aria-label = \"what the field is for\" on the field itself.": "Webflow metod: izaberi polje > Element settings (D) > daj mu jedinstveni ID; zatim izaberi Label element iznad njega > Element settings > Custom attributes > dodaj \"for\" sa ID-jem polja kao vrednošću (Webflow napominje da potpuno pristupačne forme trenutno traže ovo ručno podešavanje). Alternativno dodaj custom attribute aria-label = \"čemu polje služi\" na samo polje.",
-    "Host the font yourself: download the font files and upload them in Site settings > Fonts tab > Custom fonts (WOFF2 is Webflow's recommended format), and stop using the Google font. Webflow's help says its Google Fonts integration sends visitors' IP addresses to Google and may not be GDPR-compliant. If the uploaded font has the same name as a Google font (e.g. Montserrat), rename it (e.g. \"Montserrat-Regular-1\"), otherwise Webflow may keep loading it from Google.": "Hostuj font sam: preuzmi fajlove fonta i otpremi ih u Site settings > Fonts tab > Custom fonts (WOFF2 je format koji Webflow preporučuje), i prestani da koristiš Google font. Webflow help navodi da njegova Google Fonts integracija šalje IP adrese posetilaca Google-u i možda nije u skladu sa GDPR-om. Ako otpremljeni font ima isto ime kao Google font (npr. Montserrat), preimenuj ga (npr. \"Montserrat-Regular-1\"), inače Webflow može nastaviti da ga učitava sa Google-a.",
-    "Convert the font files to .woff2 (Webflow's recommended format) and upload them in Site settings > Fonts tab > Custom fonts.": "Konvertuj fajlove fonta u .woff2 (format koji Webflow preporučuje) i otpremi ih u Site settings > Fonts tab > Custom fonts.",
-    "Add the \"defer\" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or \"async\" (for fully independent scripts). Even better: move the script out of the <head> to Page settings > Custom code > Before </body> tag (site-wide: Site settings > Custom code tab > Footer code) — Webflow's help notes that scripts before the closing </body> tag typically improve performance.": "Dodaj atribut \"defer\" (preporučeno za skripte kojima je bitan redosled izvršavanja/spremnost DOM-a — većina chat widgeta i tracking piksela) ili \"async\" (za potpuno nezavisne skripte). Još bolje: premesti skriptu iz <head> u Page settings > Custom code > Before </body> tag (za ceo sajt: Site settings > Custom code tab > Footer code) — Webflow help navodi da skripte pre zatvarajućeg </body> taga obično poboljšavaju performanse.",
+    "In Webflow: select the field > Element settings (D) > give it a unique ID; then select the Label element above it > Element settings > Custom attributes > add \"for\" with the field's ID as the value. Alternatively add the custom attribute aria-label = \"what the field is for\" on the field itself.": "U Webflow-u: izaberi polje > Element settings (D) > daj mu jedinstveni ID; zatim izaberi Label element iznad njega > Element settings > Custom attributes > dodaj \"for\" sa ID-jem polja kao vrednošću. Alternativno dodaj custom attribute aria-label = \"čemu polje služi\" na samo polje.",
+    "Host the font yourself: download the font files and upload them in Site settings > Fonts tab > Custom fonts (WOFF2 is the best format), and stop using the Google font. Webflow's Google Fonts integration sends visitors' IP addresses to Google and may not be GDPR-compliant. If the uploaded font has the same name as a Google font (e.g. Montserrat), rename it (e.g. \"Montserrat-Regular-1\"), otherwise Webflow may keep loading it from Google.": "Hostuj font sam: preuzmi fajlove fonta i otpremi ih u Site settings > Fonts tab > Custom fonts (WOFF2 je najbolji format), i prestani da koristiš Google font. Webflow-ova Google Fonts integracija šalje IP adrese posetilaca Google-u i možda nije u skladu sa GDPR-om. Ako otpremljeni font ima isto ime kao Google font (npr. Montserrat), preimenuj ga (npr. \"Montserrat-Regular-1\"), inače Webflow može nastaviti da ga učitava sa Google-a.",
+    "Convert the font files to .woff2 and upload them in Site settings > Fonts tab > Custom fonts.": "Konvertuj fajlove fonta u .woff2 i otpremi ih u Site settings > Fonts tab > Custom fonts.",
+    "Add the \"defer\" attribute (recommended for scripts where execution order/DOM readiness matters — most chat widgets and tracking pixels) or \"async\" (for fully independent scripts). Even better: move the script out of the <head> to Page settings > Custom code > Before </body> tag (site-wide: Site settings > Custom code tab > Footer code) — scripts before the closing </body> tag don't block the first paint.": "Dodaj atribut \"defer\" (preporučeno za skripte kojima je bitan redosled izvršavanja/spremnost DOM-a — većina chat widgeta i tracking piksela) ili \"async\" (za potpuno nezavisne skripte). Još bolje: premesti skriptu iz <head> u Page settings > Custom code > Before </body> tag (za ceo sajt: Site settings > Custom code tab > Footer code) — skripte pre zatvarajućeg </body> taga ne blokiraju prvi prikaz.",
     "Add a sameAs array with the full URLs of the official profiles to the Organization JSON-LD block — in Webflow: Pages panel > Home > Page settings > Schema markup field (or wherever the block was added: Page settings > Custom code > Inside <head> tag, or Site settings > Custom code tab > Head code).": "Dodaj sameAs niz sa punim URL-ovima zvaničnih profila u Organization JSON-LD blok — u Webflow-u: Pages panel > Home > Page settings > polje Schema markup (ili gde je blok dodat: Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code tab > Head code).",
     "Add a JSON-LD Organization block (name, url, logo, sameAs with the official profiles) — in Webflow: Pages panel > Home > Page settings > Schema markup field (Webflow advises not to add the same schema there and in custom code as well).": "Dodaj JSON-LD Organization blok (name, url, logo, sameAs sa zvaničnim profilima) — u Webflow-u: Pages panel > Home > Page settings > polje Schema markup (Webflow savetuje da se ista schema ne dodaje i tamo i u custom code).",
     "Remove all but one <title> tag — set the title in Pages panel > Page settings > SEO settings > Title tag, not manually in custom code.": "Ukloni sve <title> tagove osim jednog — naslov podesi u Pages panel > Page settings > SEO settings > Title tag, ne ručno u custom code-u.",
     "Add a unique, descriptive title in Pages panel > Page settings > SEO settings > Title tag (Webflow recommends under 60 characters).": "Dodaj jedinstven, opisan naslov u Pages panel > Page settings > SEO settings > Title tag (Webflow preporučuje manje od 60 karaktera).",
-    "Add a meta description (Screaming Frog's range: 70–155 characters) in Pages panel > Page settings > SEO settings > Meta description.": "Dodaj meta description (opseg Screaming Frog-a: 70–155 karaktera) u Pages panel > Page settings > SEO settings > Meta description.",
+    "Add a meta description of 70–155 characters in Pages panel > Page settings > SEO settings > Meta description.": "Dodaj meta description od 70–155 karaktera u Pages panel > Page settings > SEO settings > Meta description.",
     "Add it in Pages panel > Page settings > Open Graph settings > Open Graph title (or check the box under the field to copy the SEO title).": "Dodaj ga u Pages panel > Page settings > Open Graph settings > Open Graph title (ili čekiraj polje ispod da se kopira SEO naslov).",
     "Add it in Pages panel > Page settings > Open Graph settings > Open Graph description (or check the box under the field to copy the meta description).": "Dodaj ga u Pages panel > Page settings > Open Graph settings > Open Graph description (ili čekiraj polje ispod da se kopira meta description).",
-    "Add it in Pages panel > Page settings > Open Graph settings > Open Graph image (an image link or an image from the Assets panel; the Open Graph image field in Webflow says: \"Use an image that's at least 1200px by 630px minimum (1.91:1 ratio) for the best results\"). On a Collection page choose an Image field.": "Dodaj je u Pages panel > Page settings > Open Graph settings > Open Graph image (link slike ili slika iz Assets panel-a; polje Open Graph image u Webflow-u kaže: \"Use an image that's at least 1200px by 630px minimum (1.91:1 ratio) for the best results\"). Na Collection stranici izaberi Image polje.",
+    "Add it in Pages panel > Page settings > Open Graph settings > Open Graph image (an image link or an image from the Assets panel; use at least 1200×630 px, ratio 1.91:1). On a Collection page choose an Image field.": "Dodaj je u Pages panel > Page settings > Open Graph settings > Open Graph image (link slike ili slika iz Assets panel-a; koristi najmanje 1200×630 px, odnos 1.91:1). Na Collection stranici izaberi Image polje.",
     "Set the site's language code in Webflow: Settings panel > Localization (or the globe icon in the top bar > Localization settings) — choose the primary locale's language (and optionally country), save and publish.": "Podesi kod jezika sajta u Webflow-u: Settings panel > Localization (ili ikonica globusa u gornjoj traci > Localization settings) — izaberi jezik primarnog locale-a (i opciono zemlju), sačuvaj i objavi.",
     "Make the canonical, the site's default domain and the redirects agree on one variant. In Webflow the default domain is set in Site settings > Publishing tab > Production > Make default; visitors on the other domain are then redirected to it.": "Uskladi canonical, podrazumevani domen sajta i preusmerenja na jednu varijantu. U Webflow-u se podrazumevani domen podešava u Site settings > Publishing tab > Production > Make default; posetioci na drugom domenu se tada preusmeravaju na njega.",
     "Rename the slug to something descriptive in the Slug field of Page settings, and if the old URL is already indexed add a 301 redirect from it (Site settings > Publishing > 301 redirects).": "Preimenuj slug u nešto opisno u polju Slug u Page settings, a ako je stari URL već indeksiran dodaj 301 preusmerenje sa njega (Site settings > Publishing > 301 redirects).",
     "Alt text is empty (alt=\"\") — \"Decorative\" or no alt text saved in Webflow": "Alt tekst je prazan (alt=\"\") — „Decorative“ ili u Webflow-u nije sačuvan alt tekst",
-    "Webflow outputs an empty alt=\"\" for an image set as \"Decorative\" (Webflow: \"Images set as decorative will have an empty alt tag, and therefore be ignored by screen readers\") — correct for purely decorative images. It outputs the same alt=\"\" when no alt text is saved at all (verified on a published Webflow page: Image element set to use the asset's alt text, asset with no alt text saved → alt=\"\"). In Asset settings such an asset shows \"Descriptive\" selected with an empty field, so \"Descriptive\" being checked does not mean a description exists. So alt=\"\" does not prove anyone chose \"Decorative\" — only the Designer shows that. It is listed for checking only and does not affect the score.": "Webflow ispisuje prazan alt=\"\" za sliku podešenu kao „Decorative“ (Webflow: \"Images set as decorative will have an empty alt tag, and therefore be ignored by screen readers\") — ispravno za čisto dekorativne slike. Isti alt=\"\" ispisuje i kada alt tekst uopšte nije sačuvan (provereno na objavljenoj Webflow stranici: Image element podešen da koristi alt tekst asset-a, asset bez sačuvanog alt teksta → alt=\"\"). U Asset settings takav asset ima izabrano „Descriptive“ sa praznim poljem, pa čekirano „Descriptive“ ne znači da opis postoji. Zato alt=\"\" ne dokazuje da je neko izabrao „Decorative“ — to se vidi samo u Designer-u. Navedeno je samo radi provere i ne utiče na skor.",
+    "Webflow outputs an empty alt=\"\" for an image set as \"Decorative\", so screen readers skip it — correct for purely decorative images. It outputs the same alt=\"\" when no alt text is saved at all. In Asset settings such an asset shows \"Descriptive\" selected with an empty field, so \"Descriptive\" being checked does not mean a description exists. So alt=\"\" does not prove anyone chose \"Decorative\" — only the Designer shows that. It is listed for checking only and does not affect the score.": "Webflow ispisuje prazan alt=\"\" za sliku podešenu kao „Decorative“, pa je čitači ekrana preskaču — ispravno za čisto dekorativne slike. Isti alt=\"\" ispisuje i kada alt tekst uopšte nije sačuvan. U Asset settings takav asset ima izabrano „Descriptive“ sa praznim poljem, pa čekirano „Descriptive“ ne znači da opis postoji. Zato alt=\"\" ne dokazuje da je neko izabrao „Decorative“ — to se vidi samo u Designer-u. Navedeno je samo radi provere i ne utiče na skor.",
     "Check in the Designer: select the image > Element settings panel > Image settings > Alt text, and the asset itself: Assets panel > the image's more options > Edit settings > Alt text. If it is \"Decorative\" and the image is purely decorative, no action is needed. If \"Descriptive\" is selected but the text field is empty, or the image carries meaning, type a description (on the asset, or for this instance: Custom description).": "Proveri u Designer-u: izaberi sliku > Element settings panel > Image settings > Alt text, i sam asset: Assets panel > more options slike > Edit settings > Alt text. Ako je „Decorative“ i slika je čisto dekorativna, ništa ne treba menjati. Ako je izabrano „Descriptive“, a polje za tekst je prazno, ili slika nosi značenje, upiši opis (na asset-u, ili za ovu instancu: Custom description).",
     "Add descriptive alt text: Assets panel > the image's more options > Edit settings > Descriptive (applies wherever the image is placed from then on), or for this instance Element settings panel > Image settings > Alt text > Custom description. If the image is purely decorative, choose \"Decorative\" instead.": "Dodaj opisni alt tekst: Assets panel > more options slike > Edit settings > Descriptive (važi gde god se slika od tada postavi), ili samo za ovu instancu Element settings panel > Image settings > Alt text > Custom description. Ako je slika čisto dekorativna, izaberi \"Decorative\".",
     "In the Designer: select the image > Element settings panel > Image settings > Set loading behavior > \"Lazy\" (keep \"Eager\" only for the hero / above-the-fold images).": "U Designer-u: izaberi sliku > Element settings panel > Image settings > Set loading behavior > \"Lazy\" (\"Eager\" ostavi samo za hero / slike iznad preloma).",
@@ -5429,14 +5429,14 @@
     "Slowest of {0} interaction(s) measured: {1} on {2}. Keep clicking the menu, tabs, accordions... to measure more — the result updates here.": "Najsporija od izmerenih interakcija ({0}): {1} na {2}. Nastavi da klikćeš meni, tabove, accordion-e... da izmeriš više — rezultat se ažurira ovde.",
     "Slowest of {0} interaction(s) measured: {1}. Keep clicking the menu, tabs, accordions... to measure more — the result updates here.": "Najsporija od izmerenih interakcija ({0}): {1}. Nastavi da klikćeš meni, tabove, accordion-e... da izmeriš više — rezultat se ažurira ovde.",
     "Slow INP (Interaction to Next Paint): {0}ms": "Spor INP (Interaction to Next Paint): {0}ms",
-    "web.dev: an INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor{0}. INP is a Core Web Vital, and Google says Core Web Vitals are used by its ranking systems. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).": "web.dev: INP do 200 ms je dobar, iznad 200 ms treba poboljšanje, a iznad 500 ms je loš{0}. INP je Core Web Vital, a Google navodi da njegovi sistemi rangiranja koriste Core Web Vitals. Izmereno ovde, u ovom browseru na ovom računaru; Google koristi podatke stvarnih posetilaca (75. percentil učitavanja).",
+    "An INP at or below 200 ms is good, above 200 ms needs improvement and above 500 ms is poor{0}. INP is a Core Web Vital, part of what Google's ranking systems reward. Measured here, in this browser on this computer; Google uses data from real visitors (75th percentile of page loads).": "INP do 200 ms je dobar, iznad 200 ms treba poboljšanje, a iznad 500 ms je loš{0}. INP je Core Web Vital, deo onoga što Google-ovi sistemi rangiranja nagrađuju. Izmereno ovde, u ovom browseru na ovom računaru; Google koristi podatke stvarnih posetilaca (75. percentil učitavanja).",
     " — this one is poor": " — ovaj je loš",
     "Record the slow interaction in Chrome DevTools > Performance and see what runs on that click (custom code, third-party scripts, heavy animations), then make it lighter or defer it.": "Snimi sporu interakciju u Chrome DevTools > Performance i vidi šta se izvršava na taj klik (custom code, skripte trećih strana, teške animacije), pa to olakšaj ili odloži.",
     "INP is good ({0}ms, at or under Google's 200ms threshold)": "INP je dobar ({0}ms, do Google-ovog praga od 200ms)",
     "INP (interaction to next paint)": "INP (interaction to next paint)",
     "Image does not load (broken image)": "Slika se ne učitava (polomljena slika)",
     "(used {0} times on this page)": "(korišćena {0} puta na ovoj stranici)",
-    "The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot. Semrush reports broken internal images as an error, Ahrefs as \"Image broken\".": "Browser nije mogao da učita ovaj fajl slike (više ne postoji, URL je pogrešno napisan ili je putanja pogrešna), pa posetioci i Google vide prazno mesto. Semrush polomljene interne slike prijavljuje kao grešku, a Ahrefs kao \"Image broken\".",
+    "The browser could not load this image file (it no longer exists, the URL is misspelled or the path is wrong), so visitors and Google see an empty spot.": "Browser nije mogao da učita ovaj fajl slike (više ne postoji, URL je pogrešno napisan ili je putanja pogrešna), pa posetioci i Google vide prazno mesto.",
     "Replace the image: select it > Element settings panel > Image settings > Replace image (or fix the URL in the CMS field / custom code it comes from). Publish.": "Zameni sliku: izaberi je > Element settings panel > Image settings > Replace image (ili ispravi URL u CMS polju / custom code-u odakle dolazi). Objavi.",
     "All images load ({0} checked)": "Sve slike se učitavaju (provereno: {0})",
     "Images load (no broken images)": "Slike se učitavaju (nema polomljenih)",
@@ -5444,30 +5444,30 @@
     "href on <{0}>": "href na <{0}>",
     "role=\"link\" without <a href>": "role=\"link\" bez <a href>",
     "onclick navigation": "navigacija preko onclick",
-    "Google Search Central: Google can generally only crawl a link if it is an <a> element with an href attribute; it can't reliably extract URLs from elements that don't have an href or from other tags that act as links through script events (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.": "Google Search Central: Google generalno može da prati link samo ako je to <a> element sa href atributom; ne može pouzdano da izvuče URL iz elemenata bez href-a ili iz drugih tagova koji se ponašaju kao linkovi preko skripti (na primer <span href> ili <a onclick>). Stranica iza ovog elementa možda neće biti otkrivena preko ovog linka.",
+    "Google can generally only follow a link that is an <a> element with an href; it can't reliably find URLs in elements without an href or in tags that act as links through scripts (for example <span href> or <a onclick>). The page behind this element may not be discovered through this link.": "Google uglavnom može da prati samo link koji je <a> element sa href-om; ne može pouzdano da pronađe URL u elementima bez href-a niti u tagovima koji rade kao link preko skripte (npr. <span href> ili <a onclick>). Stranica iza ovog elementa možda neće biti otkrivena preko ovog linka.",
     "Make it a real link: in Webflow use a Link block, Text link or Button and set the destination in the Element settings panel (Link settings); to make an image or a block clickable, drop it inside a Link block. Remove the click script / custom attribute that did the navigation.": "Napravi pravi link: u Webflow-u koristi Link block, Text link ili Button i podesi odredište u Element settings panel-u (Link settings); da bi slika ili blok bili klikabilni, stavi ih unutar Link block-a. Ukloni skriptu / custom attribute koji je radio navigaciju.",
     "All navigation uses crawlable <a href> links": "Sva navigacija koristi <a href> linkove koje Google može da prati",
     "Navigation uses crawlable links": "Navigacija koristi linkove koje Google prati",
     "Internal link has rel=\"nofollow\"": "Interni link ima rel=\"nofollow\"",
-    "Google Search Central: links with nofollow will generally not be followed, and nofollow is meant for links you don't want Google to associate your site with; for links within your own site Google points to the robots.txt disallow rule instead. A nofollow on an internal link holds back crawling of your own page. Semrush and Screaming Frog report internal nofollow links as a warning.": "Google Search Central: linkovi sa nofollow generalno neće biti praćeni, a nofollow je namenjen linkovima sa kojima ne želiš da Google povezuje tvoj sajt; za linkove unutar sopstvenog sajta Google upućuje na robots.txt disallow pravilo. Nofollow na internom linku koči crawl tvoje sopstvene stranice. Semrush i Screaming Frog interne nofollow linkove prijavljuju kao upozorenje.",
+    "Google generally doesn't follow links with nofollow; nofollow is meant for links you don't want associated with your site. On an internal link it holds back crawling of your own page — to keep a page out of search, use noindex or robots.txt instead.": "Google uglavnom ne prati linkove sa nofollow; nofollow je namenjen linkovima koje ne želiš da poveže sa tvojim sajtom. Na internom linku koči pretraživanje tvoje sopstvene stranice — da bi stranica ostala van pretrage, koristi noindex ili robots.txt.",
     "Remove rel=\"nofollow\" from the internal link — in Webflow it comes from a custom attribute (Element settings panel > Custom attributes) or from custom code. To keep a page out of Google, use noindex (Page settings > SEO settings > Sitemap indexing off); to stop crawling, robots.txt.": "Ukloni rel=\"nofollow\" sa internog linka — u Webflow-u dolazi iz custom attribute-a (Element settings panel > Custom attributes) ili iz custom code-a. Da stranica ne bi bila u Google-u koristi noindex (Page settings > SEO settings > Sitemap indexing isključen); da se ne bi crawl-ovala, robots.txt.",
     "No internal link has rel=\"nofollow\" ({0} checked)": "Nijedan interni link nema rel=\"nofollow\" (provereno: {0})",
     "No nofollow on internal links": "Nema nofollow na internim linkovima",
     "Image link has no anchor text (image without alt)": "Link sa slikom nema anchor tekst (slika bez alt-a)",
     "image: {0}": "slika: {0}",
     "(aria-label=\"{0}\" helps screen readers, but Google uses the image alt as anchor text)": "(aria-label=\"{0}\" pomaže čitačima ekrana, ali Google kao anchor tekst koristi alt slike)",
-    "Google Search Central: for images as links, Google uses the alt attribute of the img element as anchor text — an image link with empty alt text and no link text is its \"bad\" example. Without it Google gets no description of the page the link points to.": "Google Search Central: kod slika kao linkova Google koristi alt atribut img elementa kao anchor tekst — link sa slikom sa praznim alt-om i bez teksta linka je njegov primer \"loše\" prakse. Bez toga Google ne dobija opis stranice na koju link vodi.",
+    "When an image is a link, Google uses its alt text as the link text. An image link with empty alt and no text tells Google nothing about the page it points to.": "Kada je slika link, Google koristi njen alt tekst kao tekst linka. Link-slika sa praznim alt-om i bez teksta ne govori Google-u ništa o stranici na koju vodi.",
     "Give the image descriptive alt text: select it > Element settings panel > Image settings > Alt text > Custom description (or in the Assets panel: the image's settings > descriptive text; for a CMS image bind the alt text to a field). Or add visible text inside the link.": "Daj slici opisni alt tekst: izaberi je > Element settings panel > Image settings > Alt text > Custom description (ili u Assets panel-u: podešavanja slike > opisni tekst; za CMS sliku poveži alt tekst sa poljem). Ili dodaj vidljiv tekst unutar linka.",
     "All image links have alt text ({0} checked)": "Svi linkovi sa slikom imaju alt tekst (provereno: {0})",
     "Image links have alt text": "Linkovi sa slikom imaju alt tekst",
     "{0} schema is missing properties Google requires: {1}": "{0} schema nema svojstva koja Google zahteva: {1}",
-    "Google Search Central lists these as required for the {0} rich result: without them the item is not eligible for that rich result (Google says structured data enables a feature, it doesn't guarantee it, and it doesn't affect ranking).": "Google Search Central ih navodi kao obavezna za {0} rich result: bez njih stavka nema pravo na taj rich result (Google kaže da structured data omogućava funkciju, ne garantuje je i ne utiče na rangiranje).",
+    "These properties are required for the {0} rich result in Google: without them the item is not eligible for it (structured data makes a rich result possible, but doesn't guarantee it, and doesn't affect ranking).": "Ova svojstva su obavezna za {0} rich result u Google-u: bez njih stavka ne može da dobije taj prikaz (strukturirani podaci omogućavaju rich result, ali ga ne garantuju i ne utiču na rangiranje).",
     "In Webflow: Pages panel > the page's Settings > Schema markup field (or the custom code where the JSON-LD was added); on a Collection page bind the CMS fields so every item gets its own values. Publish.": "U Webflow-u: Pages panel > Settings stranice > polje Schema markup (ili custom code u koji je JSON-LD dodat); na Collection stranici poveži CMS polja da svaka stavka dobije svoje vrednosti. Objavi.",
     "Add the missing properties. {0}": "Dodaj svojstva koja nedostaju. {0}",
     "Schema has the properties Google requires ({0})": "Schema ima svojstva koja Google zahteva ({0})",
     "Schema has Google-required properties": "Schema ima svojstva koja Google zahteva",
     "Schema text not found on the page ({0})": "Tekst iz schema nije pronađen na stranici ({0})",
-    "Google Search Central: don't mark up content that is not visible to readers of the page — if the JSON-LD describes something, the HTML body must describe that same thing, and structured data must be a true representation of the page content. These names/headlines from the schema don't appear in the page text (compared without case and punctuation).": "Google Search Central: ne označavaj sadržaj koji čitaoci stranice ne vide — ako JSON-LD nešto opisuje, HTML body mora da opisuje to isto, a structured data mora verno da predstavlja sadržaj stranice. Ovi nazivi/naslovi iz schema se ne pojavljuju u tekstu stranice (poređeno bez velikih/malih slova i interpunkcije).",
+    "Structured data must describe what readers actually see on the page — if the JSON-LD describes something, the page text must describe the same thing. These names/headlines from the schema don't appear in the page text (compared without case and punctuation).": "Strukturirani podaci moraju da opisuju ono što čitaoci zaista vide na stranici — ako JSON-LD nešto opisuje, tekst stranice mora da opisuje isto. Ovi nazivi/naslovi iz scheme se ne pojavljuju u tekstu stranice (poređeno bez velikih slova i interpunkcije).",
     "Make the schema match what the page shows (same headline / name), or show that text on the page. {0}": "Uskladi schema sa onim što stranica prikazuje (isti naslov / naziv) ili prikaži taj tekst na stranici. {0}",
     "Schema names/headlines appear on the page ({0} checked)": "Nazivi/naslovi iz schema se pojavljuju na stranici (provereno: {0})",
     "Schema text is on the page": "Tekst iz schema je na stranici",
@@ -5475,12 +5475,12 @@
     "Heading — {0}": "Naslov — {0}",
     "Text — {0}": "Tekst — {0}",
     "Image — {0}": "Slika — {0}",
-    "Google indexes and ranks the mobile version of the page (mobile-first indexing). Google Search Central: make sure the mobile site contains the same content as the desktop site and uses the same headings and image alt text; content may be moved into accordions or tabs on mobile, but content that is removed is content Google can't use. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.": "Google indeksira i rangira mobilnu verziju stranice (mobile-first indexing). Google Search Central: postaraj se da mobilni sajt ima isti sadržaj kao desktop i iste naslove i alt tekst slika; sadržaj na mobilnom može da se premesti u accordion-e ili tabove, ali uklonjen sadržaj Google ne može da koristi. Ove stavke su vidljive na desktopu, a skrivene (display: none) u mobilnom okviru (375 px) i tamo nisu ni u tabu, accordion-u, dropdown-u, slajderu ili meniju.",
+    "Google indexes and ranks the mobile version of the page (mobile-first indexing), so the mobile page should have the same content, headings and image alt text as desktop. Content may sit in accordions or tabs on mobile, but content that is removed can't be used by Google. These items are visible on desktop but hidden (display: none) in the mobile frame (375 px), and not inside a tab, accordion, dropdown, slider or menu there.": "Google indeksira i rangira mobilnu verziju stranice (mobile-first indexing), pa mobilna stranica treba da ima isti sadržaj, naslove i alt tekst slika kao desktop. Sadržaj na mobilnom sme da bude u accordion-ima ili tabovima, ali uklonjen sadržaj Google ne može da koristi. Ove stavke su vidljive na desktopu, a skrivene (display: none) u mobilnom okviru (375 px), i tamo nisu u tabu, accordion-u, dropdown-u, slajderu ni meniju.",
     "Show this content on the Mobile breakpoint, or move it into a tab/accordion instead of hiding it. In Webflow an element is hidden per breakpoint with Style panel > Layout > display: none — select the breakpoint in the canvas bar and change it; display is a class style, so it applies to every element with the same class and cascades to smaller breakpoints.": "Prikaži ovaj sadržaj na Mobile breakpoint-u ili ga premesti u tab/accordion umesto da ga skrivaš. U Webflow-u se element skriva po breakpoint-u preko Style panel > Layout > display: none — izaberi breakpoint u traci iznad canvas-a i promeni ga; display je stil klase, pa važi za svaki element sa istom klasom i prenosi se na manje breakpoint-e.",
     "Mobile shows the same content as desktop ({0} items compared)": "Mobilni prikazuje isti sadržaj kao desktop (upoređeno stavki: {0})",
     "Same content on mobile as on desktop": "Isti sadržaj na mobilnom kao na desktopu",
     "Tap target is too small and too close to another ({0} px)": "Element za dodir je premali i preblizu drugom ({0} px)",
-    "WCAG 2.2 (2.5.8 Target Size, level AA): a tap target must be at least 24 by 24 CSS pixels, unless a 24 px circle centred on it does not touch another target. This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. (Lighthouse's older SEO audit is stricter: it recommends 48 by 48 px.)": "WCAG 2.2 (2.5.8 Target Size, nivo AA): element za dodir mora biti najmanje 24 sa 24 CSS piksela, osim ako krug od 24 px sa centrom na njemu ne dodiruje drugi element. Ovaj je manji i ima toliko blizu suseda, pa je na telefonu lako dodirnuti pogrešan. (Starija Lighthouse SEO provera je stroža: preporučuje 48 sa 48 px.)",
+    "A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn't touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing.": "Element za dodir treba da bude najmanje 24 x 24 CSS piksela, osim ako oko njega ima dovoljno prostora (krug od 24 px oko njegovog centra ne dodiruje drugi element). Ovaj je manji i ima suseda toliko blizu, pa je na telefonu lako dodirnuti pogrešan.",
     "On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.": "Na Mobile breakpoint-u napravi element od najmanje 24x24 px (padding se računa) ili mu daj više prostora od suseda — u Webflow-u, Style panel (veličina / padding / margin) sa izabranim Mobile breakpoint-om.",
     "Tap targets on mobile (24x24 px)": "Elementi za dodir na mobilnom (24x24 px)",
     "custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code)": "custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code)",
@@ -5499,11 +5499,11 @@
     "Google Search requires at least 8x8px, but recommends a favicon larger than 48x48px so it looks good on various surfaces.": "Google Search zahteva najmanje 8x8px, ali preporučuje favicon veći od 48x48px kako bi lepo izgledao na različitim površinama.",
     "Favicon is square and larger than 48x48px ({0})": "Favicon je kvadratni i veći od 48x48px ({0})",
     "The path \"{0}\" is blocked by \"{1}\" (group: User-agent: {2}).": "Putanju \"{0}\" blokira \"{1}\" (grupa: User-agent: {2}).",
-    "Google Search Central: Googlebot-Image must be able to crawl the favicon file — it must not be blocked by robots.txt. Otherwise Google can't show it in search results.": "Google Search Central: Googlebot-Image mora moći da crawl-uje fajl favicon-a — ne sme biti blokiran u robots.txt. U suprotnom Google ne može da ga prikaže u rezultatima pretrage.",
+    "Google must be able to crawl the favicon file (it must not be blocked in robots.txt for Googlebot-Image), otherwise it can't show it in search results.": "Google mora moći da preuzme favicon fajl (ne sme biti blokiran u robots.txt za Googlebot-Image), inače ga ne može prikazati u rezultatima pretrage.",
     "In Webflow: Site settings > SEO > Indexing — change the robots.txt rules so they don't cover the favicon path (add an Allow rule for it or narrow the Disallow rule), save and publish.": "U Webflow-u: Site settings > SEO > Indexing — izmeni robots.txt pravila tako da ne pokrivaju putanju favicon-a (dodaj Allow pravilo za nju ili suzi Disallow pravilo), sačuvaj i objavi.",
     "Page is blocked in robots.txt for Googlebot": "Stranica je blokirana u robots.txt za Googlebot",
     "Rule: {0} (group: User-agent: {1})": "Pravilo: {0} (grupa: User-agent: {1})",
-    "Google can't crawl this page, so it can't read its content. Google Search Central: a page blocked in robots.txt can still appear in search results (for example when other sites link to it), but the result won't have a description; and for AI Overviews / AI Mode, crawling must be allowed in robots.txt.{0}": "Google ne može da crawl-uje ovu stranicu, pa ne može da pročita njen sadržaj. Google Search Central: stranica blokirana u robots.txt i dalje može da se pojavi u rezultatima pretrage (na primer kada drugi sajtovi linkuju na nju), ali rezultat neće imati opis; a za AI Overviews / AI Mode crawl mora biti dozvoljen u robots.txt.{0}",
+    "Google can't crawl this page, so it can't read its content. A page blocked in robots.txt can still appear in search results (for example when other sites link to it), but without a description; and AI Overviews / AI Mode can only use pages that may be crawled.{0}": "Google ne može da pretraži ovu stranicu, pa ne može ni da pročita njen sadržaj. Stranica blokirana u robots.txt i dalje može da se pojavi u rezultatima (npr. kada je drugi sajtovi linkuju), ali bez opisa; a AI Overviews / AI Mode mogu da koriste samo stranice koje smeju da se pretražuju.{0}",
     "Relevant to both SEO and AEO — a page Google can't crawl can't be used as a source for AI Overviews / AI Mode either.": "Relevantno i za SEO i za AEO — stranica koju Google ne može da crawl-uje ne može da bude ni izvor za AI Overviews / AI Mode.",
     "Page is not blocked in robots.txt for Googlebot": "Stranica nije blokirana u robots.txt za Googlebot",
     "There is no robots.txt (HTTP {0}), so there are no crawl restrictions.": "Nema robots.txt fajla (HTTP {0}), pa nema ograničenja za crawl.",
@@ -5511,12 +5511,12 @@
     "No rule in the applicable group (User-agent: {0}) covers this path.": "Nijedno pravilo u grupi koja važi (User-agent: {0}) ne pokriva ovu putanju.",
     "No group in robots.txt applies to Googlebot.": "Nijedna grupa u robots.txt se ne odnosi na Googlebot.",
     "robots.txt answers HTTP {0}": "robots.txt odgovara sa HTTP {0}",
-    "Google treats a robots.txt that can't be fetched because of a server error (5xx, or 429) as a server error: for the first 12 hours it stops crawling the site, then for up to 30 days it uses the last good version of the file. RFC 9309 tells crawlers to assume a complete disallow while robots.txt is unreachable.": "Google robots.txt koji ne može da preuzme zbog greške servera (5xx ili 429) tretira kao grešku servera: prvih 12 sati prestaje da crawl-uje sajt, a zatim do 30 dana koristi poslednju ispravnu verziju fajla. RFC 9309 nalaže crawlerima da, dok je robots.txt nedostupan, smatraju da je sve zabranjeno.",
+    "When robots.txt can't be fetched because of a server error (5xx or 429), Google stops crawling the site for the first 12 hours and then uses the last good version of the file for up to 30 days; other crawlers may treat the whole site as blocked while robots.txt is unreachable.": "Kada robots.txt ne može da se preuzme zbog greške servera (5xx ili 429), Google prvih 12 sati prestaje da pretražuje sajt, a zatim do 30 dana koristi poslednju ispravnu verziju fajla; drugi crawleri mogu ceo sajt smatrati blokiranim dok je robots.txt nedostupan.",
     "Make /robots.txt answer HTTP 200. On Webflow hosting the file is generated from Site settings > SEO > Indexing; if a proxy or CDN sits in front of the site, the error comes from there.": "Podesi da /robots.txt odgovara sa HTTP 200. Na Webflow hostingu fajl se generiše iz Site settings > SEO > Indexing; ako ispred sajta stoji proxy ili CDN, greška dolazi odatle.",
     "If a proxy / CDN (e.g. Cloudflare) sits in front of the site, whoever manages it has to fix the response.": "Ako ispred sajta stoji proxy / CDN (npr. Cloudflare), odgovor mora da ispravi onaj ko njime upravlja.",
     "Page is blocked in robots.txt for AI search crawlers ({0} of {1})": "Stranica je blokirana u robots.txt za AI crawlere pretrage ({0} od {1})",
     "{0}: {1} (group: User-agent: {2})": "{0}: {1} (grupa: User-agent: {2})",
-    "OpenAI uses OAI-SearchBot to show websites in ChatGPT search and recommends allowing it in robots.txt; Perplexity recommends allowing PerplexityBot so pages can be surfaced and linked in its answers; Anthropic says that disabling Claude-SearchBot or Claude-User may reduce the site's visibility in Claude's search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.{0}": "OpenAI koristi OAI-SearchBot da prikazuje sajtove u ChatGPT pretrazi i preporučuje da mu se pristup dozvoli u robots.txt; Perplexity preporučuje da se dozvoli PerplexityBot kako bi stranice mogle da se prikažu i linkuju u njegovim odgovorima; Anthropic navodi da isključivanje Claude-SearchBot ili Claude-User može da smanji vidljivost sajta u Claude rezultatima pretrage. (Crawleri za treniranje GPTBot i ClaudeBot se ne proveravaju — njihovo blokiranje samo isključuje sajt iz treniranja AI modela.) Ako je blokiranje ovih crawlera namerna odluka, ova napomena može da se zanemari.{0}",
+    "OpenAI uses OAI-SearchBot to show websites in ChatGPT search, Perplexity uses PerplexityBot to surface and link pages in its answers, and blocking Claude-SearchBot or Claude-User can reduce a site's visibility in Claude's search results. (The training crawlers GPTBot and ClaudeBot are not checked — blocking them only opts out of AI training.) If blocking these crawlers is a deliberate decision, this note can be ignored.{0}": "OpenAI koristi OAI-SearchBot da prikaže sajtove u ChatGPT pretrazi, Perplexity koristi PerplexityBot da pronađe i linkuje stranice u odgovorima, a blokiranje Claude-SearchBot ili Claude-User može smanjiti vidljivost sajta u Claude pretrazi. (Crawleri za treniranje GPTBot i ClaudeBot se ne proveravaju — njihovo blokiranje samo isključuje AI treniranje.) Ako je blokiranje ovih crawlera namerna odluka, ova napomena se može zanemariti.{0}",
     "Page is not blocked in robots.txt for AI search crawlers": "Stranica nije blokirana u robots.txt za AI crawlere pretrage",
     "OAI-SearchBot (ChatGPT search), PerplexityBot (Perplexity), Claude-SearchBot (Claude search), Claude-User (Claude fetching pages for users)": "OAI-SearchBot (ChatGPT pretraga), PerplexityBot (Perplexity), Claude-SearchBot (Claude pretraga), Claude-User (Claude učitava stranice za korisnike)",
     "OAI-SearchBot (ChatGPT search)": "OAI-SearchBot (ChatGPT pretraga)",
@@ -5524,19 +5524,19 @@
     "Claude-User (Claude fetching pages for users)": "Claude-User (Claude učitava stranice za korisnike)",
     "robots.txt check for this page": "Provera robots.txt za ovu stranicu",
     "Canonical tag is outside <head> ({0})": "Canonical tag je van <head> ({0})",
-    "Google Search Central: the rel=\"canonical\" link element is only accepted if it appears in the <head> section of the HTML — this extra one is ignored, but it shows that the head code has a problem. {0}": "Google Search Central: rel=\"canonical\" link element se prihvata samo ako je u <head> delu HTML-a — ovaj dodatni se ignoriše, ali pokazuje da head kod ima problem. {0}",
+    "A rel=\"canonical\" link counts only inside the <head> of the HTML — this extra one is ignored, but it shows that the head code has a problem. {0}": "rel=\"canonical\" link važi samo unutar <head> dela HTML-a — ovaj dodatni se zanemaruje, ali pokazuje da kod u head-u ima problem. {0}",
     "Move the canonical into <head> and remove from the head code above it anything that isn't allowed in <head> (only <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> and <template> belong there). {0}": "Premesti canonical u <head> i iz head koda iznad njega ukloni sve što nije dozvoljeno u <head> (tamo pripadaju samo <title>, <meta>, <link>, <style>, <script>, <noscript>, <base> i <template>). {0}",
     "More than one canonical tag, with different URLs ({0})": "Više od jednog canonical taga, sa različitim URL-ovima ({0})",
-    "Google Search Central: conflicting or multiple rel=\"canonical\" link tags may lead to unexpected results — make sure there is only one. Lighthouse fails a page that has more than one canonical link.": "Google Search Central: konfliktni ili višestruki rel=\"canonical\" link tagovi mogu da dovedu do neočekivanih rezultata — postaraj se da postoji samo jedan. Lighthouse obara stranicu koja ima više od jednog canonical linka.",
+    "Several different rel=\"canonical\" tags can lead to unexpected results — there should be only one.": "Više različitih rel=\"canonical\" tagova može dovesti do neočekivanih rezultata — treba da postoji samo jedan.",
     "Keep exactly one canonical. {0}": "Zadrži tačno jedan canonical. {0}",
     "Canonical tag appears {0} times (same URL)": "Canonical tag se pojavljuje {0} puta (isti URL)",
-    "Google Search Central asks that the rel=\"canonical\" link tag is the only one on the page, and Lighthouse fails a page that has more than one canonical link even when they agree. Usually one comes from the Webflow settings and another from custom code.": "Google Search Central traži da rel=\"canonical\" link tag bude jedini na stranici, a Lighthouse obara stranicu koja ima više od jednog canonical linka čak i kada se slažu. Obično jedan dolazi iz Webflow podešavanja, a drugi iz custom code-a.",
+    "There should be only one rel=\"canonical\" tag on the page, even if they agree. Usually one comes from the Webflow settings and another from custom code.": "Na stranici treba da postoji samo jedan rel=\"canonical\" tag, čak i kada se slažu. Obično jedan dolazi iz Webflow podešavanja, a drugi iz custom code-a.",
     "Remove the extra canonical. {0}": "Ukloni višak canonical-a. {0}",
     "Canonical uses a relative URL ({0})": "Canonical koristi relativni URL ({0})",
-    "Google Search Central: use absolute URLs rather than relative paths in rel=\"canonical\". Relative paths are supported, but Google doesn't recommend them because they can cause problems in the long run (for example, if a testing site gets crawled).": "Google Search Central: u rel=\"canonical\" koristi apsolutne URL-ove umesto relativnih putanja. Relativne putanje su podržane, ali ih Google ne preporučuje jer dugoročno mogu da izazovu probleme (na primer, ako se crawl-uje test sajt).",
+    "Use an absolute URL in rel=\"canonical\", not a relative path. Relative paths work, but can cause problems later (for example, if a testing site gets crawled).": "Koristi apsolutni URL u rel=\"canonical\", ne relativnu putanju. Relativne putanje rade, ali kasnije mogu napraviti problem (npr. ako se pretraži test sajt).",
     "Use a full URL starting with https://. {0}": "Koristi pun URL koji počinje sa https://. {0}",
     "Canonical URL contains a fragment (#)": "Canonical URL sadrži fragment (#)",
-    "Google Search Central: don't specify a URL fragment as canonical — Google generally doesn't support URL fragments.": "Google Search Central: ne navodi URL fragment kao canonical — Google generalno ne podržava URL fragmente.",
+    "Don't use a URL with a #fragment as canonical — Google generally ignores URL fragments.": "Ne koristi URL sa #fragmentom kao canonical — Google uglavnom zanemaruje fragmente URL-a.",
     "Remove the #... part from the canonical URL. {0}": "Ukloni #... deo iz canonical URL-a. {0}",
     "Canonical tag is valid (one absolute URL, in <head>)": "Canonical tag je ispravan (jedan apsolutni URL, u <head>)",
     "There is a <link rel=\"canonical\"> (href: {0}), but it is outside <head>, where Google ignores it. {1}": "Postoji <link rel=\"canonical\"> (href: {0}), ali je van <head>, gde ga Google ignoriše. {1}",
@@ -5549,10 +5549,10 @@
     "Original HTML: {0}": "Originalni HTML: {0}",
     "After JavaScript: no noindex": "Posle JavaScript-a: nema noindex-a",
     "After JavaScript: {0}": "Posle JavaScript-a: {0}",
-    "Google Search Central (JavaScript SEO basics): when Google encounters the noindex tag, it may skip rendering and JavaScript execution, so using JavaScript to change or remove the robots meta tag from noindex may not work as expected. If the page should be indexed, don't use a noindex tag in the original page code.": "Google Search Central (JavaScript SEO basics): kada Google naiđe na noindex tag, može da preskoči renderovanje i izvršavanje JavaScript-a, pa menjanje ili uklanjanje noindex-a iz robots meta taga pomoću JavaScript-a možda neće raditi kako se očekuje. Ako stranica treba da bude indeksirana, ne koristi noindex tag u originalnom kodu stranice.",
+    "When Google sees noindex in the original HTML, it may skip running JavaScript, so a script that removes noindex may never take effect. If the page should be indexed, don't put noindex in the original page code.": "Kada Google vidi noindex u originalnom HTML-u, može da preskoči izvršavanje JavaScript-a, pa skripta koja uklanja noindex možda nikad neće imati efekat. Ako stranica treba da bude indeksirana, ne stavljaj noindex u originalni kod stranice.",
     "Remove the noindex from the original HTML and remove the script that deletes it. In Webflow, Page settings > SEO settings > \"Sitemap indexing\" turned off is what adds <meta name=\"robots\" content=\"noindex\"> — turn it on (for a CMS item: the Collection item > Item details > Sitemap indexing); a noindex can also come from {0}. Publish.": "Ukloni noindex iz originalnog HTML-a i ukloni skriptu koja ga briše. U Webflow-u <meta name=\"robots\" content=\"noindex\"> dodaje isključen Page settings > SEO settings > \"Sitemap indexing\" — uključi ga (za CMS stavku: stavka kolekcije > Item details > Sitemap indexing); noindex može da dolazi i iz {0}. Objavi.",
     "Canonical in the original HTML differs from the canonical after JavaScript": "Canonical u originalnom HTML-u se razlikuje od canonical-a posle JavaScript-a",
-    "Google Search Central (JavaScript SEO basics): you shouldn't use JavaScript to change the canonical URL to something else than the URL you specified as the canonical URL in the original HTML — if JavaScript sets it, it must set the same value as the original HTML.": "Google Search Central (JavaScript SEO basics): JavaScript ne bi trebalo da menja canonical URL u nešto drugo od URL-a navedenog kao canonical u originalnom HTML-u — ako ga JavaScript postavlja, mora da postavi istu vrednost kao originalni HTML.",
+    "JavaScript shouldn't change the canonical to a different URL than the one in the original HTML — if a script sets it, it must set the same value.": "JavaScript ne bi trebalo da menja canonical u drugačiji URL od onog u originalnom HTML-u — ako ga skripta postavlja, mora postaviti istu vrednost.",
     "Find the script that changes the canonical (custom code, Google Tag Manager or another tool) and stop it, so only one source sets the canonical. {0}": "Pronađi skriptu koja menja canonical (custom code, Google Tag Manager ili drugi alat) i zaustavi je, tako da canonical postavlja samo jedan izvor. {0}",
     "Original HTML and the page after JavaScript agree on noindex and canonical": "Originalni HTML i stranica posle JavaScript-a se slažu oko noindex-a i canonical-a",
     "noindex: {0} / {1} — canonical: {2} / {3}": "noindex: {0} / {1} — canonical: {2} / {3}",
@@ -5565,33 +5565,33 @@
     "Page redirects with a meta refresh after {0} s": "Stranica preusmerava pomoću meta refresh-a posle {0} s",
     "HTTP header \"Refresh: {0}\"": "HTTP header \"Refresh: {0}\"",
     "Target: {0}": "Odredište: {0}",
-    "Google Search Central treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect, and recommends a permanent server-side redirect whenever possible — meta refresh only where the platform can't do server-side redirects. Ahrefs reports a meta refresh redirect as a critical issue and Screaming Frog as a redirection to fix.": "Google Search Central trenutni meta refresh (0 sekundi) tretira kao trajno preusmerenje, a odloženi kao privremeno, i preporučuje trajno preusmerenje na serveru kad god je moguće — meta refresh samo tamo gde platforma ne može da preusmerava na serveru. Ahrefs meta refresh preusmerenje prijavljuje kao kritičan problem, a Screaming Frog kao preusmerenje koje treba ispraviti.",
+    "Google treats an instant meta refresh (0 seconds) as a permanent redirect and a delayed one as a temporary redirect; a permanent server-side redirect is the better choice whenever the platform can do it, and meta refresh only where it can't.": "Google tretira trenutni meta refresh (0 sekundi) kao trajno preusmerenje, a odloženi kao privremeno; trajno preusmerenje na serveru je bolji izbor kad god platforma to podržava, a meta refresh samo kada ne podržava.",
     "Webflow can do server-side 301 redirects: Site settings > Publishing > 301 redirects — enter the old path and the new URL, then publish. Remove the meta refresh from {0}.": "Webflow podržava 301 preusmerenja na serveru: Site settings > Publishing > 301 redirects — unesi staru putanju i novi URL, zatim objavi. Ukloni meta refresh iz {0}.",
     "No meta refresh redirect on the page": "Na stranici nema meta refresh preusmerenja",
     "International (hreflang)": "Međunarodno (hreflang)",
     "hreflang tags are outside <head> ({0})": "hreflang tagovi su van <head> ({0})",
-    "Google Search Central: the hreflang <link> tags must be inside a well-formed <head> section of the HTML. {0}": "Google Search Central: hreflang <link> tagovi moraju biti unutar ispravno formiranog <head> dela HTML-a. {0}",
+    "hreflang <link> tags count only inside a well-formed <head> of the HTML. {0}": "hreflang <link> tagovi važe samo unutar ispravnog <head> dela HTML-a. {0}",
     "Invalid hreflang value: {0}": "Neispravna hreflang vrednost: {0}",
-    "The hreflang value must always specify a language code in ISO 639-1 format (e.g. \"en\", \"de\"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. \"en-GB\", \"es-mx\"), or be \"x-default\". A region alone (e.g. \"us\") is not valid, and \"en-UK\" is not valid because the ISO 3166-1 code of the United Kingdom is \"GB\". (Google Search Central, Lighthouse)": "hreflang vrednost uvek mora da navede kod jezika u ISO 639-1 formatu (npr. \"en\", \"de\"), uz opcioni kod regiona u ISO 3166-1 alpha-2 formatu (npr. \"en-GB\", \"es-mx\"), ili da bude \"x-default\". Sam region (npr. \"us\") nije ispravan, a \"en-UK\" nije ispravan jer je ISO 3166-1 kod Ujedinjenog Kraljevstva \"GB\". (Google Search Central, Lighthouse)",
+    "The hreflang value must always specify a language code in ISO 639-1 format (e.g. \"en\", \"de\"), optionally followed by a region code in ISO 3166-1 alpha-2 format (e.g. \"en-GB\", \"es-mx\"), or be \"x-default\". A region alone (e.g. \"us\") is not valid, and \"en-UK\" is not valid because the ISO 3166-1 code of the United Kingdom is \"GB\".": "hreflang vrednost uvek mora da navede kod jezika u ISO 639-1 formatu (npr. \"en\", \"de\"), uz opcioni kod regiona u ISO 3166-1 alpha-2 formatu (npr. \"en-GB\", \"es-mx\"), ili da bude \"x-default\". Sam region (npr. \"us\") nije ispravan, a \"en-UK\" nije ispravan jer je ISO 3166-1 kod Ujedinjenog Kraljevstva \"GB\".",
     "Correct the language/region code. {0}": "Ispravi kod jezika/regiona. {0}",
     "hreflang URL is not fully qualified ({0})": "hreflang URL nije pun (apsolutni) URL ({0})",
-    "Google Search Central: alternate URLs must be fully-qualified, including the transport method (http/https) — \"https://example.com/foo\", not \"//example.com/foo\" or \"/foo\".": "Google Search Central: alternativni URL-ovi moraju biti puni, uključujući protokol (http/https) — \"https://example.com/foo\", a ne \"//example.com/foo\" ili \"/foo\".",
+    "Alternate URLs must be full URLs including https:// — \"https://example.com/foo\", not \"//example.com/foo\" or \"/foo\".": "Alternativni URL-ovi moraju biti puni URL-ovi sa https:// — \"https://example.com/foo\", a ne \"//example.com/foo\" ili \"/foo\".",
     "Use full URLs starting with https://. {0}": "Koristi pune URL-ove koji počinju sa https://. {0}",
     "This page is missing from its own hreflang set (no self-reference)": "Ova stranica nedostaje u sopstvenom hreflang skupu (nema samoreference)",
     "This page: {0}": "Ova stranica: {0}",
-    "Google Search Central: each language version must list itself as well as all other language versions — for each variation of the page, include one <link> for each page variant, including itself.": "Google Search Central: svaka jezička verzija mora da navede sebe i sve ostale jezičke verzije — za svaku varijantu stranice uključi po jedan <link> za svaku varijantu, uključujući i nju samu.",
+    "Each language version must list itself and all other language versions — one <link> per version, including itself.": "Svaka jezička verzija mora da navede sebe i sve ostale jezičke verzije — po jedan <link> za svaku verziju, uključujući sebe.",
     "No x-default hreflang": "Nema x-default hreflang-a",
-    "Google Search Central: x-default matches any language not explicitly listed, and Google suggests considering a fallback page for unmatched languages, especially on language/country selectors or auto-redirecting home pages. Recommended, not required.": "Google Search Central: x-default pokriva svaki jezik koji nije izričito naveden, a Google predlaže da se razmotri rezervna stranica za jezike bez odgovarajuće verzije, posebno na stranicama za izbor jezika/zemlje ili početnim stranicama sa automatskim preusmeravanjem. Preporučeno, nije obavezno.",
+    "x-default is used for any language not listed — useful on language/country selectors or auto-redirecting home pages. Recommended, not required.": "x-default se koristi za svaki jezik koji nije naveden — korisno na stranicama za izbor jezika/zemlje ili početnim stranicama sa automatskim preusmeravanjem. Preporučeno, nije obavezno.",
     "hreflang points to a page that does not load directly ({0})": "hreflang pokazuje na stranicu koja se ne učitava direktno ({0})",
     "{0} → {1} — HTTP {2}": "{0} → {1} — HTTP {2}",
     "{0} → {1} — redirects to {2}": "{0} → {1} — preusmerava na {2}",
-    "The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can't work. Screaming Frog (Non-200 Hreflang URLs) and Ahrefs (Hreflang to broken page) report this.": "Alternativna verzija odgovara greškom ili preusmerenjem umesto same stranice, pa hreflang par ne može da radi. Screaming Frog (Non-200 Hreflang URLs) i Ahrefs (Hreflang to broken page) ovo prijavljuju.",
+    "The alternate version answers with an error or a redirect instead of the page itself, so the hreflang pair can't work.": "Alternativna verzija odgovara greškom ili preusmerenjem umesto same stranice, pa hreflang par ne može da radi.",
     "Point the hreflang to the final URL of each version. {0}": "Usmeri hreflang na krajnji URL svake verzije. {0}",
     "hreflang return link missing on {0} version(s)": "Nedostaje povratni hreflang link na verzijama: {0}",
-    "Google Search Central: if two pages don't both point to each other, the tags will be ignored. Each version listed here has hreflang tags, or none, that don't point back to this page.": "Google Search Central: ako dve stranice ne pokazuju jedna na drugu, tagovi će biti ignorisani. Svaka verzija navedena ovde ima hreflang tagove (ili ih nema) koji ne pokazuju nazad na ovu stranicu.",
+    "If two pages don't point to each other, Google ignores their hreflang tags. Each version listed here has hreflang tags, or none, that don't point back to this page.": "Ako dve stranice ne pokazuju jedna na drugu, Google zanemaruje njihove hreflang tagove. Svaka ovde navedena verzija ima hreflang tagove (ili nema nijedan) koji ne pokazuju nazad na ovu stranicu.",
     "Every version must list all versions, including this page. {0}": "Svaka verzija mora da navede sve verzije, uključujući ovu stranicu. {0}",
     "hreflang points to a URL whose canonical is a different page ({0})": "hreflang pokazuje na URL čiji je canonical druga stranica ({0})",
-    "The alternate version says another URL is its primary (canonical) version. Google Search Central asks that hreflang and canonical agree (specify a canonical page in the same language); Ahrefs (Hreflang to non-canonical) and Screaming Frog (Hreflang: Not Using Canonical) report this.": "Alternativna verzija navodi da je drugi URL njena primarna (canonical) verzija. Google Search Central traži da se hreflang i canonical slažu (navedi canonical stranicu na istom jeziku); Ahrefs (Hreflang to non-canonical) i Screaming Frog (Hreflang: Not Using Canonical) ovo prijavljuju.",
+    "The alternate version says another URL is its primary (canonical) version. hreflang should point to canonical URLs in the same language, otherwise the pair can't work.": "Alternativna verzija kaže da je neki drugi URL njena glavna (canonical) verzija. hreflang treba da pokazuje na canonical URL-ove na istom jeziku, inače par ne može da radi.",
     "Point the hreflang to the canonical URL of each version, or fix that version's canonical. {0}": "Usmeri hreflang na canonical URL svake verzije ili ispravi canonical te verzije. {0}",
     "{0} version(s) on another domain can't be read from the browser ({1})": "verzije na drugom domenu ({0}) ne mogu da se pročitaju iz browsera ({1})",
     "only the first {0} versions were checked": "provereno je samo prvih {0} verzija",
@@ -5615,27 +5615,27 @@
     "Meta & head tags": "Meta & head tagovi",
     "Meta charset declaration is missing": "Meta charset deklaracija nedostaje",
     "There is no <meta charset=\"...\"> in the head.": "U head-u nema <meta charset=\"...\">.",
-    "Lighthouse (Best Practices) expects the character encoding to be declared: a <meta charset> completely within the first 1024 bytes of the HTML, a charset in the Content-Type HTTP header, or a byte-order mark. Without it, the browser doesn't know which character each byte represents and may show characters incorrectly.": "Lighthouse (Best Practices) očekuje da kodiranje karaktera bude deklarisano: <meta charset> ceo u prvih 1024 bajta HTML-a, charset u Content-Type HTTP zaglavlju ili byte-order mark. Bez toga browser ne zna koji karakter predstavlja koji bajt i može pogrešno prikazati karaktere.",
+    "The character encoding must be declared: a <meta charset> within the first 1024 bytes of the HTML, a charset in the Content-Type HTTP header, or a byte-order mark. Without it, the browser doesn't know which character each byte represents and may show characters incorrectly.": "Kodiranje karaktera mora biti deklarisano: <meta charset> u prvih 1024 bajta HTML-a, charset u Content-Type HTTP zaglavlju ili byte-order mark. Bez toga browser ne zna koji karakter predstavlja koji bajt i može pogrešno prikazati karaktere.",
     "Webflow adds this automatically — check that custom code in the <head> hasn't accidentally removed or moved the tag.": "Webflow ovo dodaje automatski — proveri da custom kod u <head> nije slučajno uklonio ili premestio tag.",
     "Meta charset is not UTF-8": "Meta charset nije UTF-8",
     "Value found: \"{0}\".": "Pronađena vrednost: \"{0}\".",
-    "The HTML standard allows only UTF-8: the value of <meta charset> must be \"utf-8\".": "HTML standard dozvoljava samo UTF-8: vrednost <meta charset> mora biti \"utf-8\".",
+    "HTML allows only UTF-8: the value of <meta charset> must be \"utf-8\".": "HTML dozvoljava samo UTF-8: vrednost <meta charset> mora biti \"utf-8\".",
     "Set the charset to UTF-8.": "Postavi charset na UTF-8.",
     "Meta charset is present and set to UTF-8": "Meta charset postoji i postavljen je na UTF-8",
     "More than one <title> tag in the head ({0})": "Više od jednog <title> taga u head-u ({0})",
-    "The HTML standard allows no more than one <title> element per document, and Screaming Frog reports multiple page titles as an issue (high priority). Usually a <title> was added in custom code next to the one Webflow outputs.": "HTML standard dozvoljava najviše jedan <title> element po dokumentu, a Screaming Frog prijavljuje više naslova stranice kao problem (visok prioritet). Obično je <title> dodat u custom code pored onog koji ispisuje Webflow.",
+    "A page may have only one <title>. Usually a second <title> was added in custom code next to the one Webflow outputs.": "Stranica sme da ima samo jedan <title>. Obično je drugi <title> dodat u custom code pored onog koji ispisuje Webflow.",
     "More than one meta description tag ({0})": "Više od jednog meta description taga ({0})",
-    "The HTML standard allows only one meta description per document, and Screaming Frog reports multiple meta descriptions as an issue. Usually one comes from Page settings and another from custom code.": "HTML standard dozvoljava samo jedan meta description po dokumentu, a Screaming Frog prijavljuje više meta description tagova kao problem. Obično jedan dolazi iz Page settings, a drugi iz custom code-a.",
+    "A page may have only one meta description. Usually one comes from Page settings and another from custom code.": "Stranica sme da ima samo jedan meta description. Obično jedan dolazi iz Page settings, a drugi iz custom code-a.",
     "Remove all but one meta description tag.": "Ukloni sve meta description tagove osim jednog.",
     "Title tag is missing or empty": "Title tag nedostaje ili je prazan",
     "The <title> is empty.": "<title> je prazan.",
-    "Google uses the <title> for the title link in search results — Google: \"Title links are critical to giving users a quick insight into the content of a result and why it's relevant to their query.\"": "Google koristi <title> za naslov rezultata u pretrazi — Google: \"Title links are critical to giving users a quick insight into the content of a result and why it's relevant to their query.\"",
+    "Google uses the <title> as the clickable headline of the result in search, and it is often the main thing people read before deciding to click.": "Google koristi <title> kao naslov rezultata u pretrazi na koji se klikće, i to je često glavno što ljudi pročitaju pre nego što kliknu.",
     "Title is too long ({0} characters)": "Title je predugačak (karaktera: {0})",
     "Title: \"{0}\"": "Title: \"{0}\"",
-    "Google says there is no limit on title length, but the title link is truncated as needed to fit the device width. Screaming Frog flags titles over 60 characters, and Webflow recommends keeping titles under 60 characters.": "Google kaže da dužina naslova nije ograničena, ali se naslov u rezultatima skraćuje koliko treba da stane u širinu ekrana. Screaming Frog prijavljuje naslove duže od 60 karaktera, a Webflow preporučuje naslove kraće od 60 karaktera.",
-    "Shorten the title to 60 characters or fewer (Screaming Frog's limit; Webflow recommends under 60), with the most important words first.": "Skrati naslov na 60 karaktera ili manje (granica Screaming Frog-a; Webflow preporučuje ispod 60), sa najvažnijim rečima na početku.",
+    "There is no hard limit on title length, but Google shortens the title in search results to fit the screen width. Keeping it under 60 characters keeps the whole title visible.": "Dužina naslova nije strogo ograničena, ali ga Google u rezultatima skraćuje da stane u širinu ekrana. Do 60 karaktera ceo naslov ostaje vidljiv.",
+    "Shorten the title to 60 characters or fewer, with the most important words first.": "Skrati naslov na 60 karaktera ili manje, sa najvažnijim rečima na početku.",
     "Title is very short ({0} characters)": "Title je veoma kratak (karaktera: {0})",
-    "Screaming Frog flags titles below 30 characters (an opportunity): such a short title often doesn't describe the page well. (Google truncates by display width, not by character count.)": "Screaming Frog prijavljuje naslove kraće od 30 karaktera (prilika za poboljšanje): tako kratak naslov često ne opisuje stranicu dovoljno. (Google skraćuje po širini prikaza, ne po broju karaktera.)",
+    "A title under 30 characters usually doesn't describe the page well. (Google shortens titles by display width, not by character count.)": "Naslov kraći od 30 karaktera obično ne opisuje stranicu dovoljno. (Google skraćuje naslove po širini prikaza, ne po broju karaktera.)",
     "Expand the title to better describe the page content.": "Proširi title da bolje opisuje sadržaj stranice.",
     "Title looks like a placeholder": "Title izgleda kao placeholder",
     "This looks like a Webflow default value that hasn't been replaced.": "Ovo izgleda kao Webflow podrazumevana vrednost koja nije zamenjena.",
@@ -5643,13 +5643,13 @@
     "Title tag is present and of optimal length ({0} characters)": "Title tag postoji i optimalne je dužine (karaktera: {0})",
     "Meta description is missing": "Meta description nedostaje",
     "There is no meta description tag, or it is empty.": "Nema meta description taga, ili je prazan.",
-    "Google sometimes uses the meta description for the snippet in search results \"if we think it gives users a more accurate description than would be possible purely from the on-page content\". Without it, the snippet is built from the page text only.": "Google ponekad koristi meta description za opis rezultata u pretrazi \"if we think it gives users a more accurate description than would be possible purely from the on-page content\". Bez njega se opis pravi samo iz teksta stranice.",
+    "Google sometimes shows the meta description as the text under the result in search; without one, that text is taken from the page content only.": "Google ponekad prikazuje meta description kao tekst ispod rezultata u pretrazi; bez njega se taj tekst uzima samo iz sadržaja stranice.",
     "Meta description is short ({0} characters)": "Meta description je kratak (karaktera: {0})",
-    "Screaming Frog flags meta descriptions below 70 characters (low priority). Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.": "Screaming Frog prijavljuje meta description kraći od 70 karaktera (nizak prioritet). Google ionako često pravi opis iz sadržaja stranice, pa je ovo predlog, ne greška.",
-    "Expand it to at least 70 characters (Screaming Frog's lower limit) so it describes the page.": "Proširi ga na najmanje 70 karaktera (donja granica Screaming Frog-a) tako da opisuje stranicu.",
+    "A meta description under 70 characters usually doesn't describe the page well. Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.": "Meta description kraći od 70 karaktera obično ne opisuje stranicu dovoljno. Google ionako često pravi opis iz sadržaja stranice, pa je ovo predlog, ne greška.",
+    "Expand it to at least 70 characters so it describes the page.": "Proširi ga na najmanje 70 karaktera tako da opisuje stranicu.",
     "Meta description is too long ({0} characters)": "Meta description je predugačak (karaktera: {0})",
-    "Google says there is no limit on meta description length, but the snippet is truncated as needed to fit the device width. Screaming Frog flags meta descriptions over 155 characters.": "Google kaže da dužina meta description-a nije ograničena, ali se opis u rezultatima skraćuje koliko treba da stane u širinu ekrana. Screaming Frog prijavljuje meta description duži od 155 karaktera.",
-    "Shorten it to 155 characters or fewer (Screaming Frog's limit).": "Skrati ga na 155 karaktera ili manje (granica Screaming Frog-a).",
+    "There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 155 characters the end is usually cut off.": "Dužina meta description-a nije strogo ograničena, ali Google skraćuje opis da stane u širinu ekrana; preko 155 karaktera kraj se obično odseče.",
+    "Shorten it to 155 characters or fewer.": "Skrati ga na 155 karaktera ili manje.",
     "Meta description is present and of appropriate length ({0} characters)": "Meta description postoji i odgovarajuće je dužine (karaktera: {0})",
     "og:title is missing": "og:title nedostaje",
     "There is no Open Graph title tag.": "Nema Open Graph title taga.",
@@ -5665,67 +5665,67 @@
     "og:image is present": "og:image postoji",
     "Twitter/X Card meta tag (twitter:card) is missing": "Twitter/X Card meta tag (twitter:card) nedostaje",
     "There is no <meta name=\"twitter:card\">.": "Nema <meta name=\"twitter:card\">.",
-    "X's Cards documentation: if twitter:card is absent but og:type, og:title and og:description exist, \"a summary card may be rendered\" — the small card, not the large-image card. twitter:card chooses the card type explicitly.": "X-ova dokumentacija za Cards: ako nema twitter:card, a postoje og:type, og:title i og:description, \"a summary card may be rendered\" — mala kartica, ne kartica sa velikom slikom. twitter:card eksplicitno bira tip kartice.",
+    "Without twitter:card, X can still show a preview from the Open Graph tags, but only as the small card, not the large-image card. twitter:card chooses the card type.": "Bez twitter:card X i dalje može da prikaže pregled iz Open Graph tagova, ali samo kao malu karticu, ne karticu sa velikom slikom. twitter:card bira tip kartice.",
     "Add <meta name=\"twitter:card\" content=\"summary_large_image\"> (and ideally twitter:title/twitter:image) via Custom Code in the head section.": "Dodaj <meta name=\"twitter:card\" content=\"summary_large_image\"> (i idealno twitter:title/twitter:image) preko Custom Code u head sekciji.",
     "Twitter/X Card meta tag is present ({0})": "Twitter/X Card meta tag postoji ({0})",
     "Canonical tag is missing": "Canonical tag nedostaje",
     "There is no <link rel=\"canonical\">.": "Nema <link rel=\"canonical\">.",
-    "Google: a canonical is not required — \"your site will likely do just fine without specifying a canonical preference\" — but Google recommends a self-referential rel=\"canonical\" on the canonical page, and Screaming Frog reports a missing canonical as a warning. Without it, Google picks the canonical URL on its own.": "Google: canonical nije obavezan — \"your site will likely do just fine without specifying a canonical preference\" — ali Google preporučuje rel=\"canonical\" koji pokazuje na samu stranicu, a Screaming Frog prijavljuje nedostajući canonical kao upozorenje. Bez njega Google sam bira kanonski URL.",
+    "A canonical is not strictly required, but a canonical that points to the page itself is the recommended setup. Without it, Google decides on its own which URL is the main one.": "Canonical nije strogo obavezan, ali je preporučeno da postoji canonical koji pokazuje na samu stranicu. Bez njega Google sam odlučuje koji URL je glavni.",
     "Page is marked as noindex": "Stranica je označena kao noindex",
     "meta robots = \"{0}\"": "meta robots = \"{0}\"",
     "This page will not be indexed by Google as long as this remains in place.": "Google neće indeksirati ovu stranicu dok god ovo ostaje na snazi.",
-    "Relevant to both SEO and AEO — Google: to be shown as a supporting link in AI Overviews or AI Mode, a page must be indexed and eligible to be shown in Google Search with a snippet.": "Relevantno i za SEO i za AEO — Google: da bi bila prikazana kao izvor u AI Overviews ili AI Mode, stranica mora biti indeksirana i podobna za prikaz u Google pretrazi sa opisom (snippet).",
-    "Relevant to both SEO and AEO — Google: noindex means \"Do not show this page, media, or resource in search results.\"": "Relevantno i za SEO i za AEO — Google: noindex znači \"Do not show this page, media, or resource in search results.\"",
+    "Relevant to both SEO and AEO — to be shown as a source in Google's AI Overviews or AI Mode, a page must be indexed and allowed to show a snippet.": "Relevantno i za SEO i za AEO — da bi bila prikazana kao izvor u Google AI Overviews ili AI Mode, stranica mora biti indeksirana i smeti da prikaže opis (snippet).",
+    "Relevant to both SEO and AEO — noindex tells Google not to show the page in search results.": "Relevantno i za SEO i za AEO — noindex govori Google-u da ne prikazuje stranicu u rezultatima pretrage.",
     "Page is not marked as noindex": "Stranica nije označena kao noindex",
     "Relevant to both SEO and AEO — the page is indexable and can appear in Google search.": "Relevantno i za SEO i za AEO — stranica može da se indeksira i da se pojavi u Google pretrazi.",
     "Robots directive blocks the content snippet (nosnippet/max-snippet:0)": "Robots direktiva blokira snippet sadržaja (nosnippet/max-snippet:0)",
-    "Google: nosnippet means \"Do not show a text snippet or video preview in the search results for this page\", and it also keeps the content from being used as a direct input for AI Overviews and AI Mode (max-snippet:0 has the same effect on the text).": "Google: nosnippet znači \"Do not show a text snippet or video preview in the search results for this page\", a sadržaj se tada ne koristi ni kao direktan izvor za AI Overviews i AI Mode (max-snippet:0 ima isti efekat na tekst).",
+    "nosnippet tells Google not to show a text snippet or video preview for this page, and the content is then not used as a direct source for AI Overviews and AI Mode (max-snippet:0 has the same effect on the text).": "nosnippet govori Google-u da ne prikazuje tekstualni opis ni video pregled ove stranice, a sadržaj se tada ne koristi kao direktan izvor za AI Overviews i AI Mode (max-snippet:0 ima isti efekat na tekst).",
     "Remove \"nosnippet\" and \"max-snippet:0\" from the meta robots tag, unless it's intentional (e.g. a page with sensitive content).": "Ukloni \"nosnippet\" i \"max-snippet:0\" iz meta robots taga, osim ako je namerno (npr. stranica sa osetljivim sadržajem).",
-    "Relevant to both SEO and AEO — Google: with nosnippet the content is not used as a direct input for AI Overviews and AI Mode.": "Relevantno i za SEO i za AEO — Google: uz nosnippet sadržaj se ne koristi kao direktan izvor za AI Overviews i AI Mode.",
+    "Relevant to both SEO and AEO — with nosnippet the content is not used as a direct source for AI Overviews and AI Mode.": "Relevantno i za SEO i za AEO — uz nosnippet sadržaj se ne koristi kao direktan izvor za AI Overviews i AI Mode.",
     "Relevant to both SEO and AEO — the Google result for this page is shown without a text snippet.": "Relevantno i za SEO i za AEO — Google rezultat za ovu stranicu se prikazuje bez tekstualnog opisa.",
     "Robots directive does not block the content snippet": "Robots direktiva ne blokira snippet sadržaja",
     "Relevant to both SEO and AEO — Google may show a snippet of this page and use its content in AI Overviews / AI Mode.": "Relevantno i za SEO i za AEO — Google može da prikaže opis ove stranice i koristi njen sadržaj u AI Overviews / AI Mode.",
     "Relevant to both SEO and AEO — the page can have a normal description/snippet in Google search results.": "Relevantno i za SEO i za AEO — stranica može imati normalan opis/snippet u Google rezultatima pretrage.",
     "lang attribute is missing on <html>": "lang atribut nedostaje na <html>",
     "<html> has no lang attribute.": "<html> nema lang atribut.",
-    "Google doesn't use it (\"We don't use any code-level language information such as lang attributes\"), but screen readers do: WCAG 2.2 success criterion 3.1.1 Language of Page (level A) requires that \"The default human language of each web page can be programmatically determined\", so assistive technology reads the text in the right language.": "Google ga ne koristi (\"We don't use any code-level language information such as lang attributes\"), ali ga koriste čitači ekrana: WCAG 2.2 kriterijum 3.1.1 Language of Page (nivo A) zahteva da \"The default human language of each web page can be programmatically determined\", kako bi pomoćna tehnologija čitala tekst na pravom jeziku.",
+    "Google doesn't use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement.": "Google ne koristi lang atribut, ali ga koriste čitači ekrana: tekst čitaju na jeziku koji je ovde podešen, pa je to zahtev pristupačnosti.",
     "lang attribute is present on <html> ({0})": "lang atribut postoji na <html> ({0})",
     "Viewport meta tag is missing": "Viewport meta tag nedostaje",
     "There is no <meta name=\"viewport\">.": "Nema <meta name=\"viewport\">.",
-    "Lighthouse: \"Without a viewport meta tag, mobile devices render pages at typical desktop screen widths and then scale the pages down, making them difficult to read.\"": "Lighthouse: \"Without a viewport meta tag, mobile devices render pages at typical desktop screen widths and then scale the pages down, making them difficult to read.\"",
+    "Without a viewport meta tag, phones render the page at desktop width and then shrink it, so the text is hard to read.": "Bez viewport meta taga telefoni prikazuju stranicu u desktop širini i onda je smanjuju, pa je tekst teško čitljiv.",
     "Webflow usually adds this automatically — check that custom code hasn't removed the tag.": "Webflow ovo obično dodaje automatski — proveri da custom kod nije uklonio tag.",
     "Viewport meta tag is present": "Viewport meta tag postoji",
     "Viewport prevents the user from zooming": "Viewport sprečava korisnika da zumira",
     "viewport = \"{0}\"": "viewport = \"{0}\"",
-    "axe — the accessibility engine Lighthouse uses — fails user-scalable=no and any maximum-scale below 2, under WCAG 1.4.4 Resize text (level AA): people with low vision can't zoom in on a phone.": "axe — alat za pristupačnost koji koristi Lighthouse — obara user-scalable=no i svaki maximum-scale manji od 2, po WCAG 1.4.4 Resize text (nivo AA): slabovide osobe ne mogu da zumiraju na telefonu.",
+    "Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible.": "Blokiran zoom (user-scalable=no ili maximum-scale manji od 2) sprečava slabovide osobe da uvećaju stranicu na telefonu; zbog pristupačnosti mora biti moguće uvećanje bar na 200%.",
     "Remove user-scalable=no from the viewport tag and remove maximum-scale (or set it to at least 2).": "Ukloni user-scalable=no iz viewport taga i ukloni maximum-scale (ili ga postavi na najmanje 2).",
     "Viewport allows the user to zoom the page": "Viewport dozvoljava korisniku da zumira stranicu",
     "og:image: {0}": "og:image: {0}",
     "OG image is in a format X does not list as supported ({0})": "OG slika je u formatu koji X ne navodi kao podržan ({0})",
-    "X's Cards documentation lists JPG, PNG, WEBP and GIF as the supported image formats and says SVG is not supported, so the link preview on X can end up without an image. (Facebook's sharing documentation does not list formats.)": "X-ova dokumentacija za Cards navodi JPG, PNG, WEBP i GIF kao podržane formate i kaže da SVG nije podržan, pa pregled linka na X-u može ostati bez slike. (Facebook-ova dokumentacija za deljenje ne navodi formate.)",
+    "X supports JPG, PNG, WEBP and GIF images in link previews; SVG is not supported and AVIF is not on its list, so the preview on X can end up without an image.": "X podržava JPG, PNG, WEBP i GIF slike u pregledu linka; SVG nije podržan, a AVIF nije na listi, pa pregled na X-u može ostati bez slike.",
     "Use a JPG or PNG (or WebP) image as the OG image: Pages panel > Page settings > Open Graph settings > Open Graph image.": "Koristi JPG ili PNG (ili WebP) sliku kao OG sliku: Pages panel > Page settings > Open Graph settings > Open Graph image.",
-    "Facebook's sharing best practices ask for images at least 600 px wide at the minimum and at least 1080 px wide for the best display on high-resolution screens; X's large-image card needs at least 300x157 px.": "Facebook-ove preporuke za deljenje traže sliku široku najmanje 600 px kao minimum, a najmanje 1080 px za najbolji prikaz na ekranima visoke rezolucije; X-ova kartica sa velikom slikom traži najmanje 300x157 px.",
-    "Replace it in Pages panel > Page settings > Open Graph settings > Open Graph image — the Open Graph image field in Webflow says: \"Use an image that's at least 1200px by 630px minimum (1.91:1 ratio) for the best results\"; Facebook asks for at least 1080 px wide, and X displays large-image cards at 2:1.": "Zameni je u Pages panel > Page settings > Open Graph settings > Open Graph image — polje Open Graph image u Webflow-u kaže: \"Use an image that's at least 1200px by 630px minimum (1.91:1 ratio) for the best results\"; Facebook traži najmanje 1080 px širine, a X prikazuje kartice sa velikom slikom u odnosu 2:1.",
+    "For a sharp preview, Facebook needs an image at least 600 px wide and ideally 1080 px or more; X's large-image card needs at least 300x157 px.": "Za oštar pregled Facebook-u treba slika široka najmanje 600 px, a idealno 1080 px ili više; X-ovoj kartici sa velikom slikom treba najmanje 300x157 px.",
+    "Replace it in Pages panel > Page settings > Open Graph settings > Open Graph image with an image of at least 1200×630 px (ratio 1.91:1).": "Zameni je u Pages panel > Page settings > Open Graph settings > Open Graph image slikom od najmanje 1200×630 px (odnos 1.91:1).",
     "OG image is larger than X's 5 MB limit ({0})": "OG slika je veća od X-ovog ograničenja od 5 MB ({0})",
-    "X's Cards documentation says card images must be less than 5 MB, so the preview on X can end up without an image.": "X-ova dokumentacija za Cards kaže da slike za kartice moraju biti manje od 5 MB, pa pregled na X-u može ostati bez slike.",
+    "X doesn't show card images of 5 MB or more, so the preview on X can end up without an image.": "X ne prikazuje slike kartica od 5 MB ili više, pa pregled na X-u može ostati bez slike.",
     "Use a smaller file (compress it, or export it smaller while keeping it at least 1080 px wide) and set it again in Page settings > Open Graph settings.": "Koristi manji fajl (kompresuj ga ili ga izvezi manjim, ali da ostane širok najmanje 1080 px) i ponovo ga postavi u Page settings > Open Graph settings.",
-    "Relevant to both SEO and AEO — Google lists \"making sure that important content is available in textual form\" among the SEO practices that also apply to AI Overviews and AI Mode.": "Relevantno i za SEO i za AEO — Google navodi \"making sure that important content is available in textual form\" među SEO praksama koje važe i za AI Overviews i AI Mode.",
+    "Relevant to both SEO and AEO — important content has to be available as text for AI Overviews and AI Mode too.": "Relevantno i za SEO i za AEO — važan sadržaj mora biti dostupan kao tekst i za AI Overviews i AI Mode.",
     "Relevant to both SEO and AEO — search engines need descriptive text to understand what the page is about.": "Relevantno i za SEO i za AEO — pretraživačima treba opisni tekst da bi razumeli o čemu je stranica.",
     "CMS item slug ends with a number like \"-2\" ({0})": "Slug CMS stavke se završava brojem kao \"-2\" ({0})",
-    "A duplicated Webflow CMS item gets a number at the end of its slug (\"-2\", \"-3\"...), so this item may be a copy whose slug was never renamed. If the number is part of the real name (e.g. \"episode-12\"), ignore this. Google recommends readable words in URLs.": "Duplirana Webflow CMS stavka dobija broj na kraju slug-a (\"-2\", \"-3\"...), pa ova stavka može biti kopija kojoj slug nije preimenovan. Ako je broj deo pravog naziva (npr. \"episode-12\"), zanemari ovo. Google preporučuje čitljive reči u URL-u.",
+    "A duplicated Webflow CMS item gets a number at the end of its slug (\"-2\", \"-3\"...), so this item may be a copy whose slug was never renamed. If the number is part of the real name (e.g. \"episode-12\"), ignore this. Readable words in a URL are better than a number.": "Duplirana Webflow CMS stavka dobija broj na kraju slug-a (\"-2\", \"-3\"...), pa ova stavka može biti kopija kojoj slug nije preimenovan. Ako je broj deo pravog naziva (npr. \"episode-12\"), zanemari ovo. Čitljive reči u URL-u su bolje od broja.",
     "If it is a copy: rename the slug in the CMS item (Collection item > Slug field), or remove the duplicate item. If the old URL is already indexed, add a 301 redirect from it (Site settings > Publishing > 301 redirects).": "Ako je kopija: preimenuj slug u CMS stavci (Collection item > polje Slug) ili ukloni duplikat. Ako je stari URL već indeksiran, dodaj 301 preusmerenje sa njega (Site settings > Publishing > 301 redirects).",
     "CMS item slug does not end with a Webflow duplication suffix": "Slug CMS stavke se ne završava Webflow sufiksom dupliranja",
     "File: {0} → about {1} ({2}% smaller)": "Fajl: {0} → oko {1} ({2}% manje)",
     "Image can be compressed further (~{0} smaller as JPEG at quality 92)": "Slika može dodatno da se kompresuje (~{0} manje kao JPEG na kvalitetu 92)",
-    "Lighthouse method (\"Efficiently encode images\", since Lighthouse 13 part of the \"Improve image delivery\" insight): it re-compresses JPEG images and flags an image when that saves 4 KiB or more. Lighthouse's code measures at JPEG quality 0.92 (its documentation says 85); this check uses 0.92. This file would be that much smaller with no change in size on screen.": "Lighthouse metod (\"Efficiently encode images\", od Lighthouse 13 deo uvida \"Improve image delivery\"): JPEG slike ponovo kompresuje i prijavljuje sliku kada se time uštedi 4 KiB ili više. Lighthouse-ov kod meri na JPEG kvalitetu 0,92 (dokumentacija kaže 85); ova provera koristi 0,92. Ovaj fajl bi bio toliko manji, bez promene veličine na ekranu.",
+    "Re-saved as a JPEG at quality 92, this file would be that much smaller, with the same size on screen. Images are reported when the saving is 4 KB or more.": "Ponovo sačuvan kao JPEG na kvalitetu 92, ovaj fajl bi bio toliko manji, iste veličine na ekranu. Slike se prijavljuju kada je ušteda 4 KB ili više.",
     "Compress the image: in Webflow, Assets panel > the image's more options > Compress > WebP or AVIF (JPG/PNG only), or re-export it as JPEG at quality 85–92 and swap it via Assets panel > more options > Replace (the asset URL changes).": "Kompresuj sliku: u Webflow-u Assets panel > more options slike > Compress > WebP ili AVIF (samo JPG/PNG), ili je ponovo izvezi kao JPEG na kvalitetu 85–92 i zameni preko Assets panel > more options > Replace (URL asset-a se menja).",
     "PNG image would be ~{0} smaller as WebP": "PNG slika bi kao WebP bila ~{0} manja",
-    "Lighthouse method (\"Serve images in modern formats\", since Lighthouse 13 part of the \"Improve image delivery\" insight): it converts BMP, JPEG and PNG images to WebP and reports the savings, leaving out images that would save less than 8 KiB. This PNG converted to WebP (quality 0.85, Lighthouse's setting) would be that much smaller, with the same size on screen; WebP keeps transparency.": "Lighthouse metod (\"Serve images in modern formats\", od Lighthouse 13 deo uvida \"Improve image delivery\"): BMP, JPEG i PNG slike pretvara u WebP i prijavljuje uštedu, a izostavlja slike koje bi uštedele manje od 8 KiB. Ovaj PNG pretvoren u WebP (kvalitet 0,85, Lighthouse-ova vrednost) bio bi toliko manji, iste veličine na ekranu; WebP čuva providnost.",
-    "In Webflow: Assets panel > the image's more options > Compress > WebP or AVIF (works for PNG). Webflow notes that compression replaces the original file.": "U Webflow-u: Assets panel > more options slike > Compress > WebP ili AVIF (radi i za PNG). Webflow napominje da kompresija zamenjuje originalni fajl.",
+    "Converted to WebP (quality 85), this PNG would be that much smaller, with the same size on screen; WebP keeps transparency. Images are reported when the saving is 8 KB or more.": "Pretvoren u WebP (kvalitet 85), ovaj PNG bi bio toliko manji, iste veličine na ekranu; WebP čuva providnost. Slike se prijavljuju kada je ušteda 8 KB ili više.",
+    "In Webflow: Assets panel > the image's more options > Compress > WebP or AVIF (works for PNG). Compression replaces the original file.": "U Webflow-u: Assets panel > more options slike > Compress > WebP ili AVIF (radi i za PNG). Kompresija zamenjuje originalni fajl.",
     "No image is larger than needed for its displayed size ({0} measured)": "Nijedna slika nije veća nego što treba za prikazanu veličinu (izmereno: {0})",
     "Image is larger than its displayed size ({0}px file shown at {1}px)": "Slika je veća od prikazane veličine (fajl {0}px prikazan na {1}px)",
-    "Lighthouse method (\"Properly size images\", since Lighthouse 13 part of the \"Improve image delivery\" insight): it compares the rendered size of an image, including the screen's pixel density, with the actual image, and flags it when the right-sized image would be at least 4 KiB smaller. Here the file is {0}px wide but shown {1}px wide on a screen with pixel density {2}, so about {3}px would be enough. Measured at the current window width; the same rule also runs at phone and tablet widths.": "Lighthouse metod (\"Properly size images\", od Lighthouse 13 deo uvida \"Improve image delivery\"): poredi prikazanu veličinu slike, uz gustinu piksela ekrana, sa stvarnom slikom i prijavljuje je kada bi slika u pravoj veličini bila bar 4 KiB manja. Ovde je fajl širok {0}px, a prikazan je na {1}px na ekranu gustine piksela {2}, pa bi bilo dovoljno oko {3}px. Izmereno na trenutnoj širini prozora; isto pravilo se pokreće i na širini telefona i tableta.",
-    "1) Find out why the full-size file is served. Webflow's help: responsive variants (srcset) are created for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the \"Disable responsiveness\" checkbox in Image settings turns them off (Webflow's variants have \"-p-\" plus a width in the file name, e.g. \"-p-500\"). 2) If it is an Image element with responsiveness turned off: select it > Element settings panel > Image settings > uncheck \"Disable responsiveness\", then publish. 3) Otherwise replace the file: resize it to about {0}px wide (displayed width × pixel density) and compress it, then Assets panel > the image's more options > Replace (Webflow notes that the asset URL changes, so update any direct links). 4) If the file already is a Webflow variant (\"-p-\" in the name) and the difference is small, there is little to gain — Webflow only makes fixed variant widths.": "1) Utvrdi zašto se servira fajl pune veličine. Webflow help: responsive varijante (srcset) prave se za otpremljene inline JPG, PNG i WebP slike, osim onih dodatih kroz rich text elemente, i ne prave se za pozadinske slike; polje \"Disable responsiveness\" u Image settings ih isključuje (Webflow varijante imaju \"-p-\" i širinu u imenu fajla, npr. \"-p-500\"). 2) Ako je u pitanju Image element sa isključenom responsivnošću: izaberi ga > Element settings panel > Image settings > odčekiraj \"Disable responsiveness\", pa objavi. 3) U suprotnom zameni fajl: smanji ga na širinu oko {0}px (prikazana širina × gustina piksela) i kompresuj, pa Assets panel > more options slike > Replace (Webflow napominje da se URL asset-a menja, pa ažuriraj direktne linkove). 4) Ako je fajl već Webflow varijanta (\"-p-\" u imenu) i razlika je mala, nema mnogo dobiti — Webflow pravi samo fiksne širine varijanti.",
+    "The image is compared with the size it is shown at, including the screen's pixel density, and reported when the right-sized image would be at least 4 KB smaller. Here the file is {0}px wide but shown {1}px wide on a screen with pixel density {2}, so about {3}px would be enough. Measured at the current window width; the same rule also runs at phone and tablet widths.": "Slika se poredi sa veličinom u kojoj je prikazana, uz gustinu piksela ekrana, i prijavljuje se kada bi slika u pravoj veličini bila bar 4 KB manja. Ovde je fajl širok {0}px, a prikazan je na {1}px na ekranu gustine piksela {2}, pa bi bilo dovoljno oko {3}px. Izmereno na trenutnoj širini prozora; isto pravilo se pokreće i na širini telefona i tableta.",
+    "1) Find out why the full-size file is served. Webflow creates responsive variants (srcset) for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the \"Disable responsiveness\" checkbox in Image settings turns them off (Webflow's variants have \"-p-\" plus a width in the file name, e.g. \"-p-500\"). 2) If it is an Image element with responsiveness turned off: select it > Element settings panel > Image settings > uncheck \"Disable responsiveness\", then publish. 3) Otherwise replace the file: resize it to about {0}px wide (displayed width × pixel density) and compress it, then Assets panel > the image's more options > Replace (the asset URL changes, so update any direct links). 4) If the file already is a Webflow variant (\"-p-\" in the name) and the difference is small, there is little to gain — Webflow only makes fixed variant widths.": "1) Utvrdi zašto se servira fajl pune veličine. Webflow pravi responsive varijante (srcset) za otpremljene inline JPG, PNG i WebP slike, osim onih dodatih kroz rich text elemente, i ne prave se za pozadinske slike; polje \"Disable responsiveness\" u Image settings ih isključuje (Webflow varijante imaju \"-p-\" i širinu u imenu fajla, npr. \"-p-500\"). 2) Ako je u pitanju Image element sa isključenom responsivnošću: izaberi ga > Element settings panel > Image settings > odčekiraj \"Disable responsiveness\", pa objavi. 3) U suprotnom zameni fajl: smanji ga na širinu oko {0}px (prikazana širina × gustina piksela) i kompresuj, pa Assets panel > more options slike > Replace (URL asset-a se menja, pa ažuriraj direktne linkove). 4) Ako je fajl već Webflow varijanta (\"-p-\" u imenu) i razlika je mala, nema mnogo dobiti — Webflow pravi samo fiksne širine varijanti.",
     "OG image is too small ({0}x{1})": "OG slika je premala ({0}x{1})",
     "OG image fails to load": "OG slika se ne učitava",
     "og:image URL returns an error: {0}": "og:image URL vraća grešku: {0}",
@@ -5747,39 +5747,39 @@
     "hidden by: {0}": "sakriveno zbog: {0}",
     "the element itself (display:none)": "sam element (display:none)",
     "Canonical points to a different domain": "Canonical pokazuje na drugi domen",
-    "The canonical tells Google that another website holds the main version of this page. Google treats rel=\"canonical\" as \"a strong signal\", so this page may be left out of the results in favour of that one. That is right for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.": "Canonical govori Google-u da druga veb-lokacija ima glavnu verziju ove stranice. Google rel=\"canonical\" tretira kao \"a strong signal\", pa ova stranica može biti izostavljena iz rezultata u korist te druge. To je ispravno za namerno preuzet (syndicated) sadržaj, ali pogrešno kada je ostatak iz šablona, staging kopije ili drugog sajta.",
+    "The canonical tells Google that another website holds the main version of this page. rel=\"canonical\" is a strong signal to Google, so this page may be left out of the results in favour of that one. That is right for deliberately syndicated content, but wrong when it is a leftover from a template, a staging copy or another site.": "Canonical govori Google-u da druga veb-lokacija ima glavnu verziju ove stranice. rel=\"canonical\" je za Google jak signal, pa ova stranica može biti izostavljena iz rezultata u korist te druge. To je ispravno za namerno preuzet (syndicated) sadržaj, ali pogrešno kada je ostatak iz šablona, staging kopije ili drugog sajta.",
     "Canonical points to a different host or protocol version": "Canonical pokazuje na drugu verziju hosta ili protokola",
-    "The canonical names the www / non-www or http / https variant that is not the one this page was opened on. Google treats rel=\"canonical\" as \"a strong signal\" to prefer that other variant, which is only right if the site redirects to it.": "Canonical navodi www / non-www ili http / https varijantu koja nije ona na kojoj je stranica otvorena. Google rel=\"canonical\" tretira kao \"a strong signal\" da izabere tu drugu varijantu, što je ispravno samo ako sajt preusmerava na nju.",
-    "This happens for example when a page is duplicated in Webflow and the canonical is left pointing at the original. Google treats rel=\"canonical\" as \"a strong signal\" to prefer that other URL over this page.": "Ovo se dešava npr. kada se stranica duplira u Webflow-u, a canonical ostane da pokazuje na original. Google rel=\"canonical\" tretira kao \"a strong signal\" da izabere taj drugi URL umesto ove stranice.",
+    "The canonical names the www / non-www or http / https variant that is not the one this page was opened on. rel=\"canonical\" is a strong signal to Google to prefer that other variant, which is only right if the site redirects to it.": "Canonical navodi www / non-www ili http / https varijantu koja nije ona na kojoj je stranica otvorena. rel=\"canonical\" je za Google jak signal da izabere tu drugu varijantu, što je ispravno samo ako sajt preusmerava na nju.",
+    "This happens for example when a page is duplicated in Webflow and the canonical is left pointing at the original. rel=\"canonical\" is a strong signal to Google to prefer that other URL over this page.": "Ovo se dešava npr. kada se stranica duplira u Webflow-u, a canonical ostane da pokazuje na original. rel=\"canonical\" je za Google jak signal da izabere taj drugi URL umesto ove stranice.",
     "Canonical tag is present and points to this page": "Canonical tag postoji i pokazuje na ovu stranicu",
     "Canonical: {0}": "Canonical: {0}",
     "URL slug ends with \"-copy\" ({0})": "URL slug se završava sa \"-copy\" ({0})",
     "Path: {0}": "Putanja: {0}",
-    "When a page is duplicated in Webflow it is named \"<name> Copy\" and gets the slug \"<slug>-copy\" (seen in Webflow projects), so a published \"-copy\" URL is usually a duplicate whose slug was never renamed. Google recommends readable words in URLs.": "Kada se stranica duplira u Webflow-u, dobija ime \"<ime> Copy\" i slug \"<slug>-copy\" (viđeno u Webflow projektima), pa je objavljen \"-copy\" URL obično duplikat kome slug nije preimenovan. Google preporučuje čitljive reči u URL-u.",
+    "When a page is duplicated in Webflow it is named \"<name> Copy\" and gets the slug \"<slug>-copy\", so a published \"-copy\" URL is usually a duplicate whose slug was never renamed. Readable words in a URL are better.": "Kada se stranica duplira u Webflow-u, dobija ime \"<ime> Copy\" i slug \"<slug>-copy\", pa je objavljen \"-copy\" URL obično duplikat kome slug nije preimenovan. Čitljive reči u URL-u su bolje.",
     "URL slug does not end with Webflow's duplication suffix \"-copy\"": "URL slug se ne završava Webflow sufiksom dupliranja \"-copy\"",
     "Heading structure": "Struktura naslova",
     "H1 is missing on the page": "H1 nedostaje na stranici",
     "No visible H1 element was found.": "Nije pronađen nijedan vidljiv H1 element.",
-    "Screaming Frog reports a missing H1 as an issue (medium priority): the H1 is the main heading that states what the page is about.": "Screaming Frog prijavljuje nedostajući H1 kao problem (srednji prioritet): H1 je glavni naslov koji kaže o čemu je stranica.",
+    "The H1 is the main heading that says what the page is about; this page has none.": "H1 je glavni naslov koji kaže o čemu je stranica; ova stranica ga nema.",
     "Add exactly one H1 describing the page's main topic.": "Dodaj tačno jedan H1 koji opisuje glavnu temu stranice.",
     "There is more than one H1 on the page ({0} total)": "Na stranici ima više od jednog H1 (ukupno: {0})",
     "Extra H1: \"{0}\"": "Dodatni H1: \"{0}\"",
-    "Screaming Frog reports multiple H1s as a warning (medium priority): one H1 makes the main topic of the page unambiguous.": "Screaming Frog prijavljuje više H1 naslova kao upozorenje (srednji prioritet): jedan H1 jasno određuje glavnu temu stranice.",
+    "One H1 makes the main topic of the page unambiguous; here there are several.": "Jedan H1 jasno određuje glavnu temu stranice; ovde ih ima više.",
     "Keep only one H1, change the others to H2/H3 as needed.": "Zadrži samo jedan H1, ostale po potrebi promeni u H2/H3.",
     "Exactly one H1 found on the page": "Na stranici je pronađen tačno jedan H1",
     "Heading hierarchy skips a level (H{0} → H{1})": "Hijerarhija naslova preskače nivo (H{0} → H{1})",
-    "Screaming Frog reports non-sequential headings as a low-priority warning. Google says that for Google Search \"it doesn't matter if you're using them out of order\", so this is about a clear structure for readers and screen readers, not rankings.": "Screaming Frog prijavljuje naslove koji preskaču nivo kao upozorenje niskog prioriteta. Google kaže da za Google pretragu \"it doesn't matter if you're using them out of order\", pa je ovo pitanje jasne strukture za čitaoce i čitače ekrana, ne rangiranja.",
+    "Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn't affect Google rankings.": "Preskakanje nivoa naslova (npr. H2 pa odmah H4) kvari strukturu stranice za čitaoce i čitače ekrana. Ne utiče na rangiranje u Google-u.",
     "Use heading levels in order, without skipping.": "Koristi nivoe naslova redom, bez preskakanja.",
     "Heading hierarchy has no skipped levels": "Hijerarhija naslova nema preskočenih nivoa",
     "{0} heading elements on the page.": "Elemenata naslova na stranici: {0}.",
     "Text looks like a heading but isn't marked up as one": "Tekst izgleda kao naslov, ali nije označen kao naslov",
     "\"{0}\" (font-size: {1}px)": "\"{0}\" (font-size: {1}px)",
-    "WCAG failure F2: text whose look conveys meaning (here: a heading) without the matching markup fails success criterion 1.3.1 Info and Relationships — screen readers don't announce it as a heading.": "WCAG greška F2: tekst čiji izgled nosi značenje (ovde: naslov) bez odgovarajućeg markupa ne ispunjava kriterijum 1.3.1 Info and Relationships — čitači ekrana ga ne najavljuju kao naslov.",
+    "Text that looks like a heading but isn't marked up as one is not announced as a heading by screen readers, so the page structure is lost for them.": "Tekst koji izgleda kao naslov, a nije označen kao naslov, čitači ekrana ne najavljuju kao naslov, pa za njih struktura stranice nestaje.",
     "If this is actually a section title, mark it up with the appropriate heading tag (H2/H3...).": "Ako je ovo zapravo naslov sekcije, označi ga odgovarajućim tagom za naslov (H2/H3...).",
     "Images": "Slike",
     "Image: alt attribute is missing": "Slika: nedostaje alt atribut",
     "Image: generic alt text (\"{0}\")": "Slika: generički alt tekst (\"{0}\")",
-    "Google: alt text \"also improves accessibility for people who can't see images\", and Google uses it \"along with computer vision algorithms and the contents of the page to understand the subject matter of the image\". Google's own \"bad\" example is an <img> without alt.": "Google: alt tekst \"also improves accessibility for people who can't see images\", a Google ga koristi \"along with computer vision algorithms and the contents of the page to understand the subject matter of the image\". Google-ov primer \"loše\" prakse je <img> bez alt-a.",
+    "Alt text describes the image to people who can't see it (screen readers) and helps Google understand what the image shows. An <img> without alt gives neither.": "Alt tekst opisuje sliku ljudima koji je ne vide (čitači ekrana) i pomaže Google-u da razume šta slika prikazuje. <img> bez alt-a ne daje ni jedno ni drugo.",
     "Image has no fixed height (neither HTML attribute nor CSS)": "Slika nema fiksnu visinu (ni HTML atribut ni CSS)",
     "CSS width: {0} | CSS height: {1}": "CSS width: {0} | CSS height: {1}",
     "The height is a percentage, but no parent (up to 5 levels checked) has a fixed height, aspect-ratio or min-height, so nothing reserves the space.": "Visina je u procentima, ali nijedan roditeljski element (provereno do 5 nivoa) nema fiksnu visinu, aspect-ratio ili min-height, pa ništa ne rezerviše prostor.",
@@ -5787,7 +5787,7 @@
     "CSS width: {0} | CSS height: not found/defined": "CSS width: {0} | CSS height: nije pronađena/definisana",
     "CSS width: not found/defined | CSS height: {0}": "CSS width: nije pronađena/definisana | CSS height: {0}",
     "CSS width: not found/defined | CSS height: not found/defined": "CSS width: nije pronađena/definisana | CSS height: nije pronađena/definisana",
-    "Neither the HTML height attribute nor CSS fixes the height (the value is \"auto\" or not defined at all) — the browser can't reserve vertical space for the image in advance, which causes layout shift (CLS) while the image loads. CLS is a Core Web Vital (Google: good is below 0.1). Width isn't a factor here — a fixed width alone doesn't reserve vertical space.": "Ni HTML atribut height ni CSS ne fiksiraju visinu (vrednost je \"auto\" ili nije definisana) — browser ne može unapred da rezerviše vertikalni prostor za sliku, pa se sadržaj pomera (CLS) dok se slika učitava. CLS je Core Web Vital (Google: dobro je ispod 0.1). Širina ovde nije bitna — fiksna širina sama ne rezerviše vertikalni prostor.",
+    "Neither the HTML height attribute nor CSS fixes the height (the value is \"auto\" or not defined at all) — the browser can't reserve vertical space for the image in advance, which causes layout shift (CLS) while the image loads. CLS is a Core Web Vital (good is below 0.1). Width isn't a factor here — a fixed width alone doesn't reserve vertical space.": "Ni HTML atribut height ni CSS ne fiksiraju visinu (vrednost je \"auto\" ili nije definisana) — browser ne može unapred da rezerviše vertikalni prostor za sliku, pa se sadržaj pomera (CLS) dok se slika učitava. CLS je Core Web Vital (dobro je ispod 0.1). Širina ovde nije bitna — fiksna širina sama ne rezerviše vertikalni prostor.",
     "Add an explicit height (an HTML height attribute, or CSS height in any unit — px, rem, vw...) directly on the <img> tag or in the Style panel. Width can stay auto.": "Dodaj eksplicitnu visinu (HTML height atribut ili CSS height u bilo kojoj jedinici — px, rem, vw...) direktno na <img> tag ili u Style panel. Širina može ostati auto.",
     "Image below the fold is not lazy-loaded": "Slika ispod preloma stranice nije lazy-loaded",
     "Images far below the first screen are downloaded immediately instead of when the visitor scrolls near them, competing with the content that matters for the first view (LCP).": "Slike daleko ispod prvog ekrana se preuzimaju odmah, umesto kada posetilac skroluje blizu njih, i takmiče se sa sadržajem koji je važan za prvi prikaz (LCP).",
@@ -5796,7 +5796,7 @@
     "Image is not in a modern format (currently: {0})": "Slika nije u modernom formatu (trenutno: {0})",
     "AVIF/WebP produce a significantly smaller file size at the same quality, which speeds up page loading.": "AVIF/WebP daju znatno manju veličinu fajla pri istom kvalitetu, što ubrzava učitavanje stranice.",
     "Image is larger than 500KB ({0})": "Slika je veća od 500KB ({0})",
-    "Webflow's own image optimizer guidance (Webflow MCP \"Image Optimizer\" prompt) sets the target at \"under 500 KB per image\" and treats 500 KB or more as \"needs compression\". A large file takes longer to download; when it is the main image of the first view it delays the Largest Contentful Paint (LCP, a Core Web Vital). The file size is measured (content-length header), not guessed.": "Webflow-ovo uputstvo za optimizaciju slika (Webflow MCP \"Image Optimizer\") postavlja cilj \"under 500 KB per image\", a 500 KB ili više tretira kao \"needs compression\". Veliki fajl se duže preuzima; kada je to glavna slika prvog ekrana, odlaže Largest Contentful Paint (LCP, Core Web Vital). Veličina fajla je izmerena (content-length zaglavlje), ne procenjena.",
+    "Images should stay under 500 KB; this one is larger. A large file takes longer to download; when it is the main image of the first view it delays the Largest Contentful Paint (LCP, a Core Web Vital). The file size is measured (content-length header), not guessed.": "Slike treba da budu ispod 500 KB; ova je veća. Veliki fajl se duže preuzima; kada je to glavna slika prvog ekrana, odlaže Largest Contentful Paint (LCP, Core Web Vital). Veličina fajla je izmerena (content-length zaglavlje), ne procenjena.",
     "Compress the image (e.g. TinyPNG/Squoosh) or convert it to WebP/AVIF.": "Kompresuj sliku (npr. TinyPNG/Squoosh) ili je konvertuj u WebP/AVIF.",
     "File size: {0} · estimated wasted: ~{1}": "Veličina fajla: {0} · procenjeno uzaludno: ~{1}",
     "All {0} below-the-fold images are lazy-loaded": "Svih {0} slika ispod preloma je lazy-loaded",
@@ -5805,7 +5805,7 @@
     "These images are visible in the first screen, but loading=\"lazy\" makes the browser fetch them later than it could: it first has to lay out the page and work out which images are on screen. That delays the first view (and the Largest Contentful Paint, a Core Web Vital, when one of them is the main image) and makes the images pop in. Lazy loading is meant for images far below the first screen. The first screen is measured at the current window width, so on a phone a different set of images can be above the fold.": "Ove slike su vidljive na prvom ekranu, ali ih loading=\"lazy\" tera pregledač da preuzme kasnije nego što bi mogao: prvo mora da izračuna raspored stranice i utvrdi koje slike su na ekranu. To odlaže prvi prikaz (i Largest Contentful Paint, Core Web Vital, kada je jedna od njih glavna slika) i slike se pojavljuju naknadno. Lazy učitavanje je namenjeno slikama daleko ispod prvog ekrana. Prvi ekran se meri na trenutnoj širini prozora, pa na telefonu drugi skup slika može biti iznad preloma.",
     "None of the {0} images in the first screen is lazy-loaded": "Nijedna od {0} slika na prvom ekranu nije lazy-loaded",
     "Above-the-fold video has no poster image": "Video iznad preloma nema poster sliku",
-    "A large video at the top of the page shows an empty box until enough of the file has downloaded. web.dev: for a <video>, LCP uses \"the poster image load time or first frame presentation time ... whichever is earlier\", so a poster can make the first view and the Largest Contentful Paint (LCP, a Core Web Vital) earlier. Without it, how the video area looks while loading is left to the browser.": "Veliki video na vrhu stranice prikazuje prazan okvir dok se ne preuzme dovoljno fajla. web.dev: za <video> LCP koristi \"the poster image load time or first frame presentation time ... whichever is earlier\", pa poster može da ubrza prvi prikaz i Largest Contentful Paint (LCP, Core Web Vital). Bez njega je izgled video oblasti tokom učitavanja prepušten browser-u.",
+    "A large video at the top of the page shows an empty box until enough of the file has downloaded. For a <video>, LCP counts whichever comes first — the poster image or the first video frame — so a poster can make the first view and the Largest Contentful Paint (LCP, a Core Web Vital) earlier. Without it, how the video area looks while loading is left to the browser.": "Veliki video na vrhu stranice prikazuje prazan okvir dok se ne preuzme dovoljno fajla. Za <video> LCP računa ono što se pojavi prvo — poster sliku ili prvi kadar videa — pa poster može da ubrza prvi prikaz i Largest Contentful Paint (LCP, Core Web Vital). Bez njega je izgled video oblasti tokom učitavanja prepušten browser-u.",
     "The above-the-fold video has a poster image": "Video iznad preloma ima poster sliku",
     "Forms": "Forme",
     "Form field has no accessible label": "Polje forme nema pristupačnu labelu",
@@ -5814,15 +5814,15 @@
     "All {0} form field(s) have a label": "Sva polja forme ({0}) imaju labelu",
     "Organization schema has no sameAs (links to the official profiles)": "Organization schema nema sameAs (linkove ka zvaničnim profilima)",
     "Profiles linked on this page: {0}": "Profili povezani na ovoj stranici: {0}",
-    "sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...). Google's Organization documentation includes sameAs; Google: Organization markup on the home page \"can help Google better understand your organization's administrative details and disambiguate your organization in search results\".": "sameAs navodi zvanične profile firme (LinkedIn, X, YouTube, Crunchbase, Clutch...). Google-ova dokumentacija za Organization uključuje sameAs; Google: Organization markup na početnoj stranici \"can help Google better understand your organization's administrative details and disambiguate your organization in search results\".",
+    "sameAs lists the official profiles of the business (LinkedIn, X, YouTube, Crunchbase, Clutch...), which helps Google understand the organization and tell it apart from others in search results.": "sameAs navodi zvanične profile firme (LinkedIn, X, YouTube, Crunchbase, Clutch...), što pomaže Google-u da razume organizaciju i razlikuje je od drugih u rezultatima pretrage.",
     "Organization schema sameAs does not include the social profiles linked on this page": "Organization schema sameAs ne uključuje društvene profile povezane na ovoj stranici",
     "Missing: {0}": "Nedostaje: {0}",
     "The page links to these profiles, but the Organization schema does not list them in sameAs, so the markup doesn't connect the business to them.": "Stranica linkuje ove profile, ali ih Organization schema ne navodi u sameAs, pa markup ne povezuje firmu sa njima.",
     "Add the full profile URLs (the same ones the page links to) to the sameAs array of the Organization JSON-LD block.": "Dodaj pune URL-ove profila (iste na koje stranica linkuje) u sameAs niz Organization JSON-LD bloka.",
     "Organization schema lists its official profiles (sameAs: {0})": "Organization schema navodi zvanične profile (sameAs: {0})",
     "Home page has no Organization schema": "Početna stranica nema Organization schema",
-    "Google: Organization markup on the home page \"can help Google better understand your organization's administrative details and disambiguate your organization in search results\", and it can influence which logo is shown in Search results and the knowledge panel. Google lists no required properties.": "Google: Organization markup na početnoj stranici \"can help Google better understand your organization's administrative details and disambiguate your organization in search results\", a može da utiče i na to koji logo se prikazuje u rezultatima pretrage i knowledge panelu. Google ne navodi obavezna svojstva.",
-    "Image compression (Lighthouse: JPEG re-encode, PNG to WebP)": "Kompresija slike (Lighthouse: ponovno JPEG kodiranje, PNG u WebP)",
+    "Organization markup on the home page helps Google understand the organization's details and tell it apart from others in search results, and can influence which logo is shown in search results and the knowledge panel. No property is required.": "Organization markup na početnoj stranici pomaže Google-u da razume podatke o organizaciji i razlikuje je od drugih u rezultatima pretrage, a može da utiče i na to koji logo se prikazuje u rezultatima i knowledge panelu. Nijedno svojstvo nije obavezno.",
+    "Image compression (JPEG re-encode, PNG to WebP)": "Kompresija slike (ponovno JPEG kodiranje, PNG u WebP)",
     "Above-the-fold images not lazy-loaded": "Slike iznad preloma nisu lazy",
     "Above-the-fold video poster": "Poster videa iznad preloma",
     "Form field labels": "Labele polja forme",
@@ -5882,7 +5882,7 @@
     "Find where the header is set — it is not part of the Webflow project itself: a reverse proxy, Cloudflare rule, or hosting/CDN configuration.": "Pronađi gde je header postavljen — nije deo samog Webflow projekta: reverse proxy, Cloudflare pravilo ili konfiguracija hostinga/CDN-a.",
     "Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site (e.g. Cloudflare Transform Rules). It can't be changed in the Webflow Designer.": "Potreban je pristup onome ko upravlja reverse proxy-jem / CDN-om / hostingom ispred sajta (npr. Cloudflare Transform Rules). Ne može se promeniti u Webflow Designer-u.",
     "X-Robots-Tag header restricts snippets": "X-Robots-Tag header ograničava snippete",
-    "The server tells search engines not to show a text snippet for this page. Google: with nosnippet no text snippet is shown, and the content is not used as a direct input for AI Overviews and AI Mode.": "Server govori pretraživačima da ne prikazuju tekstualni opis ove stranice. Google: uz nosnippet se opis ne prikazuje, a sadržaj se ne koristi kao direktan izvor za AI Overviews i AI Mode.",
+    "The server tells search engines not to show a text snippet for this page; the content is then also not used as a direct source for AI Overviews and AI Mode.": "Server govori pretraživačima da ne prikazuju tekstualni opis ove stranice; sadržaj se tada ne koristi ni kao direktan izvor za AI Overviews i AI Mode.",
     "Find where the header is set (reverse proxy / Cloudflare rule / hosting) and remove the snippet restriction if it is unintended.": "Pronađi gde je header postavljen (reverse proxy / Cloudflare pravilo / hosting) i ukloni ograničenje snippeta ako nije namerno.",
     "Needs access to whoever manages the reverse proxy / CDN / hosting in front of the site.": "Potreban je pristup onome ko upravlja reverse proxy-jem / CDN-om / hostingom ispred sajta.",
     "No X-Robots-Tag header restricts indexing (header: {0})": "Nijedan X-Robots-Tag header ne ograničava indeksiranje (header: {0})",
@@ -5890,8 +5890,8 @@
     "This page is listed in sitemap.xml": "Ova stranica je navedena u sitemap.xml",
     "This page is not listed in sitemap.xml": "Ova stranica nije navedena u sitemap.xml",
     "Checked {0}/sitemap.xml ({1} URLs)": "Provereno: {0}/sitemap.xml ({1} URL-ova)",
-    "Google: a sitemap \"tells search engines which pages and files you think are important in your site\" and helps them crawl it more efficiently. A page missing from it can still be found through links. This looks intentional here (the page is noindex or its canonical points elsewhere).": "Google: sitemap \"tells search engines which pages and files you think are important in your site\" i pomaže im da ga efikasnije pretražuju. Stranica koje nema u njemu i dalje može biti pronađena preko linkova.",
-    "Google: a sitemap \"tells search engines which pages and files you think are important in your site\" and helps them crawl it more efficiently. A page missing from it can still be found through links.": "Google: sitemap \"tells search engines which pages and files you think are important in your site\" i pomaže im da ga efikasnije pretražuju. Stranica koje nema u njemu i dalje može biti pronađena preko linkova.",
+    "A sitemap tells search engines which pages you consider important and helps them crawl the site more efficiently. A page missing from it can still be found through links. This looks intentional here (the page is noindex or its canonical points elsewhere).": "Sitemap govori pretraživačima koje stranice smatraš važnim i pomaže im da efikasnije pretražuju sajt. Stranica koje nema u njemu i dalje može biti pronađena preko linkova.",
+    "A sitemap tells search engines which pages you consider important and helps them crawl the site more efficiently. A page missing from it can still be found through links.": "Sitemap govori pretraživačima koje stranice smatraš važnim i pomaže im da efikasnije pretražuju sajt. Stranica koje nema u njemu i dalje može biti pronađena preko linkova.",
     "Links": "Linkovi",
     "Link doesn't go anywhere (href=\"{0}\")": "Link ne vodi nigde (href=\"{0}\")",
     "Link doesn't go anywhere (href=\"\")": "Link ne vodi nigde (href=\"\")",
@@ -5909,7 +5909,7 @@
     "Add visible text or an aria-label.": "Dodaj vidljiv tekst ili aria-label.",
     "Generic anchor text: \"{0}\"": "Generički anchor tekst: \"{0}\"",
     "href: {0}": "href: {0}",
-    "Lighthouse (SEO) flags generic link text such as \"click here\" or \"learn more\". Google: link text \"tells users and Google something about the page you're linking to\".": "Lighthouse (SEO) prijavljuje generički tekst linka kao \"click here\" ili \"learn more\". Google: tekst linka \"tells users and Google something about the page you're linking to\".",
+    "Generic link text such as \"click here\" or \"learn more\" says nothing about the target page; descriptive link text tells users and Google what the linked page is about.": "Generički tekst linka kao \"click here\" ili \"learn more\" ne govori ništa o odredišnoj stranici; opisni tekst linka govori korisnicima i Google-u o čemu je ta stranica.",
     "Replace it with descriptive text (e.g. \"View pricing\" instead of \"click here\").": "Zameni ga opisnim tekstom (npr. \"View pricing\" umesto \"click here\").",
     "There are no links that go nowhere (all href attributes are valid)": "Nema linkova koji ne vode nigde (svi href atributi su ispravni)",
     "All in-page anchor links (#id) point to existing elements": "Svi anchor linkovi na stranici (#id) pokazuju na postojeće elemente",
@@ -5919,12 +5919,12 @@
     "A broken internal link hurts both user experience and crawl efficiency.": "Pokvaren interni link šteti i korisničkom iskustvu i efikasnosti indeksiranja.",
     "Fix the link, or restore/rename the target page.": "Ispravi link ili vrati/preimenuj ciljnu stranicu.",
     "Internal link goes through a redirect": "Interni link prolazi kroz redirect",
-    "It isn't broken, but every visit through this link costs an extra request before the page loads. Screaming Frog reports internal links to redirects (3XX) as a warning.": "Nije pokvaren, ali svaki prelazak preko ovog linka košta dodatni zahtev pre nego što se stranica učita. Screaming Frog prijavljuje interne linkove ka preusmerenjima (3XX) kao upozorenje.",
+    "It isn't broken, but every visit through this link costs an extra request before the page loads.": "Nije pokvaren, ali svaki prelazak preko ovog linka košta dodatni zahtev pre nego što se stranica učita.",
     "If possible, update the link to point directly to the final URL.": "Ako je moguće, ažuriraj link da pokazuje direktno na krajnji URL.",
     "In Webflow you can only point the link straight at the final URL. If the redirect itself is configured at the reverse proxy / Cloudflare / app level (e.g. www → app subdomain), removing it needs access to that platform.": "U Webflow-u link možeš usmeriti samo direktno na krajnji URL. Ako je sam redirect podešen na nivou reverse proxy-ja / Cloudflare-a / aplikacije (npr. www → app subdomen), za njegovo uklanjanje je potreban pristup toj platformi.",
     "Content": "Sadržaj",
     "Very little visible text on the page ({0} characters)": "Veoma malo vidljivog teksta na stranici ({0} karaktera)",
-    "Screaming Frog: \"There isn't a minimum word count for pages in reality, but the search engines do require descriptive text\" — it flags pages under 200 words; this check is more lenient and only flags pages under 200 characters, which are nearly empty.": "Screaming Frog: \"There isn't a minimum word count for pages in reality, but the search engines do require descriptive text\" — prijavljuje stranice ispod 200 reči; ova provera je blaža i prijavljuje samo stranice ispod 200 karaktera, koje su skoro prazne.",
+    "There is no minimum word count, but search engines need descriptive text to understand a page. This page has under 200 characters of visible text, so it is nearly empty.": "Ne postoji minimalan broj reči, ali pretraživačima treba opisni tekst da bi razumeli stranicu. Ova stranica ima manje od 200 karaktera vidljivog teksta, pa je skoro prazna.",
     "Add more relevant, useful content.": "Dodaj više relevantnog, korisnog sadržaja.",
     "The page has enough visible text ({0} characters)": "Stranica ima dovoljno vidljivog teksta ({0} karaktera)",
     "Hidden content with a substantial amount of text ({0} block, display:none/visibility:hidden)": "Skriveni sadržaj sa velikom količinom teksta (blokova: {0}, display:none/visibility:hidden)",
@@ -5942,8 +5942,8 @@
     "No placeholder/Lorem ipsum text on the page": "Nema placeholder/Lorem ipsum teksta na stranici",
     "Fonts": "Fontovi",
     "The page uses {0} different fonts: {1}": "Stranica koristi različite fontove ({0}): {1}",
-    "web.dev (\"Best practices for fonts\") advises using fewer web fonts — \"The fastest font to deliver is a font that isn't requested in the first place\" — but gives no number, so this is a note only and does not affect the score.": "web.dev (\"Best practices for fonts\") savetuje manje web fontova — \"The fastest font to deliver is a font that isn't requested in the first place\" — ali ne daje broj, pa je ovo samo napomena i ne utiče na skor.",
-    "If the design allows, use fewer font families, or a variable font (web.dev: one variable font can replace several files, e.g. light, regular and bold).": "Ako dizajn dozvoljava, koristi manje porodica fontova ili variable font (web.dev: jedan variable font može da zameni više fajlova, npr. light, regular i bold).",
+    "Each extra font is more to download before the text shows in it, so fewer web fonts are better. There is no exact limit, so this is a note only and does not affect the score.": "Svaki dodatni font je još preuzimanja pre nego što se tekst prikaže u njemu, pa je bolje imati manje web fontova. Tačna granica ne postoji, pa je ovo samo napomena i ne utiče na skor.",
+    "If the design allows, use fewer font families, or a variable font (one file can replace several weights, e.g. light, regular and bold).": "Ako dizajn dozvoljava, koristi manje porodica fontova ili variable font (jedan fajl može da zameni više debljina, npr. light, regular i bold).",
     "The page uses {0} fonts: {1}": "Fontova na stranici: {0} ({1})",
     "Informational only — doesn't affect the SEO score, but worth being aware of.": "Samo informativno — ne utiče na SEO skor, ali vredi znati.",
     "The page uses only 1 font ({0}) — minimal risk of FOUT/FOIT": "Stranica koristi samo 1 font ({0}) — minimalan rizik od FOUT/FOIT",
@@ -5951,14 +5951,14 @@
     "A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor's IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.": "Nemački sud (LG München I, 01/2022) presudio je da dinamičko učitavanje Google Fonts bez saglasnosti šalje IP adresu posetioca Google-u bez pravnog osnova prema GDPR-u, što je pokrenulo talas opomena (uglavnom u Nemačkoj, ali GDPR važi u celoj EU). Nismo pravni savetnici — proveri sa pravnikom ako je ovo relevantno za klijenta.",
     "No dynamic loading of Google Fonts from Google's servers (GDPR risk avoided)": "Nema dinamičkog učitavanja Google Fonts sa Google servera (izbegnut GDPR rizik)",
     "Font file in an older format (not .woff2)": "Fajl fonta u starijem formatu (nije .woff2)",
-    "web.dev: WOFF2 \"has the widest browser support, and offers the best compression\" (30% better than WOFF), and \"experts now recommend only using WOFF2\". Webflow's help also recommends WOFF2 for custom fonts.": "web.dev: WOFF2 \"has the widest browser support, and offers the best compression\" (30% bolje od WOFF), i \"experts now recommend only using WOFF2\". I Webflow-ova pomoć preporučuje WOFF2 za custom fontove.",
+    "WOFF2 has the widest browser support and the best compression (about 30% smaller than WOFF), so it is the only font format needed today.": "WOFF2 ima najširu podršku u browserima i najbolju kompresiju (oko 30% manji od WOFF), pa je danas jedini potreban format fonta.",
     "All @font-face files are in the modern .woff2 format": "Svi @font-face fajlovi su u modernom .woff2 formatu",
     "Duplicate ID attribute: \"{0}\" ({1} times)": "Duplirani ID atribut: \"{0}\" (broj pojavljivanja: {1})",
     "Duplicate IDs break in-page anchor links and ARIA references (aria-controls, aria-labelledby) that rely on a unique ID. Usually the result of copying an entire section without changing the ID.": "Duplirani ID-jevi kvare in-page anchor linkove i ARIA reference (aria-controls, aria-labelledby) koje zavise od jedinstvenog ID-a. Obično je posledica kopiranja cele sekcije bez promene ID-a.",
     "Rename the duplicates to unique IDs.": "Preimenuj duplikate u jedinstvene ID-jeve.",
     "No duplicate ID attributes on the page": "Na stranici nema dupliranih ID atributa",
     "Large/deeply nested DOM (nodes: {0}, max depth: {1}, max children of one element: {2})": "Veliki/duboko ugnežđen DOM (čvorova: {0}, maks. dubina: {1}, maks. broj potomaka jednog elementa: {2})",
-    "Lighthouse failed pages with more than ~1,400 nodes in <body> (\"Avoid an excessive DOM size\"; since Lighthouse 13 the \"Optimize DOM size\" insight). This is a recommendation, not an error — if it's intentional and doesn't cause a visible problem, it can be ignored.": "Lighthouse je obarao stranice sa više od ~1.400 čvorova u <body> (\"Avoid an excessive DOM size\"; od Lighthouse 13 uvid \"Optimize DOM size\"). Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se zanemariti.",
+    "A page with more than about 1,400 elements in <body> is considered to have an excessive DOM size. This is a recommendation, not an error — if it's intentional and doesn't cause a visible problem, it can be ignored.": "Stranica sa više od oko 1.400 elemenata u <body> smatra se prevelikom (DOM). Ovo je preporuka, ne greška — ako je namerno i ne pravi vidljiv problem, može se zanemariti.",
     "Consider simplifying the section structure (fewer nested wrapper divs).": "Razmisli o pojednostavljenju strukture sekcija (manje ugnežđenih wrapper div-ova).",
     "DOM size/depth is within reasonable limits (nodes: {0}, max depth: {1})": "Veličina/dubina DOM-a je u razumnim granicama (čvorova: {0}, maks. dubina: {1})",
     "Mixed content: HTTP resource on an HTTPS page": "Mixed content: HTTP resurs na HTTPS stranici",
@@ -5968,37 +5968,37 @@
     "Third-party script without async/defer ({0})": "Skripta treće strane bez async/defer ({0})",
     "Current:": "Trenutno:",
     "Suggested:": "Predlog:",
-    "Lighthouse flags a <script> in the <head> without defer or async as a render-blocking resource: the first paint of the page waits until it has been downloaded and run.": "Lighthouse prijavljuje <script> u <head>-u bez defer ili async kao resurs koji blokira prikaz: prvi prikaz stranice čeka dok se on ne preuzme i izvrši.",
-    "Lighthouse flags a <script> in the <head> without defer or async as a render-blocking resource: the first paint of the page waits until it has been downloaded and run. This one sits at the end of <body>, where it blocks very little (it mostly delays DOMContentLoaded), so it is only a minor note.": "Lighthouse prijavljuje <script> u <head>-u bez defer ili async kao resurs koji blokira prikaz: prvi prikaz stranice čeka dok se on ne preuzme i izvrši. Ova skripta se nalazi na kraju <body>, gde skoro ništa ne blokira (uglavnom odlaže DOMContentLoaded), pa je samo manja napomena.",
+    "A <script> in the <head> without defer or async blocks the first paint of the page until it has been downloaded and run.": "<script> u <head>-u bez defer ili async blokira prvi prikaz stranice dok se ne preuzme i izvrši.",
+    "A <script> in the <head> without defer or async blocks the first paint of the page until it has been downloaded and run. This one sits at the end of <body>, where it blocks very little (it mostly delays DOMContentLoaded), so it is only a minor note.": "<script> u <head>-u bez defer ili async blokira prvi prikaz stranice dok se ne preuzme i izvrši. Ova skripta se nalazi na kraju <body>, gde skoro ništa ne blokira (uglavnom odlaže DOMContentLoaded), pa je samo manja napomena.",
     "All third-party scripts ({0}) have async/defer (not counting Webflow's own scripts)": "Svi skriptovi trećih strana ({0}) imaju async/defer (bez Webflow-ovih sopstvenih skripti)",
     "All third-party scripts ({0}) have async/defer": "Svi skriptovi trećih strana ({0}) imaju async/defer",
     "Performance (CWV)": "Performanse (CWV)",
     "Slow TTFB (Time To First Byte): {0}ms": "Spor TTFB (Time To First Byte): {0}ms",
-    "web.dev: a TTFB over 1800ms is poor. The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.": "web.dev: TTFB preko 1800ms je loš. Server sporo odgovara na početni zahtev. TTFB nije Core Web Vital, ali sve ostalo na stranici mora da čeka taj prvi bajt.",
-    "web.dev: a good TTFB is 800ms or less. The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.": "web.dev: dobar TTFB je 800ms ili manje. Server sporo odgovara na početni zahtev. TTFB nije Core Web Vital, ali sve ostalo na stranici mora da čeka taj prvi bajt.",
+    "A TTFB over 1800ms is poor. The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.": "TTFB preko 1800ms je loš. Server sporo odgovara na početni zahtev. TTFB nije Core Web Vital, ali sve ostalo na stranici mora da čeka taj prvi bajt.",
+    "A good TTFB is 800ms or less. The server responds slowly to the initial request. TTFB is not a Core Web Vital, but everything else on the page has to wait for that first byte.": "Dobar TTFB je 800ms ili manje. Server sporo odgovara na početni zahtev. TTFB nije Core Web Vital, ali sve ostalo na stranici mora da čeka taj prvi bajt.",
     "Check custom code/integrations that could be slowing down the server response.": "Proveri custom code/integracije koje bi mogle usporavati odgovor servera.",
     "TTFB is good ({0}ms, under the 800ms threshold)": "TTFB je dobar ({0}ms, ispod praga od 800ms)",
     "Slow LCP (Largest Contentful Paint): {0}ms": "Spor LCP (Largest Contentful Paint): {0}ms",
-    "Google considers a good LCP to be under 2500ms, and over 4000ms falls into the \"Poor\" category. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Google smatra dobrim LCP ispod 2500ms, a preko 4000ms spada u kategoriju \"Poor\". Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
-    "Google considers a good LCP to be under 2500ms. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Google smatra dobrim LCP ispod 2500ms. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
+    "A good LCP is under 2500ms, and over 4000ms falls into the \"Poor\" category. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Dobar LCP je ispod 2500ms, a preko 4000ms spada u kategoriju \"Poor\". Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
+    "A good LCP is under 2500ms. A slower LCP usually means the largest element (most often the hero image) is too big or loads slowly.": "Dobar LCP je ispod 2500ms. Sporiji LCP obično znači da je najveći element (najčešće hero slika) prevelik ili se sporo učitava.",
     "Optimize/compress the hero image, remove render-blocking resources.": "Optimizuj/kompresuj hero sliku, ukloni resurse koji blokiraju renderovanje.",
     "LCP is good ({0}ms, under Google's 2500ms threshold)": "LCP je dobar ({0}ms, ispod Google-ovog praga od 2500ms)",
     "The LCP image is lazy-loaded (loading=\"lazy\")": "LCP slika se učitava lazy (loading=\"lazy\")",
     "The largest above-the-fold image is the LCP element. With loading=\"lazy\" the browser postpones fetching it until layout is known, which delays LCP (a Core Web Vital).": "Najveća slika iznad preloma je LCP element. Sa loading=\"lazy\" browser odlaže njeno preuzimanje dok ne zna raspored, što odlaže LCP (Core Web Vital).",
     "The LCP image is not lazy-loaded": "LCP slika se ne učitava lazy",
     "High CLS (Cumulative Layout Shift): {0}": "Visok CLS (Cumulative Layout Shift): {0}",
-    "Over 0.1 means noticeable content \"jumping\" during load (over 0.25 is Google's \"Poor\" threshold) — most often due to images/fonts without reserved space.": "Preko 0.1 znači primetno \"skakanje\" sadržaja tokom učitavanja (preko 0.25 je Google-ov prag za \"Poor\") — najčešće zbog slika/fontova bez rezervisanog prostora.",
+    "Over 0.1 means noticeable content \"jumping\" during load (over 0.25 is poor) — most often due to images/fonts without reserved space.": "Preko 0.1 znači primetno \"skakanje\" sadržaja tokom učitavanja (preko 0.25 je loše) — najčešće zbog slika/fontova bez rezervisanog prostora.",
     "Over 0.1 means noticeable content \"jumping\" during load — most often due to images/fonts without reserved space.": "Preko 0.1 znači primetno \"skakanje\" sadržaja tokom učitavanja — najčešće zbog slika/fontova bez rezervisanog prostora.",
     "Add width/height to images, check font-display settings.": "Dodaj width/height slikama, proveri font-display podešavanja.",
     "CLS is good ({0}, under Google's 0.1 threshold)": "CLS je dobar ({0}, ispod Google-ovog praga od 0.1)",
     "AEO - Structured data (Schema.org)": "AEO - Strukturirani podaci (Schema.org)",
     "JSON-LD schema block contains invalid JSON": "JSON-LD schema blok sadrži nevalidan JSON",
-    "JSON that can't be parsed can't be read at all, so none of the markup in this <script type=\"application/ld+json\"> block reaches Google or any other reader. Screaming Frog reports it as a structured data parse error.": "JSON koji ne može da se parsira ne može ni da se pročita, pa nijedan deo markupa u ovom <script type=\"application/ld+json\"> bloku ne stiže do Google-a ni do bilo kog drugog čitača. Screaming Frog to prijavljuje kao grešku parsiranja strukturiranih podataka.",
+    "JSON that can't be parsed can't be read at all, so none of the markup in this <script type=\"application/ld+json\"> block reaches Google or any other reader.": "JSON koji ne može da se parsira ne može ni da se pročita, pa nijedan deo markupa u ovom <script type=\"application/ld+json\"> bloku ne stiže do Google-a ni do bilo kog drugog čitača.",
     "Check the JSON syntax (missing/extra commas, quotes), e.g. at validator.schema.org.": "Proveri JSON sintaksu (nedostajući/višak zareza, navodnici), npr. na validator.schema.org.",
     "All JSON-LD schema blocks ({0}) contain valid JSON": "Svi JSON-LD schema blokovi ({0}) sadrže validan JSON",
     "Page looks like a FAQ section but has no FAQPage schema markup": "Stranica izgleda kao FAQ sekcija, ali nema FAQPage schema markup",
     "FAQ-like elements were found (classes/IDs containing \"faq\", or 3+ question-style headings) without a corresponding JSON-LD FAQPage schema.": "Pronađeni su elementi nalik FAQ-u (klase/ID-jevi koji sadrže \"faq\" ili 3+ naslova u obliku pitanja) bez odgovarajuće JSON-LD FAQPage schema.",
-    "Note only — not scored. Google stopped showing FAQ rich results on 7 May 2026 and says AI Overviews / AI Mode need no special schema. Studies of AI citations (e.g. a controlled test on 120 pages, March–May 2026) found no clear effect of adding FAQPage markup. The markup is optional; if you add it, it must match the visible questions and answers.": "Samo napomena — ne utiče na skor. Google od 7. maja 2026. ne prikazuje FAQ rich results i kaže da AI Overviews / AI Mode ne traže posebnu schemu. Istraživanja AI citiranja (npr. kontrolisan test na 120 stranica, mart–maj 2026) nisu našla jasan efekat dodavanja FAQPage markupa. Markup je opcion; ako ga dodaješ, mora da odgovara vidljivim pitanjima i odgovorima.",
+    "Note only — not scored. Google stopped showing FAQ rich results on 7 May 2026, no special schema is needed for AI Overviews / AI Mode, and adding FAQPage markup has shown no clear effect on AI citations. The markup is optional; if you add it, it must match the visible questions and answers.": "Samo napomena — ne utiče na skor. Google od 7. maja 2026. ne prikazuje FAQ rich results, za AI Overviews / AI Mode nije potrebna posebna schema, a dodavanje FAQPage markupa nije pokazalo jasan efekat na AI citiranje. Markup je opcion; ako ga dodaješ, mora da odgovara vidljivim pitanjima i odgovorima.",
     "Optional: add a JSON-LD FAQPage block (a mainEntity array of Question/acceptedAnswer objects) matching the visible questions and answers — in Webflow: Page settings > Schema markup.": "Opciono: dodaj JSON-LD FAQPage blok (mainEntity niz Question/acceptedAnswer objekata) koji odgovara vidljivim pitanjima i odgovorima — u Webflow-u: Page settings > Schema markup.",
     "FAQPage schema has no mainEntity (questions)": "FAQPage schema nema mainEntity (pitanja)",
     "Note only — not scored. Without mainEntity the FAQPage block contains no questions, so the markup describes nothing.": "Samo napomena — ne utiče na skor. Bez mainEntity FAQPage blok ne sadrži nijedno pitanje, pa markup ništa ne opisuje.",
@@ -6009,38 +6009,38 @@
     "FAQPage schema is present and complete ({0} questions with answers)": "FAQPage schema je prisutna i kompletna (pitanja sa odgovorima: {0})",
     "Page looks like an article/blog post but has no Article schema markup": "Stranica izgleda kao članak/blog post, ali nema Article schema markup",
     "An <article> element with substantial text, og:type=\"article\", or a blog-style URL was found, without a JSON-LD Article/BlogPosting schema.": "Pronađen je <article> element sa značajnim tekstom, og:type=\"article\" ili URL u blog stilu, bez JSON-LD Article/BlogPosting schema.",
-    "Google: Article markup lets you \"more explicitly tell Google what your content is about (for example, that it's a news article, who the author is, or what the title of the article is)\". Google lists no required properties — author, datePublished, dateModified, headline and image are recommended. (Google also says no special schema is needed to appear in AI Overviews or AI Mode.)": "Google: Article markup omogućava da \"more explicitly tell Google what your content is about (for example, that it's a news article, who the author is, or what the title of the article is)\". Google ne navodi obavezna svojstva — preporučeni su author, datePublished, dateModified, headline i image. (Google takođe kaže da za AI Overviews i AI Mode nije potrebna posebna schema.)",
+    "Article markup tells Google explicitly what the content is: that it is an article, who the author is and what its title is. No property is required; author, datePublished, dateModified, headline and image are recommended. (No special schema is needed to appear in AI Overviews or AI Mode.)": "Article markup Google-u eksplicitno kaže šta je sadržaj: da je članak, ko je autor i koji je naslov. Nijedno svojstvo nije obavezno; preporučeni su author, datePublished, dateModified, headline i image. (Za AI Overviews i AI Mode nije potrebna posebna schema.)",
     "Add a JSON-LD Article schema with headline, author, datePublished, dateModified.": "Dodaj JSON-LD Article schema sa headline, author, datePublished, dateModified.",
     "Article schema has neither dateModified nor datePublished": "Article schema nema ni dateModified ni datePublished",
-    "Google lists datePublished and dateModified among the recommended Article properties; dateModified gives Google more accurate date information about the content.": "Google navodi datePublished i dateModified među preporučenim Article svojstvima; dateModified daje Google-u tačniji podatak o datumu sadržaja.",
+    "datePublished and dateModified are recommended Article properties; dateModified gives Google more accurate date information about the content.": "datePublished i dateModified su preporučena Article svojstva; dateModified daje Google-u tačniji podatak o datumu sadržaja.",
     "Add dateModified (and datePublished) in ISO 8601 format. Best practice: bind the field automatically to the CMS \"last modified\" value instead of it being manual/hardcoded, so it doesn't get forgotten.": "Dodaj dateModified (i datePublished) u ISO 8601 formatu. Najbolja praksa: poveži polje automatski sa CMS vrednošću \"last modified\" umesto ručnog/hardkodovanog unosa, da se ne zaboravi.",
     "Article schema has datePublished/dateModified": "Article schema ima datePublished/dateModified",
     "Author link in the Article schema leads to a 404": "Link autora u Article schema vodi na 404",
     "author.url: {0}": "author.url: {0}",
-    "Google recommends author.url (or sameAs) in Article markup: \"Google can understand both sameAs and url when disambiguating authors.\" A link that doesn't work gives Google nothing to identify the author with.": "Google preporučuje author.url (ili sameAs) u Article markupu: \"Google can understand both sameAs and url when disambiguating authors.\" Link koji ne radi ne daje Google-u ništa čime bi identifikovao autora.",
+    "author.url (or sameAs) lets Google identify the author. A link that doesn't work gives it nothing to identify the author with.": "author.url (ili sameAs) omogućava Google-u da identifikuje autora. Link koji ne radi ne daje mu ništa čime bi identifikovao autora.",
     "Fix author.url to point to a valid author page/profile.": "Ispravi author.url da vodi na validnu stranicu/profil autora.",
     "Author link in the Article schema is valid (doesn't return 404)": "Link autora u Article schema je validan (ne vraća 404)",
     "Article schema has no author field": "Article schema nema author polje",
-    "Google lists author (a Person or Organization, with author.name and author.url) among the recommended Article properties, so it can understand who wrote the content.": "Google navodi author (Person ili Organization, sa author.name i author.url) među preporučenim Article svojstvima, da bi razumeo ko je napisao sadržaj.",
+    "author (a Person or Organization, with author.name and author.url) is a recommended Article property, so Google can understand who wrote the content.": "author (Person ili Organization, sa author.name i author.url) je preporučeno Article svojstvo, da bi Google razumeo ko je napisao sadržaj.",
     "Add an author (Person or Organization) with name and url.": "Dodaj author (Person ili Organization) sa name i url.",
     "Article schema has an author field": "Article schema ima author polje",
     "AEO - NAP consistency": "AEO - Konzistentnost NAP podataka",
     "Phone number in the Organization/LocalBusiness schema doesn't match the number in the footer": "Telefon u Organization/LocalBusiness schema ne poklapa se sa brojem u footer-u",
     "Schema telephone: {0}": "Schema telephone: {0}",
-    "Google's structured data guidelines: structured data \"must be a true representation of the page content\", and content that isn't visible to readers shouldn't be marked up. A phone number in the schema that differs from the one shown on the page breaks that rule.": "Google-ova pravila za strukturirane podatke: strukturirani podaci \"must be a true representation of the page content\", a sadržaj koji čitaoci ne vide ne treba označavati. Broj telefona u schemi koji se razlikuje od onog prikazanog na stranici krši to pravilo.",
+    "Structured data must be a true representation of the page content. A phone number in the schema that differs from the one shown on the page breaks that rule.": "Strukturirani podaci moraju verno predstavljati sadržaj stranice. Broj telefona u schemi koji se razlikuje od onog prikazanog na stranici krši to pravilo.",
     "Align the phone number in the schema markup with the one visibly shown in the footer.": "Uskladi broj telefona u schema markup-u sa onim vidljivo prikazanim u footer-u.",
     "Address from the Organization/LocalBusiness schema doesn't appear anywhere in the visible footer": "Adresa iz Organization/LocalBusiness schema se ne pojavljuje nigde u vidljivom footer-u",
     "Schema address: {0}": "Schema address: {0}",
-    "Google's structured data guidelines: \"Don't mark up content that is not visible to readers of the page\". An address in the schema that isn't shown in the footer may not be visible anywhere on the page.": "Google-ova pravila za strukturirane podatke: \"Don't mark up content that is not visible to readers of the page\". Adresa u schemi koja nije prikazana u footer-u možda nije vidljiva nigde na stranici.",
+    "Structured data shouldn't describe content that readers can't see. An address in the schema that isn't shown in the footer may not be visible anywhere on the page.": "Strukturirani podaci ne bi trebalo da opisuju sadržaj koji čitaoci ne vide. Adresa u schemi koja nije prikazana u footer-u možda nije vidljiva nigde na stranici.",
     "Display the same address visibly (e.g. in the footer) or remove it from the schema if it's no longer accurate.": "Prikaži istu adresu vidljivo (npr. u footer-u) ili je ukloni iz schema ako više nije tačna.",
     "NAP data (phone/address) from the schema markup is consistent with the footer": "NAP podaci (telefon/adresa) iz schema markup-a usklađeni su sa footer-om",
     "A visible breadcrumb UI exists, but there is no BreadcrumbList schema markup": "Postoji vidljiv breadcrumb UI, ali nema BreadcrumbList schema markup",
-    "Google: \"Google Search uses breadcrumb markup in the body of a web page to categorize the information from the page in search results.\"": "Google: \"Google Search uses breadcrumb markup in the body of a web page to categorize the information from the page in search results.\"",
+    "Google uses breadcrumb markup to categorize the page's information in search results.": "Google koristi breadcrumb markup da kategorizuje informacije sa stranice u rezultatima pretrage.",
     "Add a JSON-LD BreadcrumbList schema matching the visible breadcrumb navigation.": "Dodaj JSON-LD BreadcrumbList schema koja odgovara vidljivoj breadcrumb navigaciji.",
     "BreadcrumbList schema is present": "BreadcrumbList schema je prisutna",
     "AEO - JS rendering dependency": "AEO - Zavisnost od JS renderovanja",
     "Most of the content only appears after JavaScript executes (raw HTML: ~{0} chars, rendered: ~{1} chars)": "Većina sadržaja se pojavljuje tek nakon izvršavanja JavaScript-a (raw HTML: ~{0} karaktera, renderovano: ~{1} karaktera)",
-    "Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Vercel's crawler measurements (December 2024): \"none of the major AI crawlers currently render JavaScript\" (OpenAI, Anthropic, Perplexity and others; Google's crawler does). If key content only appears after JavaScript runs, those crawlers may see an empty or nearly empty page. Webflow pages are server-rendered, so this is rare, but custom code/embeds can inject content afterward.": "Napomena: ovo je heuristika i može dati pogrešne rezultate (npr. cookie baner blokira preuzimanje). Vercel-ova merenja crawlera (decembar 2024): \"none of the major AI crawlers currently render JavaScript\" (OpenAI, Anthropic, Perplexity i drugi; Google-ov crawler renderuje). Ako se ključni sadržaj pojavljuje tek posle izvršavanja JavaScript-a, ti crawleri mogu videti praznu ili skoro praznu stranicu. Webflow stranice se renderuju na serveru, pa je ovo retko, ali custom code/embed-ovi mogu naknadno ubaciti sadržaj.",
+    "Note: this is a heuristic and can produce false results (e.g. a cookie banner blocking the fetch). Most AI crawlers (OpenAI, Anthropic, Perplexity and others) don't run JavaScript; Google's crawler does. If key content only appears after JavaScript runs, those crawlers may see an empty or nearly empty page. Webflow pages are server-rendered, so this is rare, but custom code/embeds can inject content afterward.": "Napomena: ovo je heuristika i može dati pogrešne rezultate (npr. cookie baner blokira preuzimanje). Većina AI crawlera (OpenAI, Anthropic, Perplexity i drugi) ne izvršava JavaScript; Google-ov crawler ga izvršava. Ako se ključni sadržaj pojavljuje tek posle izvršavanja JavaScript-a, ti crawleri mogu videti praznu ili skoro praznu stranicu. Webflow stranice se renderuju na serveru, pa je ovo retko, ali custom code/embed-ovi mogu naknadno ubaciti sadržaj.",
     "Check \"View Page Source\" (Ctrl/Cmd+U) and compare it with what's visible on screen — if key text is missing from the raw HTML, consider making that content part of the server's initial HTML response.": "Proveri \"View Page Source\" (Ctrl/Cmd+U) i uporedi sa onim što je vidljivo na ekranu — ako ključni tekst nedostaje u raw HTML-u, razmisli da taj sadržaj postane deo početnog HTML odgovora servera.",
     "Hide the report preview": "Sakrij pregled izveštaja",
     "Preview the full report (SEO + AEO findings) before copying it": "Pregledaj ceo izveštaj (SEO + AEO nalazi) pre kopiranja",
@@ -6124,8 +6124,8 @@
     "the sitemap has more nested files than this check reads (max 12 files, 3 levels deep), so it can't prove the page is missing": "sitemap ima više ugnježdenih fajlova nego što ova provera čita (najviše 12 fajlova, 3 nivoa dubine), pa ne može da dokaže da stranica nedostaje",
     "a sitemap file ({0}) answered HTTP {1}": "sitemap fajl ({0}) je odgovorio sa HTTP {1}",
     "a sitemap file ({0}) is not valid sitemap XML": "sitemap fajl ({0}) nije validan sitemap XML",
-    "Relevant to both SEO and AEO — Google lists \"providing a great page experience for users\" among the SEO practices that also apply to AI Overviews and AI Mode.": "Relevantno i za SEO i za AEO — Google navodi \"providing a great page experience for users\" među SEO praksama koje važe i za AI Overviews i AI Mode.",
-    "Relevant to both SEO and AEO — Google recommends good Core Web Vitals and says this \"aligns with what our core ranking systems seek to reward\".": "Relevantno i za SEO i za AEO — Google preporučuje dobre Core Web Vitals i kaže da to \"aligns with what our core ranking systems seek to reward\".",
+    "Relevant to both SEO and AEO — a good page experience also matters for AI Overviews and AI Mode.": "Relevantno i za SEO i za AEO — dobro iskustvo na stranici je bitno i za AI Overviews i AI Mode.",
+    "Relevant to both SEO and AEO — good Core Web Vitals are part of what Google's ranking systems reward.": "Relevantno i za SEO i za AEO — dobri Core Web Vitals su deo onoga što Google-ovi sistemi rangiranja nagrađuju.",
     "Meta charset": "Meta charset",
     "Duplicate <title> tags": "Duplirani <title> tagovi",
     "Duplicate meta descriptions": "Duplirani meta description",
