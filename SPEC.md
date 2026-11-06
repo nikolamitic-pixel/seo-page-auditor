@@ -556,7 +556,41 @@ Status: **Lista provera zatvorena za v1** (dogovoreno 07.08.2026) — dalje dopu
   - **`img.noSrcset` uklonjen** (provera, registar, labela, prevodi): granice 50/150 KB nisu imale izvor; slike prevelike za telefon hvata `img.oversize` u telefonskom okviru.
   - Test (over.html): 1600 px prikazana na 400 px → nalaz na DPR 1 i 2; 800 px na 400 px → nalaz samo na DPR 1 (na DPR 2 tačno odgovara); 300 px na 300 px → ništa. Nalazi se spajaju po uređajima (desktop, mobile, tablet). EN + SR bez grešaka i bez neprevedenog teksta.
 
+- **06.11.2026 (8) — Izvori uklonjeni iz teksta alata, ostaju samo u dokumentaciji (korisnik: "zašto svuda pominješ Screaming Frog itd? Ovo radi samostalno, izvori treba samo u dokumentaciji").** Svi "zašto" / "kako popraviti" / AEO tekstovi prepisani kao obična objašnjenja: bez imena alata (Screaming Frog, Semrush, Ahrefs, Sitebulb, Lighthouse, axe, Vercel, web.dev), bez "Google Search Central:", "Google:", "Webflow's help", "WCAG …", "HTML standard", "X's Cards documentation", bez doslovnih citata. Činjenice, pravila i pragovi su isti. Ispravljen i zaostao naslov uspeha "No image is much larger…" → "No image is larger than needed…". Statička provera: 0 tekstova bez prevoda; SR/EN regresija na 14 fixture stranica bez grešaka i bez neuparenih naslova. Pun spisak izvora po proveri: sekcija 10, "Izvori po proveri".
+
 ## 10. Izvori / reference materijali (za dokumentaciju)
+
+**Izvori po proveri (06.11.2026) — tekst alata ih ne navodi; ovde je spisak:**
+- Charset: Lighthouse "charset" (meta u prvih 1024 bajta / HTTP Content-Type / BOM); HTML Living Standard (samo "utf-8").
+- Dupli title / meta description: HTML Living Standard (najviše jedan title; jedan meta description); Screaming Frog "Page Titles: Multiple", "Meta Description: Multiple".
+- Title (30–60) i meta description (70–155): Google "Influencing title links", "Control your snippets" (nema limita, skraćuje se po širini); Screaming Frog "Over 60 / Below 30 Characters", "Over 155 / Below 70 Characters"; Webflow (naslov ispod 60).
+- og:title / og:description / og:image, veličina i format OG slike: Facebook "Sharing Best Practices" (600 / 1080 px); X "Summary card with large image" (2:1, min 300x157, < 5 MB, JPG/PNG/WEBP/GIF, bez SVG), X "Cards markup" (bez twitter:card "a summary card may be rendered"); Webflow Designer polje Open Graph image (1200x630, 1.91:1).
+- Canonical: Google "Consolidate duplicate URLs" (nije obavezan; preporučen self-referential; "strong signal"; apsolutni URL; bez fragmenta; samo u <head>); Lighthouse "canonical"; Screaming Frog "Canonicals: Missing" (Warning).
+- noindex / nosnippet / X-Robots-Tag: Google "Robots meta tag specifications"; Google "AI features and your website" (indeksirana + podobna za snippet).
+- robots.txt (stranica, favicon, AI crawleri): Google "How Google interprets the robots.txt specification"; RFC 9309; OpenAI / Perplexity / Anthropic stranice o botovima.
+- lang: Google "Managing multi-regional and multilingual sites" (ne koristi lang); WCAG 2.2 SC 3.1.1.
+- viewport / zoom: Lighthouse "viewport"; axe "meta-viewport" (user-scalable=no, maximum-scale < 2; WCAG 1.4.4).
+- Favicon: Google "Define a favicon to show in search results".
+- Meta refresh: Google "Redirects and Google Search"; Ahrefs / Screaming Frog (meta refresh).
+- hreflang: Google "Localized versions of your page"; Lighthouse "hreflang"; Screaming Frog / Ahrefs (Non-200, Not Using Canonical); ISO 639-1 / 3166-1 (Debian iso-codes 4.16).
+- noindex/canonical u originalnom HTML-u: Google "JavaScript SEO basics".
+- Linkovi (crawlable, nofollow, alt kao anchor, generički tekst, interni redirect, pokvareni): Google "Link best practices", "Qualify outbound links"; Lighthouse "link-text"; Semrush / Screaming Frog (Internal nofollow, Internal Redirection 3XX, Broken internal images).
+- Strukturirani podaci: Google stranice tipova (obavezna svojstva), "General structured data guidelines" (vidljiv sadržaj, verno predstavljanje), Article ("no required properties", author.url / sameAs), Organization, Breadcrumb; Google FAQ rich results ugašeni 7.5.2026 (SERoundtable, citat Google FAQPage dokumentacije); studije AI citiranja (Authority Radar, OtterlyAI, Ahrefs preko Analyzify, AirOps, GEO Lab / arXiv preko MaxAEO).
+- JS sadržaj i AI crawleri: Vercel "The rise of the AI crawler" (dec. 2024).
+- Paritet mobilni/desktop: Google "Mobile-first indexing best practices".
+- Tap targets: WCAG 2.2 SC 2.5.8 (24x24 CSS px).
+- Naslovi: Screaming Frog (H1 Missing / Multiple / Non-sequential); Google SEO Starter Guide (redosled naslova nije bitan za pretragu); WCAG failure F2 (lažni naslov).
+- Alt: Google "Image SEO best practices"; Webflow update o "Decorative" (alt=""); provera na objavljenoj Webflow stranici i u Designer-u (06.11.2026).
+- Slike: Webflow MCP "Image Optimizer" (500 KB); Lighthouse 12.8.1 izvorni kod i dokumentacija — "Efficiently encode images" (JPEG 0,92, ≥ 4096 B), "Serve images in modern formats" (PNG → WebP 0,85, ≥ 8 KiB), "Properly size images" (prikazana veličina × DPR, ≥ 4 KiB); Google "Image SEO" (srcset + src); Webflow help (responsive varijante, "Disable responsiveness", Compress, Replace).
+- Video poster: web.dev "LCP" (poster ili prvi kadar, šta je ranije).
+- CWV: web.dev "INP", "LCP", "CLS", "TTFB" (pragovi); Google "Understanding Core Web Vitals and Google search results".
+- Skripte: Lighthouse "Eliminate render-blocking resources" (script u <head> bez defer/async).
+- DOM: Lighthouse "Avoid an excessive DOM size" (~1.400 čvorova u <body>).
+- Fontovi: web.dev "Best practices for fonts" (manje fontova, WOFF2); Webflow help (Custom fonts, Google Fonts i GDPR); LG München I, 20.01.2022.
+- Sadržaj: Screaming Frog "Low Content Pages"; Google spam policies (skriveni tekst; tabovi/accordion-i dozvoljeni).
+- Sitemap: Google "Learn about sitemaps".
+- HTTPS / mixed content: Google "HTTPS as a ranking signal" (2014).
+- Slug: Webflow projekti HoneyBook (statične "-copy"; CMS "-2", npr. what-is-an-invoice-2) + iskustvo korisnika; `data-wf-item-slug` provereno na živoj CMS stranici.
 
 Istraživanje korišćeno tokom definisanja provera, sa linkovima na izvore.
 
