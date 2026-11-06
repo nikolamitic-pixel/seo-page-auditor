@@ -160,6 +160,20 @@
     return rect.width > 0 || rect.height > 0;
   }
 
+  // Tracking pixel (06.11.2026): an <img> that analytics / ad scripts add only to send a hit, sized to 0 or 1 px in
+  // both directions (width/height attributes or inline style). Not page content: some endpoints answer
+  // "204 No Content" on purpose (verified: bat.bing.com/action/0 on honeybook.com), which the browser reports as an
+  // image error. Skipped by every image check.
+  function isTrackingPixel(img) {
+    function tiny(attr, css) {
+      var a = img.getAttribute(attr);
+      if (a !== null && a.trim() !== '' && parseFloat(a) <= 1) return true;
+      var s = img.style && img.style[css];
+      return !!s && /^\s*[01](\.0+)?px\s*$/i.test(s);
+    }
+    return tiny('width', 'width') && tiny('height', 'height');
+  }
+
   // ---------------------------------------------------------------------
   // Hidden-but-reachable UI (30.10.2026): tabs, accordions, <details>, dropdowns, collapsed menus,
   // sliders and popups are not visible at page load, but their content is real (visitors reach it
@@ -1161,7 +1175,7 @@
   function checkBrokenImages() {
     var CK = 'img.broken', byUrl = {}, order = [];
     Array.prototype.forEach.call(document.images, function (img) {
-      if (img.closest('#seo-audit-host')) return;
+      if (img.closest('#seo-audit-host') || isTrackingPixel(img)) return;
       var raw = img.currentSrc || img.getAttribute('src') || '';
       if (!raw || /^(data|blob):/i.test(raw)) return;
       var u = absUrl(raw);
@@ -1803,6 +1817,7 @@
       // Visible images, plus images in a closed tab / accordion / dropdown / menu / slider / popup (30.10.2026).
       // Those have no layout box, so the checks that need a rendered size (oversize, lazy position,
       // bytes-per-pixel) are skipped for them; alt text, format, host, fixed height and file size still apply.
+      if (isTrackingPixel(img)) return;
       var imgHidden = !isVisible(img);
       if (imgHidden && !isReachable(img)) return;
       checkedImgCount++;
@@ -2851,7 +2866,13 @@
       // buffered (earlier) ones are only those of 104 ms or longer, plus the first one.
       new PerformanceObserver(function (l) {
         var added = false;
-        l.getEntries().forEach(function (e) { perfEvents.push(e); if (e.interactionId) added = true; });
+        // 06.11.2026: a click inside the audit panel doesn't count for INP, so it must not re-render the panel either
+        // (the re-render replaced the category dropdown right after it opened, so it closed by itself).
+        var auditHost = document.getElementById('seo-audit-host');
+        l.getEntries().forEach(function (e) {
+          perfEvents.push(e);
+          if (e.interactionId && !(auditHost && e.target && (e.target === auditHost || auditHost.contains(e.target)))) added = true;
+        });
         if (added) scheduleInpUpdate();
       }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
       new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { perfFirstInput.push(e); }); scheduleInpUpdate(); }).observe({ type: 'first-input', buffered: true });
@@ -4420,7 +4441,7 @@
   // link). Re-building the panel that often makes it flicker, so during that phase renders are limited to one
   // per ~350 ms (the first one is immediate, the last one is never lost). Once the analysis is done, every
   // call renders at once, so clicks stay instant.
-  var lastRenderAt = 0, renderTimer = null, pendingListScroll = 0;
+  var lastRenderAt = 0, renderTimer = null, pendingListScroll = 0, renderHeldBySelect = false;
   function renderPanel() {
     if (HEADLESS) return;   // frames used by the per-device pass have no panel
     if (!analysis.busy) { if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; } return renderPanelNow(); }
@@ -4429,6 +4450,18 @@
     if (!renderTimer) renderTimer = setTimeout(function () { renderTimer = null; renderPanelNow(); }, wait);
   }
   function renderPanelNow() {
+    // 06.11.2026: while a dropdown in the panel has focus (it may be open), a re-render would replace it and close it.
+    // The render waits until the dropdown loses focus; choosing an option blurs it first (see select.onchange).
+    var ae = shadow && shadow.activeElement;
+    if (ae && ae.tagName === 'SELECT') {
+      renderHeldBySelect = true;
+      if (!ae.__seoHoldHook) {
+        ae.__seoHoldHook = true;
+        ae.addEventListener('blur', function () { if (renderHeldBySelect) { renderHeldBySelect = false; renderPanelNow(); } });
+      }
+      return;
+    }
+    renderHeldBySelect = false;
     lastRenderAt = Date.now();
     scheduleRunSave();
     ensurePanel();
@@ -4836,6 +4869,8 @@
           var parts = select.value.split('::');
           activeCategory = parts[0];
           activeCategoryOrigin = parts[1] || 'all';
+          renderHeldBySelect = false;
+          try { select.blur(); } catch (e) {}
           renderPanel();
         };
         catRow.appendChild(select);
