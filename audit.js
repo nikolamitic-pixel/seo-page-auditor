@@ -152,13 +152,25 @@
     return (el && (el.innerText || el.textContent) || '').trim();
   }
 
+  // 12.11.2026: start state of a scroll-in animation. Animation scripts (Webflow Interactions, GSAP "autoAlpha") hide
+  // an element with inline style="opacity: 0; visibility: hidden" until it scrolls into view. Verified on honeybook.com:
+  // the "Grow on the go" section has that inline style at load and is visible (opacity 1) once scrolled to, so it is
+  // content, not hidden text. Only the inline combination counts; visibility:hidden from a class is still hidden.
+  function animStartHidden(el) {
+    for (var p = el; p && p.nodeType === 1; p = p.parentElement) {
+      var v = p.style && p.style.visibility;
+      if (v === 'hidden') return parseFloat(p.style.opacity) === 0;
+      if (v) return false;
+    }
+    return false;
+  }
   function isVisible(el) {
     // 12.11.2026: nodeType, not "instanceof Element". In the per-device frames the page's nodes can come from another
     // JS realm than this script's Element (verified on honeybook.com: H1 visible at 337x108 px, but instanceof false),
     // which made every element look invisible -> e.g. "H1 is missing" only on mobile/tablet.
     if (!el || el.nodeType !== 1) return false;
     var style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (style.display === 'none' || (style.visibility === 'hidden' && !animStartHidden(el))) return false;
     var rect = el.getBoundingClientRect();
     return rect.width > 0 || rect.height > 0;
   }
@@ -191,7 +203,9 @@
     ['tab', '.w-tab-pane, [role="tabpanel"], [class*="tabs" i], [class*="tab_" i], [class*="tab-" i]'],
     ['accordion', '[class*="accordion" i], [class*="collapse" i], [class*="expand" i], [class*="faq" i], [class*="toggle" i]'],
     ['dropdown', '.w-dropdown-list, [class*="dropdown" i]'],
-    ['menu', '.w-nav-menu, [role="menu"], [role="menubar"], nav, [role="navigation"], [class*="menu" i], [class*="navbar" i]'],
+    // 12.11.2026: no longer [class*="navbar"] — that matched the whole navbar wrapper, so a block hidden by design inside it
+    // (honeybook.com: a promo banner switched off with a "display-none" class) was reported as a "collapsed menu".
+    ['menu', '.w-nav-menu, [role="menu"], [role="menubar"], nav, [role="navigation"], [class*="menu" i]'],
     ['slider', '.w-slide, .w-slider, [class*="slide" i], [class*="carousel" i]']
   ];
   var CONTENT_UI_KINDS = ['tab', 'accordion', 'dropdown', 'slider'];   // real page content (no popups / menus)
@@ -503,8 +517,8 @@
 
     var htmlLang = document.documentElement.getAttribute('lang');
     if (!htmlLang) {
-      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'lang attribute is missing on <html>',
-        description: '<html> has no lang attribute.', why: 'Google doesn\'t use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement.',
+      addFinding({ category: 'Meta & head tags', severity: 'info', noScore: true, title: 'lang attribute is missing on <html>',
+        description: '<html> has no lang attribute.', why: 'Google doesn\'t use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement. This is an accessibility issue, so it is listed as a note and does not affect the score.',
         fix: 'Set the site\'s language code in Webflow: Settings panel > Localization (or the globe icon in the top bar > Localization settings) — choose the primary locale\'s language (and optionally country), save and publish.', element: document.documentElement });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'lang attribute is present on <html> (' + htmlLang + ')', description: '', element: document.documentElement });
@@ -521,8 +535,8 @@
       // user-scalable=no / 0, or maximum-scale below 2 (the threshold of axe / Lighthouse; WCAG 1.4.4 asks for zoom to 200%).
       var vpMaxScale = /maximum-scale\s*=\s*([0-9.]+)/i.exec(vpContent);
       if (/user-scalable\s*=\s*(no|0)\b/i.test(vpContent) || (vpMaxScale && parseFloat(vpMaxScale[1]) < 2)) {
-        addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Viewport prevents the user from zooming',
-          description: 'viewport = "' + vpContent + '"', why: 'Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible.',
+        addFinding({ category: 'Meta & head tags', severity: 'info', noScore: true, title: 'Viewport prevents the user from zooming',
+          description: 'viewport = "' + vpContent + '"', why: 'Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible. This is an accessibility issue, so it is listed as a note and does not affect the score.',
           fix: 'Remove user-scalable=no from the viewport tag and remove maximum-scale (or set it to at least 2).', element: document.head });
       } else {
         addSuccess({ category: 'Meta & head tags', title: 'Viewport allows the user to zoom the page', description: '', element: document.head });
@@ -1441,17 +1455,65 @@
     Array.prototype.forEach.call(document.images, function (img) { var a = (img.getAttribute('alt') || '').trim(); if (a) add(img, 'img', a, 'alt: ' + a); });
     return out;
   }
+  // 12.11.2026: all rendered text of the page (innerText leaves out display:none), normalised like the unit keys.
+  // A desktop text that the mobile layout shows in another kind of element (a <div> instead of a <p>, a mobile-only
+  // variant of the section) is not missing (false positive on honeybook.com: "Put AI to work" cards).
+  // 12.11.2026: "Hidden content" across layouts. A block hidden at one width but shown at another (a mobile-only or
+  // desktop-only variant of a section) is responsive design, not hidden text: on honeybook.com the desktop window
+  // listed the mobile "Put AI to work" cards and the mobile frame listed the desktop ones. After the device pass only
+  // blocks whose text no layout shows are kept.
+  var hiddenContentBlocks = [];
+  function refineHiddenContent(cur, results) {
+    var srcs = [{ device: cur, own: true, hidden: hiddenContentBlocks, vtext: parityVisibleText() }];
+    FRAMES.forEach(function (def) {
+      var r = results[def.key];
+      if (r && r.ok && r.data && typeof r.data.vtext === 'string') srcs.push({ device: def.device, hidden: r.data.hidden || [], vtext: r.data.vtext });
+    });
+    if (srcs.length < 2) return;                                   // no other layout to compare with: leave the finding as it is
+    var keep = [], byProbe = {};
+    srcs.forEach(function (src) {
+      src.hidden.forEach(function (h) {
+        var probe = String(h.key || '').slice(0, 60);
+        if (!probe) return;
+        if (srcs.some(function (o) { return o.vtext.indexOf(probe) > -1; })) return;   // shown in some layout
+        var k = byProbe[probe];
+        if (!k) { k = byProbe[probe] = { txt: h.txt, el: src.own ? h.el : null, devices: [] }; keep.push(k); }
+        if (!k.el && src.own) k.el = h.el;
+        if (k.devices.indexOf(src.device) === -1) k.devices.push(src.device);
+      });
+    });
+    var proto = null;
+    for (var i = findings.length - 1; i >= 0; i--) {
+      if (/^Hidden content with a substantial amount of text/.test(findings[i].title || '')) { proto = findings[i]; findings.splice(i, 1); }
+    }
+    if (!keep.length || !proto) return;
+    var devs = [];
+    keep.forEach(function (k) { k.devices.forEach(function (d) { if (devs.indexOf(d) === -1) devs.push(d); }); });
+    var all = deviceScan.checked.every(function (d) { return devs.indexOf(d) > -1; });
+    var nf = {};
+    Object.keys(proto).forEach(function (k) { if (k !== 'id' && k !== 'hiddenUi' && k !== 'checkId') nf[k] = proto[k]; });
+    nf.title = 'Hidden content with a substantial amount of text (' + keep.length + ' block' + (keep.length === 1 ? '' : 's') + ', display:none/visibility:hidden)';
+    nf.description = 'First ' + Math.min(3, keep.length) + ':\n' + keep.slice(0, 3).map(function (k) { return '"' + k.txt.slice(0, 80) + '..."'; }).join('\n');
+    nf.element = (keep[0] && keep[0].el) || null;
+    nf.devices = devs; nf.devicesChecked = deviceScan.checked.slice();
+    nf.deviceOnly = !all && devs.indexOf(cur) === -1;
+    addFinding(nf);
+  }
+  function parityVisibleText() { return normText(document.body ? document.body.innerText : ''); }
   function checkMobileParity(curDevice, results) {
     var desk = deviceOfWidth(window.innerWidth) === 'desktop' ? collectParityUnits()
       : (results.desktop && results.desktop.ok && results.desktop.data.units) || null;
     var mob = window.innerWidth <= 478 ? collectParityUnits()
       : (results['mobile-p'] && results['mobile-p'].ok && results['mobile-p'].data.units) || null;
     if (!desk || !mob) return;                          // a frame failed: not evaluated
+    var mobText = window.innerWidth <= 478 ? parityVisibleText()
+      : (results['mobile-p'] && results['mobile-p'].data && results['mobile-p'].data.vtext) || '';
     var onMobile = {};
     mob.forEach(function (u) { if (u.r) onMobile[u.k + '|' + u.key] = true; });
     var shown = desk.filter(function (u) { return u.r; });
     var missing = shown.filter(function (u) {
       if (onMobile[u.k + '|' + u.key]) return false;
+      if (u.k !== 'img' && mobText && mobText.indexOf(u.k === 'txt' ? u.key.slice(0, 60) : u.key) > -1) return false;
       if (u.k === 'txt') return !Object.keys(onMobile).some(function (k) { return k.indexOf('txt|' + u.key.slice(0, 60)) === 0; });
       return true;
     });
@@ -1517,9 +1579,9 @@
       });
       if (!clash || fails >= 40) return;
       fails++;
-      addFinding({ category: 'Mobile', severity: 'warning', title: 'Tap target is too small and too close to another (' + Math.round(a.w) + 'x' + Math.round(a.h) + ' px)',
+      addFinding({ category: 'Mobile', severity: 'info', noScore: true, title: 'Tap target is too small and too close to another (' + Math.round(a.w) + 'x' + Math.round(a.h) + ' px)',
         description: '"' + (text(a.el) || a.el.getAttribute('aria-label') || a.el.getAttribute('title') || '').slice(0, 60) + '" <' + elLabel(a.el) + '>',
-        why: 'A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn\'t touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing.',
+        why: 'A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn\'t touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. This is an accessibility issue, so it is listed as a note and does not affect the score.',
         fix: 'On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.', element: a.el });
     });
   }
@@ -1589,8 +1651,8 @@
       var level = parseInt(h.tagName.substring(1), 10);
       if (lastLevel > 0 && level - lastLevel > 1) {
         hierarchySkipFound = true;
-        addFinding({ category: 'Heading structure', severity: 'warning', title: 'Heading hierarchy skips a level (H' + lastLevel + ' → H' + level + ')',
-          description: '"' + text(h).slice(0, 80) + '"', why: 'Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn\'t affect Google rankings.',
+        addFinding({ category: 'Heading structure', severity: 'info', noScore: true, title: 'Heading hierarchy skips a level (H' + lastLevel + ' → H' + level + ')',
+          description: '"' + text(h).slice(0, 80) + '"', why: 'Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn\'t affect Google rankings. This is an accessibility issue, so it is listed as a note and does not affect the score.',
           fix: 'Use heading levels in order, without skipping.', element: h });
       }
       lastLevel = level;
@@ -1739,6 +1801,8 @@
     var checkedImgCount = 0;
     var oversizeMeasured = 0, oversizeFound = 0;   // "image much larger than displayed" (28.10.2026)
     var oversizeCandidates = [];                   // images that are oversized by pixel dimensions; severity decided by estimated wasted KB
+    var oversizePassed = {};                       // 12.11.2026: URLs used at an appropriate size somewhere on the page
+    var oversizeHits = [];                         // candidates over the threshold, reported once per URL when all are resolved
     var lazyConsidered = 0, lazyFound = 0;         // "below-the-fold image not lazy" (28.10.2026)
     // Thresholds of the "heavy file" and "no responsive versions" checks (29.10.2026, from the flowninja.com audit):
     //   heavy file: replaced 06.11.2026 by the Lighthouse encode check (see ENCODE_* below); > 500 KB = warning (Webflow's own target).
@@ -1916,8 +1980,11 @@
         var dprNow = window.devicePixelRatio || 1;
         var neededW = Math.round(shownW * dprNow), neededH = Math.round(shownH * dprNow);
         if (natW * natH > neededW * neededH) {
-          oversizeCandidates.push({ img: img, natW: natW, natH: natH, shownW: shownW, dpr: dprNow, allowedW: neededW, areaRatio: (neededW * neededH) / (natW * natH), src: srcNow });
+          oversizeCandidates.push({ img: img, natW: natW, natH: natH, shownW: shownW, shownH: shownH, dpr: dprNow, allowedW: neededW, allowedH: neededH, areaRatio: (neededW * neededH) / (natW * natH), src: srcNow,
+            hasVariants: !!img.getAttribute('srcset') || !!(img.parentElement && img.parentElement.tagName === 'PICTURE') });
           isOversizeCand = true;
+        } else {
+          oversizePassed[stripQuery(srcNow)] = true;   // the same file is used at the right size here
         }
       }
       // Above-the-fold image with loading="lazy" (29.10.2026): collected here, reported as ONE finding
@@ -1995,7 +2062,10 @@
 
     // ---- Oversized images (06.11.2026): Lighthouse "Properly size images" — wasted = file bytes x (1 - needed pixels /
     // actual pixels); reported (info, Lighthouse has no severity levels) when wasted >= 4 KiB. File size unknown -> not reported.
-    var OVERSIZE_MIN_BYTES = 4096;
+    // 12.11.2026, Lighthouse 12.8.1 uses-responsive-images.js: IGNORE_THRESHOLD_IN_BYTES = 4096, and 12288 when the image
+    // has srcset or is in <picture> (IGNORE_THRESHOLD_IN_BYTES_BREAKPOINTS_PRESENT); an image is not reported if the same URL
+    // is used appropriately elsewhere on the page, and per URL the smallest waste is kept.
+    var OVERSIZE_MIN_BYTES = 4096, OVERSIZE_MIN_BYTES_VARIANTS = 12288;
     var oversizePending = oversizeCandidates.length;
     function oversizeKnownBytes(src) {
       try {
@@ -2007,6 +2077,13 @@
     function oversizeDone(isAsync) {
       oversizePending--;
       if (oversizePending > 0) return;
+      var byUrl = {}, urls = [];
+      oversizeHits.forEach(function (h) {
+        var u = stripQuery(h.c.src);
+        if (oversizePassed[u]) return;
+        if (!byUrl[u]) { byUrl[u] = h; urls.push(u); } else if (h.wasted < byUrl[u].wasted) byUrl[u] = h;
+      });
+      urls.forEach(function (u) { oversizeFound++; reportOversize(byUrl[u].c, byUrl[u].bytes, byUrl[u].wasted); });
       if (oversizeMeasured > 0 && oversizeFound === 0) {
         addSuccess({ category: 'Images', title: 'No image is larger than needed for its displayed size (' + oversizeMeasured + ' measured)', description: '', element: null });
       }
@@ -2014,22 +2091,25 @@
     }
     function resolveOversize(c, bytes, isAsync) {
       var wasted = bytes != null ? bytes * (1 - c.areaRatio) : null;
-      if (wasted != null && wasted >= OVERSIZE_MIN_BYTES) {
-        oversizeFound++;
+      if (wasted != null) {
+        if (wasted > (c.hasVariants ? OVERSIZE_MIN_BYTES_VARIANTS : OVERSIZE_MIN_BYTES)) oversizeHits.push({ c: c, bytes: bytes, wasted: wasted });
+        else oversizePassed[stripQuery(c.src)] = true;
+      }
+      oversizeDone(isAsync);
+    }
+    function reportOversize(c, bytes, wasted) {
         var dprTxt = Math.round(c.dpr * 100) / 100;
         addFinding({ category: 'Images', severity: 'info',
           title: 'Image is larger than its displayed size (' + c.natW + 'px file shown at ' + c.shownW + 'px)',
           description: c.src.replace(/\?.*$/, '').slice(0, 120) + '\n' + 'File size: ' + fmtBytes(bytes) + ' · estimated wasted: ~' + fmtBytes(Math.round(wasted)),
-          why: 'The image is compared with the size it is shown at, including the screen\'s pixel density, and reported when the right-sized image would be at least 4 KB smaller. ' +
-            'Here the file is ' + c.natW + 'px wide but shown ' + c.shownW + 'px wide on a screen with pixel density ' + dprTxt + ', so about ' + c.allowedW + 'px would be enough. ' +
+          why: 'The image\'s pixels are compared with the pixels of the box it is shown in, including the screen\'s pixel density. It is reported when the right-sized image would be more than 4 KB smaller (12 KB if the image already has responsive variants). ' +
+            'Here the file is ' + c.natW + '×' + c.natH + ' px, but it is shown in a ' + c.shownW + '×' + c.shownH + ' px box on a screen with pixel density ' + dprTxt + ', which uses about ' + c.allowedW + '×' + c.allowedH + ' px. The rest is downloaded but not shown (scaled down, or cropped when the box has a different shape). ' +
             'Measured at the current window width; the same rule also runs at phone and tablet widths.',
           fix: '1) Find out why the full-size file is served. Webflow creates responsive variants (srcset) for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the "Disable responsiveness" checkbox in Image settings turns them off (Webflow\'s variants have "-p-" plus a width in the file name, e.g. "-p-500"). ' +
             '2) If it is an Image element with responsiveness turned off: select it > Element settings panel > Image settings > uncheck "Disable responsiveness", then publish. ' +
             '3) Otherwise replace the file: resize it to about ' + c.allowedW + 'px wide (displayed width × pixel density) and compress it, then Assets panel > the image\'s more options > Replace (the asset URL changes, so update any direct links). ' +
             '4) If the file already is a Webflow variant ("-p-" in the name) and the difference is small, there is little to gain — Webflow only makes fixed variant widths.',
           element: c.img });
-      }
-      oversizeDone(isAsync);
     }
     oversizeCandidates.forEach(function (c) {
       var known = oversizeKnownBytes(c.src);
@@ -2302,10 +2382,10 @@
       if (hasLabel) return;
       unlabeled++;
       var ph = (el.getAttribute('placeholder') || '').trim();
-      addFinding({ category: 'Forms', severity: 'warning', title: 'Form field has no accessible label',
+      addFinding({ category: 'Forms', severity: 'info', noScore: true, title: 'Form field has no accessible label',
         description: '<' + el.tagName.toLowerCase() + (el.getAttribute('type') ? ' type="' + el.getAttribute('type') + '"' : '') + (el.getAttribute('name') ? ' name="' + el.getAttribute('name') + '"' : '') + '>' +
           (ph ? '\nplaceholder: "' + ph.slice(0, 60) + '"' : ''),
-        why: 'A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect.',
+        why: 'A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect. This is an accessibility issue, so it is listed as a note and does not affect the score.',
         fix: 'In Webflow: select the field > Element settings (D) > give it a unique ID; then select the Label element above it > Element settings > Custom attributes > add "for" with the field\'s ID as the value. Alternatively add the custom attribute aria-label = "what the field is for" on the field itself.',
         element: el });
     });
@@ -2498,8 +2578,8 @@
         blocks.push(el);
         var c = el.cloneNode(true);
         Array.prototype.forEach.call(c.querySelectorAll('script,style,noscript,template'), function (n) { n.remove(); });
-        Array.prototype.forEach.call(c.querySelectorAll('*'), function (n) { n.insertAdjacentText('afterend', ' '); });   // keep words from different elements apart
-        uiHiddenText += ' ' + (c.textContent || '');
+        Array.prototype.forEach.call(c.querySelectorAll('*'), function (n) { n.insertAdjacentText('afterend', '\n'); });   // keep words from different elements apart (a line break: the repeated-word check doesn't match across it)
+        uiHiddenText += '\n' + (c.textContent || '');
       });
     })();
     // Thin content
@@ -2527,16 +2607,20 @@
       '[class*="popup" i]', '[class*="modal" i]', '[class*="dropdown" i]', '[class*="accordion" i]',
       '[class*="w-tab" i]', '[class*="tabs" i]', '[class*="faq" i]', '[class*="menu" i]', '[class*="lightbox" i]',
       '[class*="w-slide" i]', '[class*="slider" i]', '[class*="navbar" i]', '[class*="w-nav" i]',
-      '[class*="tooltip" i]', '[class*="toast" i]', '[class*="overlay" i]', '[class*="cookie" i]', '[class*="consent" i]'
+      '[class*="tooltip" i]', '[class*="toast" i]', '[class*="overlay" i]', '[class*="cookie" i]', '[class*="consent" i]',
+      // 12.11.2026: consent-manager widgets whose class names don't say "cookie"/"consent" (honeybook.com: Osano)
+      '[class*="osano" i]', '#onetrust-consent-sdk', '#CybotCookiebotDialog', '#usercentrics-root', '#didomi-host', '[class*="termly" i]', '[class*="iubenda" i]'
     ].join(',');
     var allBodyEls = Array.prototype.slice.call(document.querySelectorAll('body *'));
     var hiddenBlocks = [];
     var hiddenTexts = [];
+    hiddenContentBlocks = [];
     for (var hi = 0; hi < allBodyEls.length; hi++) {
       var hel = allBodyEls[hi];
       if (HIDDEN_SKIP_TAGS.test(hel.tagName)) continue;
       var hstyle = window.getComputedStyle(hel);
       if (hstyle.display !== 'none' && hstyle.visibility !== 'hidden') continue;
+      if (hstyle.display !== 'none' && animStartHidden(hel)) continue;   // scroll-in animation, shown when scrolled to
       if (hiddenBlocks.some(function (blk) { return blk.contains(hel); })) continue;
       var inUi = false;
       try { inUi = !!hel.closest(HIDDEN_UI_SELECTOR); } catch (e) {}
@@ -2546,7 +2630,11 @@
       var hclone = hel.cloneNode(true);
       Array.prototype.forEach.call(hclone.querySelectorAll('script,style,noscript,template'), function (n) { n.remove(); });
       var htxt = (hclone.textContent || '').replace(/\s+/g, ' ').trim();
-      if (htxt.length > 60) { hiddenBlocks.push(hel); hiddenTexts.push(htxt); }
+      if (htxt.length > 60) {
+        hiddenBlocks.push(hel); hiddenTexts.push(htxt);
+        Array.prototype.forEach.call(hclone.querySelectorAll('*'), function (n) { n.insertAdjacentText('afterend', ' '); });
+        hiddenContentBlocks.push({ el: hel, txt: htxt, key: normText(hclone.textContent || '') });
+      }
     }
     if (hiddenBlocks.length) {
       addFinding({ category: 'Content', severity: 'info',
@@ -2557,8 +2645,11 @@
     }
 
     // Repeated consecutive word
-    var bodyText = text(main) + ' ' + uiHiddenText;
-    var repeatRegex = /\b(\w{2,})\s+\1\b/gi;
+    var bodyText = text(main) + '\n' + uiHiddenText;
+    // 12.11.2026: only spaces between the two words, no line break. innerText puts a line break between separate
+    // blocks, and a button "Explore resources" above a heading "Resources to help you" is not a typo
+    // (false positive found on honeybook.com, mobile layout).
+    var repeatRegex = /\b(\w{2,})[ \t\u00a0]+\1\b/gi;
     var seenRepeats = {};
     var m;
     var repeatedWordFound = false;
@@ -2567,7 +2658,7 @@
       if (seenRepeats[word]) continue;
       seenRepeats[word] = true;
       repeatedWordFound = true;
-      addFinding({ category: 'Content', severity: 'warning', title: 'Repeated word in a row: "' + m[1] + ' ' + m[1] + '"',
+      addFinding({ category: 'Content', severity: 'warning', title: 'Repeated word in a row: "' + m[0].replace(/\s+/g, ' ') + '"',
         description: '...' + bodyText.slice(Math.max(0, m.index - 30), m.index + 30) + '...',
         why: 'Most often a copy-paste mistake.', fix: 'Remove the duplicate word.', element: null });
     }
@@ -2608,18 +2699,27 @@
       if (primary) families[primary] = true;
     });
     var distinct = Object.keys(families);
+    // 12.11.2026: only web fonts (loaded with @font-face) are counted. System fonts such as Helvetica or system-ui
+    // are already on the device and download nothing (honeybook.com listed "Helvetica" and "system-ui").
+    try {
+      if (document.fonts && typeof document.fonts.forEach === 'function') {
+        var webFams = {};
+        document.fonts.forEach(function (ffc) { webFams[String(ffc.family || '').replace(/["']/g, '').trim().toLowerCase()] = true; });
+        distinct = distinct.filter(function (f) { return webFams[f.toLowerCase()]; });
+      }
+    } catch (e) {}
 
     if (distinct.length >= 4) {
       // 06.11.2026: web.dev advises "Use fewer web fonts" but gives no number, so this is a note only (noScore).
-      addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' different fonts: ' + distinct.join(', '),
+      addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' different web fonts: ' + distinct.join(', '),
         description: '', why: 'Each extra font is more to download before the text shows in it, so fewer web fonts are better. There is no exact limit, so this is a note only and does not affect the score.',
         fix: 'If the design allows, use fewer font families, or a variable font (one file can replace several weights, e.g. light, regular and bold).', element: null });
     } else if (distinct.length >= 2) {
-      addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' fonts: ' + distinct.join(', '),
+      addFinding({ category: 'Fonts', severity: 'info', noScore: true, title: 'The page uses ' + distinct.length + ' web fonts: ' + distinct.join(', '),
         description: '', why: 'Informational only — doesn\'t affect the SEO score, but worth being aware of.',
         fix: '', element: null });
     } else if (distinct.length === 1) {
-      addSuccess({ category: 'Fonts', title: 'The page uses only 1 font (' + distinct[0] + ') — minimal risk of FOUT/FOIT', description: '', element: null });
+      addSuccess({ category: 'Fonts', title: 'The page uses only 1 web font (' + distinct[0] + ') — minimal risk of FOUT/FOIT', description: '', element: null });
     }
 
     // Google Fonts vs self-hosted
@@ -2658,6 +2758,16 @@
     } catch (e) {}
     var oldFormatFound = false;
     var fontFaceRuleFound = false;
+    var oldFormatWhat = [];
+    // 12.11.2026: only fonts this page actually uses count. A font uploaded to the project in an older format but not
+    // used on the page is never downloaded (honeybook.com: "Proxima Nova" .otf declared, unused; all 5 downloaded fonts .woff2).
+    var loadedFams = null;
+    try {
+      if (document.fonts && typeof document.fonts.forEach === 'function') {
+        loadedFams = {};
+        document.fonts.forEach(function (ffc) { if (ffc.status === 'loaded') loadedFams[String(ffc.family || '').replace(/["']/g, '').trim().toLowerCase()] = true; });
+      }
+    } catch (e) { loadedFams = null; }
     var sheets = document.styleSheets;
     for (var i = 0; i < sheets.length; i++) {
       try {
@@ -2666,7 +2776,12 @@
           if (rules[j].constructor.name === 'CSSFontFaceRule' || (rules[j].cssText && /@font-face/.test(rules[j].cssText))) {
             fontFaceRuleFound = true;
             if (/\.(ttf|otf|eot)(\?|"|'|\))/i.test(rules[j].cssText) && !/\.woff2/i.test(rules[j].cssText)) {
-              oldFormatFound = true;
+              var ffam = '';
+              try { ffam = String(rules[j].style.getPropertyValue('font-family') || '').replace(/["']/g, '').trim(); } catch (x) {}
+              if (!loadedFams || (ffam && loadedFams[ffam.toLowerCase()])) {
+                oldFormatFound = true;
+                if (ffam && oldFormatWhat.indexOf(ffam) === -1) oldFormatWhat.push(ffam);
+              }
             }
           }
         }
@@ -2680,15 +2795,19 @@
         var fx = /\.(woff2|woff|ttf|otf|eot)$/i.exec(pth);
         if (!fx) return;
         fontFaceRuleFound = true;
-        if (/^(woff|ttf|otf|eot)$/i.test(fx[1])) oldFormatFound = true;
+        if (/^(woff|ttf|otf|eot)$/i.test(fx[1])) {
+          oldFormatFound = true;
+          var fname = ''; try { fname = decodeURIComponent(pth.split('/').pop()); } catch (x) { fname = pth.split('/').pop(); }
+          if (fname && oldFormatWhat.indexOf(fname) === -1) oldFormatWhat.push(fname);
+        }
       });
     } catch (e) {}
     if (oldFormatFound) {
       addFinding({ category: 'Fonts', severity: 'info', title: 'Font file in an older format (not .woff2)',
-        description: '', why: 'WOFF2 has the widest browser support and the best compression (about 30% smaller than WOFF), so it is the only font format needed today.',
+        description: oldFormatWhat.slice(0, 6).join('\n'), why: 'WOFF2 has the widest browser support and the best compression (about 30% smaller than WOFF), so it is the only font format needed today.',
         fix: 'Convert the font files to .woff2 and upload them in Site settings > Fonts tab > Custom fonts.', element: null });
     } else if (fontFaceRuleFound) {
-      addSuccess({ category: 'Fonts', title: 'All @font-face files are in the modern .woff2 format', description: '', element: null });
+      addSuccess({ category: 'Fonts', title: 'All font files used on this page are in the modern .woff2 format', description: '', element: null });
     }
   }
 
@@ -3460,9 +3579,9 @@
     { id: 'meta.nosnippet', w: 4, re: /^Robots directive/ },
     { id: 'meta.xrobots', w: 4, re: /^(X-Robots-Tag|No X-Robots-Tag)/ },
     { id: 'meta.sitemap', w: 2, re: /^This page is (not )?listed in sitemap/ },
-    { id: 'meta.lang', w: 2, re: /^lang attribute/ },
+    { id: 'meta.lang', w: 0, re: /^lang attribute/ },   // 12.11.2026: accessibility only -> note (info, noScore), weight 0
     { id: 'meta.viewport', w: 4, re: /^Viewport meta tag/ },
-    { id: 'meta.zoom', w: 2, re: /^Viewport (prevents|allows)/ },
+    { id: 'meta.zoom', w: 0, re: /^Viewport (prevents|allows)/ },
     { id: 'fav.present', w: 2, re: /^Favicon is (missing or fails|present and loads)/ },
     { id: 'fav.quality', w: 1, re: /^Favicon (is not in a format|dimensions|is square)/, evalIfSuccessOf: ['fav.present'] },
     { id: 'fav.robots', w: 2, re: /^Favicon is blocked/, evalIfSuccessOf: ['fav.present'] },
@@ -3481,10 +3600,10 @@
     { id: 'aeo.schemaRequired', w: 2, re: /^(\w+ schema is missing properties Google requires|Schema has the properties Google requires)/ },
     { id: 'aeo.schemaVisible', w: 2, re: /^(Schema text not found on the page|Schema names\/headlines appear on the page)/ },
     { id: 'mobile.parity', w: 2, re: /^(Content visible on desktop is missing on mobile|Mobile shows the same content as desktop)/ },
-    { id: 'mobile.tapTargets', w: 2, re: /^Tap target is too small/, total: true, always: true },
+    { id: 'mobile.tapTargets', w: 0, re: /^Tap target is too small/, total: true, always: true },
     { id: 'url.slug', w: 4, re: /^(URL slug|CMS item slug)/ },
     { id: 'h.h1', w: 4, re: /^(H1 is missing|There is more than one H1|Exactly one H1)/ },
-    { id: 'h.skip', w: 2, re: /^Heading hierarchy/ },
+    { id: 'h.skip', w: 0, re: /^Heading hierarchy/ },
     { id: 'h.fake', w: 1, re: /^Text looks like a heading/, always: true },
     { id: 'img.alt', w: 4, re: /^(Alt text is empty|Image: (alt|generic)|\d+ of \d+ visible images have descriptive)/, total: true },
     { id: 'img.height', w: 4, re: /^(Image has no fixed height|\d+ image\(s\) have (both dimensions|a fixed height|no height of their own))/, total: true },
@@ -3496,7 +3615,7 @@
     { id: 'img.heavy', w: 2, re: /^(Image can be compressed further|PNG image would be)/, always: true, total: true },   // Lighthouse encode method (06.11.2026)
     { id: 'img.lazyAbove', w: 2, re: /^(Above-the-fold images are lazy-loaded|None of the \d+ images in the first screen)/ },
     { id: 'video.poster', w: 2, re: /^(Above-the-fold video has no poster|The above-the-fold video has a poster)/ },
-    { id: 'form.label', w: 2, re: /^(Form field has no accessible label|All \d+ form field)/, total: true },
+    { id: 'form.label', w: 0, re: /^(Form field has no accessible label|All \d+ form field)/, total: true },   // 12.11.2026: accessibility only -> note, weight 0 (same for meta.zoom, mobile.tapTargets, h.skip)
     { id: 'aeo.orgSameAs', w: 2, re: /^(Organization schema (has no sameAs|sameAs does not|lists its official)|Home page has no Organization schema)/ },
     { id: 'links.nowhere', w: 2, re: /^(Link doesn't go anywhere|There are no links that go nowhere)/, total: true },
     { id: 'links.anchor', w: 4, re: /^(Anchor link points|All in-page anchor)/ },
@@ -3509,7 +3628,7 @@
     { id: 'content.placeholder', w: 4, re: /^(Placeholder\/Lorem|No placeholder)/ },
     { id: 'fonts.count', w: 0, re: /^The page uses/, always: true },   // note only (06.11.2026): no source for a font-count limit
     { id: 'fonts.google', w: 2, re: /^(The page dynamically loads Google Fonts|No dynamic loading of Google Fonts)/ },
-    { id: 'fonts.format', w: 1, re: /^(Font file in an older|All @font-face)/ },
+    { id: 'fonts.format', w: 1, re: /^(Font file in an older|All font files used on this page)/ },
     { id: 'tech.dupId', w: 1, re: /^(Duplicate ID|No duplicate ID)/ },
     { id: 'tech.dom', w: 1, re: /^(Large\/deeply nested DOM|DOM size\/depth)/ },
     { id: 'tech.mixed', w: 4, re: /^(Mixed content|No mixed content)/ },
@@ -4385,7 +4504,9 @@
           if (det && !det.open) hiddenLabel = lab(det) + ' (closed)';
           else if (clip) hiddenLabel = lab(clip) + ' (height:0)';
         }
-        out = { open: open, chain: chain.join(' › '), hidden: hiddenLabel, self: hid === el };
+        // 12.11.2026: <script>/<style>/<link>... are never displayed, so "hidden by: the element itself" says nothing useful.
+        if (/^(SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) { hiddenLabel = null; hid = null; }
+        out = { open: open, chain: chain.join(' › '), hidden: hiddenLabel, self: !!hid && hid === el };
       }
     } catch (e) {}
     f._where = out;
@@ -5141,9 +5262,11 @@
       }
       return { key: keys[i], f: o, info: info };
     });
-    var units = null;
+    var units = null, vtext = '';
     try { units = collectParityUnits(); } catch (e) {}
-    return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth, units: units });
+    try { vtext = parityVisibleText(); } catch (e) {}
+    var hidden = hiddenContentBlocks.map(function (h) { return { txt: h.txt, key: h.key }; });
+    return JSON.stringify({ items: items, totals: checkTotals, width: window.innerWidth, units: units, vtext: vtext, hidden: hidden });
   }
 
   // Runs one check; an exception is logged (window.__SeoAuditorErrors) instead of stopping the whole audit.
@@ -5268,6 +5391,7 @@
     (function next(i) {
       if (i >= todo.length) {
         try { mergeDeviceResults(cur, results, todo); } catch (e) { try { console.warn('[SeoAuditor] device merge failed', e); } catch (e2) {} }
+        try { refineHiddenContent(cur, results); } catch (e) { (window.__SeoAuditorErrors = window.__SeoAuditorErrors || []).push('refineHiddenContent: ' + (e && e.message)); }
         try { checkMobileParity(cur, results); } catch (e) { (window.__SeoAuditorErrors = window.__SeoAuditorErrors || []).push('checkMobileParity: ' + (e && e.message)); }
         deviceScan.state = 'done';
         return done();
@@ -5320,7 +5444,10 @@
         items.forEach(function (it) {
           totalItems++;
           var c = null;
-          for (var i = 0; i < cands.length; i++) { if (!cands[i].t[def.key] && cands[i].path && it.info && cands[i].path === it.info.path) { c = cands[i]; break; } }
+          // 12.11.2026: a finding without an element (e.g. "Repeated word") has no DOM path on either side; the same key is
+          // then the same finding (before, it was added again for every further frame as "only on: tablet" etc.).
+          var itPath = it.info && it.info.path;
+          for (var i = 0; i < cands.length; i++) { if (!cands[i].t[def.key] && ((cands[i].path && itPath && cands[i].path === itPath) || (!cands[i].path && !itPath))) { c = cands[i]; break; } }
           if (c) { pathMatched++; mark(c); } else rest.push(it);
         });
         pending[b] = rest;
@@ -5518,7 +5645,7 @@
     "Mobile shows the same content as desktop ({0} items compared)": "Mobilni prikazuje isti sadržaj kao desktop (upoređeno stavki: {0})",
     "Same content on mobile as on desktop": "Isti sadržaj na mobilnom kao na desktopu",
     "Tap target is too small and too close to another ({0} px)": "Element za dodir je premali i preblizu drugom ({0} px)",
-    "A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn't touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing.": "Element za dodir treba da bude najmanje 24 x 24 CSS piksela, osim ako oko njega ima dovoljno prostora (krug od 24 px oko njegovog centra ne dodiruje drugi element). Ovaj je manji i ima suseda toliko blizu, pa je na telefonu lako dodirnuti pogrešan.",
+    "A tap target should be at least 24 by 24 CSS pixels, unless there is enough space around it (a 24 px circle centred on it doesn't touch another target). This one is smaller and has a neighbour that close, so on a phone it is easy to tap the wrong thing. This is an accessibility issue, so it is listed as a note and does not affect the score.": "Element za dodir treba da bude najmanje 24 x 24 CSS piksela, osim ako oko njega ima dovoljno prostora (krug od 24 px oko njegovog centra ne dodiruje drugi element). Ovaj je manji i ima suseda toliko blizu, pa je na telefonu lako dodirnuti pogrešan. Ovo je pitanje pristupačnosti, pa je navedeno kao napomena i ne utiče na skor.",
     "On the Mobile breakpoint make the target at least 24x24 px (padding counts) or give it more space from its neighbours — in Webflow, Style panel (size / padding / margin) with the Mobile breakpoint selected.": "Na Mobile breakpoint-u napravi element od najmanje 24x24 px (padding se računa) ili mu daj više prostora od suseda — u Webflow-u, Style panel (veličina / padding / margin) sa izabranim Mobile breakpoint-om.",
     "Tap targets on mobile (24x24 px)": "Elementi za dodir na mobilnom (24x24 px)",
     "custom code (Page settings > Custom code > Inside <head> tag, or Site settings > Custom code > Head code)": "custom code-a (Page settings > Custom code > Inside <head> tag, ili Site settings > Custom code > Head code)",
@@ -5726,7 +5853,7 @@
     "Relevant to both SEO and AEO — the page can have a normal description/snippet in Google search results.": "Relevantno i za SEO i za AEO — stranica može imati normalan opis/snippet u Google rezultatima pretrage.",
     "lang attribute is missing on <html>": "lang atribut nedostaje na <html>",
     "<html> has no lang attribute.": "<html> nema lang atribut.",
-    "Google doesn't use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement.": "Google ne koristi lang atribut, ali ga koriste čitači ekrana: tekst čitaju na jeziku koji je ovde podešen, pa je to zahtev pristupačnosti.",
+    "Google doesn't use the lang attribute, but screen readers do: they read the text in the language set here, so it is an accessibility requirement. This is an accessibility issue, so it is listed as a note and does not affect the score.": "Google ne koristi lang atribut, ali ga koriste čitači ekrana: tekst čitaju na jeziku koji je ovde podešen, pa je to zahtev pristupačnosti. Ovo je pitanje pristupačnosti, pa je navedeno kao napomena i ne utiče na skor.",
     "lang attribute is present on <html> ({0})": "lang atribut postoji na <html> ({0})",
     "Viewport meta tag is missing": "Viewport meta tag nedostaje",
     "There is no <meta name=\"viewport\">.": "Nema <meta name=\"viewport\">.",
@@ -5735,7 +5862,7 @@
     "Viewport meta tag is present": "Viewport meta tag postoji",
     "Viewport prevents the user from zooming": "Viewport sprečava korisnika da zumira",
     "viewport = \"{0}\"": "viewport = \"{0}\"",
-    "Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible.": "Blokiran zoom (user-scalable=no ili maximum-scale manji od 2) sprečava slabovide osobe da uvećaju stranicu na telefonu; zbog pristupačnosti mora biti moguće uvećanje bar na 200%.",
+    "Blocking zoom (user-scalable=no or maximum-scale below 2) prevents people with low vision from enlarging the page on a phone; for accessibility, zooming to at least 200% must be possible. This is an accessibility issue, so it is listed as a note and does not affect the score.": "Blokiran zoom (user-scalable=no ili maximum-scale manji od 2) sprečava slabovide osobe da uvećaju stranicu na telefonu; zbog pristupačnosti mora biti moguće uvećanje bar na 200%. Ovo je pitanje pristupačnosti, pa je navedeno kao napomena i ne utiče na skor.",
     "Remove user-scalable=no from the viewport tag and remove maximum-scale (or set it to at least 2).": "Ukloni user-scalable=no iz viewport taga i ukloni maximum-scale (ili ga postavi na najmanje 2).",
     "Viewport allows the user to zoom the page": "Viewport dozvoljava korisniku da zumira stranicu",
     "og:image: {0}": "og:image: {0}",
@@ -5762,7 +5889,7 @@
     "In Webflow: Assets panel > the image's more options > Compress > WebP or AVIF (works for PNG). Compression replaces the original file.": "U Webflow-u: Assets panel > more options slike > Compress > WebP ili AVIF (radi i za PNG). Kompresija zamenjuje originalni fajl.",
     "No image is larger than needed for its displayed size ({0} measured)": "Nijedna slika nije veća nego što treba za prikazanu veličinu (izmereno: {0})",
     "Image is larger than its displayed size ({0}px file shown at {1}px)": "Slika je veća od prikazane veličine (fajl {0}px prikazan na {1}px)",
-    "The image is compared with the size it is shown at, including the screen's pixel density, and reported when the right-sized image would be at least 4 KB smaller. Here the file is {0}px wide but shown {1}px wide on a screen with pixel density {2}, so about {3}px would be enough. Measured at the current window width; the same rule also runs at phone and tablet widths.": "Slika se poredi sa veličinom u kojoj je prikazana, uz gustinu piksela ekrana, i prijavljuje se kada bi slika u pravoj veličini bila bar 4 KB manja. Ovde je fajl širok {0}px, a prikazan je na {1}px na ekranu gustine piksela {2}, pa bi bilo dovoljno oko {3}px. Izmereno na trenutnoj širini prozora; isto pravilo se pokreće i na širini telefona i tableta.",
+    "The image's pixels are compared with the pixels of the box it is shown in, including the screen's pixel density. It is reported when the right-sized image would be more than 4 KB smaller (12 KB if the image already has responsive variants). Here the file is {0}×{1} px, but it is shown in a {2}×{3} px box on a screen with pixel density {4}, which uses about {5}×{6} px. The rest is downloaded but not shown (scaled down, or cropped when the box has a different shape). Measured at the current window width; the same rule also runs at phone and tablet widths.": "Pikseli slike se porede sa pikselima okvira u kom je prikazana, uz gustinu piksela ekrana. Prijavljuje se kada bi slika u pravoj veličini bila više od 4 KB manja (12 KB ako slika već ima responsive varijante). Ovde je fajl {0}×{1} px, a prikazan je u okviru od {2}×{3} px na ekranu gustine piksela {4}, što koristi oko {5}×{6} px. Ostatak se preuzima, a ne prikazuje (umanjen je, ili isečen kada okvir ima drugačiji oblik). Izmereno na trenutnoj širini prozora; isto pravilo se pokreće i na širini telefona i tableta.",
     "1) Find out why the full-size file is served. Webflow creates responsive variants (srcset) for uploaded inline JPG, PNG and WebP images, except those added via rich text elements, and not for background images; the \"Disable responsiveness\" checkbox in Image settings turns them off (Webflow's variants have \"-p-\" plus a width in the file name, e.g. \"-p-500\"). 2) If it is an Image element with responsiveness turned off: select it > Element settings panel > Image settings > uncheck \"Disable responsiveness\", then publish. 3) Otherwise replace the file: resize it to about {0}px wide (displayed width × pixel density) and compress it, then Assets panel > the image's more options > Replace (the asset URL changes, so update any direct links). 4) If the file already is a Webflow variant (\"-p-\" in the name) and the difference is small, there is little to gain — Webflow only makes fixed variant widths.": "1) Utvrdi zašto se servira fajl pune veličine. Webflow pravi responsive varijante (srcset) za otpremljene inline JPG, PNG i WebP slike, osim onih dodatih kroz rich text elemente, i ne prave se za pozadinske slike; polje \"Disable responsiveness\" u Image settings ih isključuje (Webflow varijante imaju \"-p-\" i širinu u imenu fajla, npr. \"-p-500\"). 2) Ako je u pitanju Image element sa isključenom responsivnošću: izaberi ga > Element settings panel > Image settings > odčekiraj \"Disable responsiveness\", pa objavi. 3) U suprotnom zameni fajl: smanji ga na širinu oko {0}px (prikazana širina × gustina piksela) i kompresuj, pa Assets panel > more options slike > Replace (URL asset-a se menja, pa ažuriraj direktne linkove). 4) Ako je fajl već Webflow varijanta (\"-p-\" u imenu) i razlika je mala, nema mnogo dobiti — Webflow pravi samo fiksne širine varijanti.",
     "OG image is too small ({0}x{1})": "OG slika je premala ({0}x{1})",
     "OG image fails to load": "OG slika se ne učitava",
@@ -5806,7 +5933,7 @@
     "Keep only one H1, change the others to H2/H3 as needed.": "Zadrži samo jedan H1, ostale po potrebi promeni u H2/H3.",
     "Exactly one H1 found on the page": "Na stranici je pronađen tačno jedan H1",
     "Heading hierarchy skips a level (H{0} → H{1})": "Hijerarhija naslova preskače nivo (H{0} → H{1})",
-    "Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn't affect Google rankings.": "Preskakanje nivoa naslova (npr. H2 pa odmah H4) kvari strukturu stranice za čitaoce i čitače ekrana. Ne utiče na rangiranje u Google-u.",
+    "Skipping heading levels (e.g. H2 straight to H4) breaks the page outline for readers and screen readers. It doesn't affect Google rankings. This is an accessibility issue, so it is listed as a note and does not affect the score.": "Preskakanje nivoa naslova (npr. H2 pa odmah H4) kvari strukturu stranice za čitaoce i čitače ekrana. Ne utiče na rangiranje u Google-u. Ovo je pitanje pristupačnosti, pa je navedeno kao napomena i ne utiče na skor.",
     "Use heading levels in order, without skipping.": "Koristi nivoe naslova redom, bez preskakanja.",
     "Heading hierarchy has no skipped levels": "Hijerarhija naslova nema preskočenih nivoa",
     "{0} heading elements on the page.": "Elemenata naslova na stranici: {0}.",
@@ -5848,7 +5975,7 @@
     "Forms": "Forme",
     "Form field has no accessible label": "Polje forme nema pristupačnu labelu",
     "placeholder: \"{0}\"": "placeholder: \"{0}\"",
-    "A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect.": "Placeholder nestaje čim posetilac počne da kuca i nije pouzdano pristupačno ime, pa čitači ekrana i glasovna kontrola mogu da najave polje bez ikakvog imena. <label> (ili aria-label) je standardno rešenje. Ovo je pre svega pitanje pristupačnosti i upotrebljivosti — nema direktan uticaj na rangiranje.",
+    "A placeholder disappears as soon as the visitor starts typing and is not a reliable accessible name, so screen readers and voice control may announce the field with no name at all. A <label> (or aria-label) is the standard fix. This is mainly an accessibility and usability issue — it has no direct ranking effect. This is an accessibility issue, so it is listed as a note and does not affect the score.": "Placeholder nestaje čim posetilac počne da kuca i nije pouzdano pristupačno ime, pa čitači ekrana i glasovna kontrola mogu da najave polje bez ikakvog imena. <label> (ili aria-label) je standardno rešenje. Ovo je pre svega pitanje pristupačnosti i upotrebljivosti — nema direktan uticaj na rangiranje. Ovo je pitanje pristupačnosti, pa je navedeno kao napomena i ne utiče na skor.",
     "All {0} form field(s) have a label": "Sva polja forme ({0}) imaju labelu",
     "Organization schema has no sameAs (links to the official profiles)": "Organization schema nema sameAs (linkove ka zvaničnim profilima)",
     "Profiles linked on this page: {0}": "Profili povezani na ovoj stranici: {0}",
@@ -5979,18 +6106,18 @@
     "Replace the placeholder text with real content before publishing.": "Zameni placeholder tekst pravim sadržajem pre objavljivanja.",
     "No placeholder/Lorem ipsum text on the page": "Nema placeholder/Lorem ipsum teksta na stranici",
     "Fonts": "Fontovi",
-    "The page uses {0} different fonts: {1}": "Stranica koristi različite fontove ({0}): {1}",
+    "The page uses {0} different web fonts: {1}": "Stranica koristi različite web fontove ({0}): {1}",
     "Each extra font is more to download before the text shows in it, so fewer web fonts are better. There is no exact limit, so this is a note only and does not affect the score.": "Svaki dodatni font je još preuzimanja pre nego što se tekst prikaže u njemu, pa je bolje imati manje web fontova. Tačna granica ne postoji, pa je ovo samo napomena i ne utiče na skor.",
     "If the design allows, use fewer font families, or a variable font (one file can replace several weights, e.g. light, regular and bold).": "Ako dizajn dozvoljava, koristi manje porodica fontova ili variable font (jedan fajl može da zameni više debljina, npr. light, regular i bold).",
-    "The page uses {0} fonts: {1}": "Fontova na stranici: {0} ({1})",
+    "The page uses {0} web fonts: {1}": "Web fontova na stranici: {0} ({1})",
     "Informational only — doesn't affect the SEO score, but worth being aware of.": "Samo informativno — ne utiče na SEO skor, ali vredi znati.",
-    "The page uses only 1 font ({0}) — minimal risk of FOUT/FOIT": "Stranica koristi samo 1 font ({0}) — minimalan rizik od FOUT/FOIT",
+    "The page uses only 1 web font ({0}) — minimal risk of FOUT/FOIT": "Stranica koristi samo 1 web font ({0}) — minimalan rizik od FOUT/FOIT",
     "The page dynamically loads Google Fonts from Google's servers": "Stranica dinamički učitava Google Fonts sa Google servera",
     "A German court (LG München I, 01/2022) ruled that dynamically loading Google Fonts without consent sends the visitor's IP address to Google without a legal basis under the GDPR, which triggered a wave of warning letters (mostly in Germany, but the GDPR applies across the EU). We are not legal advisors — check with a lawyer if this is relevant for the client.": "Nemački sud (LG München I, 01/2022) presudio je da dinamičko učitavanje Google Fonts bez saglasnosti šalje IP adresu posetioca Google-u bez pravnog osnova prema GDPR-u, što je pokrenulo talas opomena (uglavnom u Nemačkoj, ali GDPR važi u celoj EU). Nismo pravni savetnici — proveri sa pravnikom ako je ovo relevantno za klijenta.",
     "No dynamic loading of Google Fonts from Google's servers (GDPR risk avoided)": "Nema dinamičkog učitavanja Google Fonts sa Google servera (izbegnut GDPR rizik)",
     "Font file in an older format (not .woff2)": "Fajl fonta u starijem formatu (nije .woff2)",
     "WOFF2 has the widest browser support and the best compression (about 30% smaller than WOFF), so it is the only font format needed today.": "WOFF2 ima najširu podršku u browserima i najbolju kompresiju (oko 30% manji od WOFF), pa je danas jedini potreban format fonta.",
-    "All @font-face files are in the modern .woff2 format": "Svi @font-face fajlovi su u modernom .woff2 formatu",
+    "All font files used on this page are in the modern .woff2 format": "Svi fontovi koje stranica koristi su u modernom .woff2 formatu",
     "Duplicate ID attribute: \"{0}\" ({1} times)": "Duplirani ID atribut: \"{0}\" (broj pojavljivanja: {1})",
     "Duplicate IDs break in-page anchor links and ARIA references (aria-controls, aria-labelledby) that rely on a unique ID. Usually the result of copying an entire section without changing the ID.": "Duplirani ID-jevi kvare in-page anchor linkove i ARIA reference (aria-controls, aria-labelledby) koje zavise od jedinstvenog ID-a. Obično je posledica kopiranja cele sekcije bez promene ID-a.",
     "Rename the duplicates to unique IDs.": "Preimenuj duplikate u jedinstvene ID-jeve.",
