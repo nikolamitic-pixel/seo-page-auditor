@@ -375,7 +375,10 @@
     }
 
     // Only HTML <title> elements: inline SVGs (logos, icons) carry their own <title> for accessibility, which is not a page title.
-    var titleTags = Array.prototype.filter.call(document.querySelectorAll('title'), function (t) { return t.namespaceURI !== 'http://www.w3.org/2000/svg'; });
+    // 12.11.2026: only <title> elements in <head>. The page title is the first <title> in the document (HTML standard), which
+    // is Webflow's own one in <head>; a stray <title> in <body> (webflow.com blog: <title>Facebook</title> inside share-icon
+    // links in an Embed) doesn't change it, and the finding says "in the head".
+    var titleTags = Array.prototype.filter.call(document.head ? document.head.querySelectorAll('title') : [], function (t) { return t.namespaceURI !== 'http://www.w3.org/2000/svg'; });
     if (titleTags.length > 1) {
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'More than one <title> tag in the head (' + titleTags.length + ')',
         description: Array.prototype.map.call(titleTags, function (t) { return '"' + t.textContent + '"'; }).join(', '),
@@ -867,6 +870,55 @@
     { token: 'claude-searchbot', name: 'Claude-SearchBot (Claude search)' },
     { token: 'claude-user', name: 'Claude-User (Claude fetching pages for users)' }
   ];
+  // 12.11.2026 — Lighthouse "http-status-code" (SEO category): the page itself must not answer HTTP 400 or higher.
+  // Read from the Navigation Timing entry (responseStatus, the final response after redirects). Browsers that don't
+  // expose it (value missing or 0) -> not evaluated.
+  function checkHttpStatus() {
+    var nav = null;
+    try { nav = performance.getEntriesByType('navigation')[0]; } catch (e) {}
+    var st = nav && typeof nav.responseStatus === 'number' ? nav.responseStatus : 0;
+    if (!st) return;
+    if (st >= 400) {
+      addFinding({ category: 'Technical / crawlability', severity: 'error', title: 'Page returns HTTP status ' + st,
+        description: LOC.href.slice(0, 200),
+        why: 'The page answered with an error status (' + st + '). Google does not index pages that return a 4xx status, and a 5xx status tells it the server has a problem, so this page can\'t appear in search results or be used as a source for AI answers.',
+        fix: 'If the page should exist: check that it is published and that its URL is right (Pages panel > Page settings > slug; for a CMS item, that the item is published and not a draft or archived). If it is meant to be gone (Webflow\'s 404 page shows this status on purpose), redirect old URLs to a live page in Site settings > Publishing > 301 redirects.',
+        element: null });
+    } else {
+      addSuccess({ category: 'Technical / crawlability', title: 'Page returns HTTP status ' + st, description: '', element: null });
+    }
+  }
+
+  // 12.11.2026 — Lighthouse "robots-txt" (SEO category, 12.8.1 source): every line must be a known directive in the form
+  // "name: value"; allow/disallow need a user-agent line before them and a value that is empty or starts with "/" or "*";
+  // "$" only at the end; sitemap must be a full URL; user-agent must not be empty. Lines with errors are ignored by crawlers,
+  // so the rule written there silently does nothing. Same safelist as Lighthouse, plus Content-Signal (Cloudflare's
+  // documented directive, added to robots.txt by its managed robots.txt feature).
+  var ROBOTS_KNOWN = ['user-agent', 'disallow', 'allow', 'sitemap', 'crawl-delay', 'clean-param', 'host', 'request-rate', 'visit-time', 'noindex', 'content-signal'];
+  function validateRobotsTxt(txt) {
+    var errors = [], inGroup = false;
+    String(txt || '').split(/\r\n|\r|\n/).forEach(function (raw, idx) {
+      var line = raw, hash = line.indexOf('#');
+      if (hash !== -1) line = line.slice(0, hash);
+      line = line.trim();
+      if (!line) return;
+      var err = null, colon = line.indexOf(':'), name = '', val = '';
+      if (colon === -1) err = 'Syntax not understood';
+      else {
+        name = line.slice(0, colon).trim().toLowerCase(); val = line.slice(colon + 1).trim();
+        if (ROBOTS_KNOWN.indexOf(name) === -1) err = 'Unknown directive';
+        else if (name === 'sitemap') { try { var su = new URL(val); if (!/^(https?|ftp):$/.test(su.protocol)) err = 'Invalid sitemap URL protocol'; } catch (e) { err = 'Invalid sitemap URL'; } }
+        else if (name === 'user-agent' && !val) err = 'No user-agent specified';
+        else if ((name === 'allow' || name === 'disallow') && val !== '' && val.charAt(0) !== '/' && val.charAt(0) !== '*') err = 'Pattern should either be empty, start with "/" or "*"';
+        else if ((name === 'allow' || name === 'disallow') && val.indexOf('$') !== -1 && val.indexOf('$') !== val.length - 1) err = '"$" should only be used at the end of the pattern';
+      }
+      if (err) { errors.push({ n: idx + 1, line: raw.trim(), msg: err }); return; }
+      if (name === 'user-agent') inGroup = true;
+      else if (!inGroup && (name === 'allow' || name === 'disallow')) errors.push({ n: idx + 1, line: raw.trim(), msg: 'No user-agent specified' });
+    });
+    return errors;
+  }
+
   function checkRobotsForPage() {
     var CAT = 'Technical / crawlability';
     var target = LOC.pathname + LOC.search;
@@ -886,6 +938,18 @@
       }
       var noFile = res.text == null;                    // 4xx (except 429) = no robots.txt = no restrictions
       var groups = noFile ? [] : parseRobotsTxt(res.text);
+      if (!noFile) {
+        var rErr = validateRobotsTxt(res.text);
+        if (rErr.length) {
+          addFinding({ check: 'crawl.robotsValid', category: CAT, severity: 'warning',
+            title: 'robots.txt has lines crawlers can\'t understand (' + rErr.length + ')',
+            description: rErr.slice(0, 8).map(function (e) { return 'Line ' + e.n + ': ' + e.line.slice(0, 80) + ' — ' + e.msg; }).join('\n') + (rErr.length > 8 ? '\n… +' + (rErr.length - 8) : ''),
+            why: 'Crawlers skip lines they can\'t parse, so the rule written on such a line has no effect (for example a misspelled "Disalow:" blocks nothing).',
+            fix: ROBOTS_FIX, element: null });
+        } else {
+          addSuccess({ check: 'crawl.robotsValid', category: CAT, title: 'robots.txt is valid', description: LOC.origin + '/robots.txt', element: null });
+        }
+      }
       var g = robotsVerdict(groups, 'googlebot', target);
       if (g.blocked) {
         addFinding({ check: 'crawl.robots', category: CAT, severity: 'error', title: 'Page is blocked in robots.txt for Googlebot',
@@ -2399,7 +2463,38 @@
   // 5.4 Links
   // ---------------------------------------------------------------------
 
-  var GENERIC_ANCHOR = /^(klikni ovde|click here|read more|saznaj vi[sš]e|vi[sš]e|ovde|here|link)$/i;
+  // 12.11.2026: the list of Lighthouse 12.8.1 "link-text" (core/audits/seo/link-text.js, nonDescriptiveLinkTexts), used
+  // the same way: the list of the page's language (<html lang>) if Lighthouse has one, otherwise all lists. Lighthouse
+  // has no Serbian/Croatian/Bosnian list; the tool's earlier Serbian words are kept for those languages.
+  // Found missing on lattice.com ("Learn more") and jasper.ai ("Learn More"), which Lighthouse reports.
+  var GENERIC_ANCHOR_LISTS = {
+    en: ['click here', 'click this', 'go', 'here', 'information', 'learn more', 'more', 'more info', 'more information', 'right here', 'read more', 'see more', 'start', 'this'],
+    ja: ['ここをクリック', 'こちらをクリック', 'リンク', '続きを読む', '続く', '全文表示'],
+    es: ['click aquí', 'click aqui', 'clicka aquí', 'clicka aqui', 'pincha aquí', 'pincha aqui', 'aquí', 'aqui', 'más', 'mas', 'más información', 'más informacion', 'mas información', 'mas informacion', 'este', 'enlace', 'este enlace', 'empezar'],
+    pt: ['clique aqui', 'ir', 'mais informação', 'mais informações', 'mais', 'veja mais'],
+    ko: ['여기', '여기를 클릭', '클릭', '링크', '자세히', '자세히 보기', '계속', '이동', '전체 보기'],
+    sv: ['här', 'klicka här', 'läs mer', 'mer', 'mer info', 'mer information'],
+    de: ['klicke hier', 'hier klicken', 'hier', 'mehr', 'siehe', 'dies', 'das', 'weiterlesen'],
+    ta: ['அடுத்த பக்கம்', 'மறுபக்கம்', 'முந்தைய பக்கம்', 'முன்பக்கம்', 'மேலும் அறிக', 'மேலும் தகவலுக்கு', 'மேலும் தரவுகளுக்கு', 'தயவுசெய்து இங்கே அழுத்தவும்', 'இங்கே கிளிக் செய்யவும்'],
+    fa: ['اطلاعات بیشتر', 'اطلاعات', 'این', 'اینجا بزنید', 'اینجا کلیک کنید', 'اینجا', 'برو', 'بیشتر بخوانید', 'بیشتر بدانید', 'بیشتر', 'شروع'],
+    sr: ['klikni ovde', 'saznaj više', 'saznaj vise', 'više', 'vise', 'ovde', 'link']
+  };
+  GENERIC_ANCHOR_LISTS.hr = GENERIC_ANCHOR_LISTS.sr; GENERIC_ANCHOR_LISTS.bs = GENERIC_ANCHOR_LISTS.sr;
+  function isGenericAnchorText(t) {
+    var term = String(t || '').trim().toLowerCase();
+    if (!term) return false;
+    var lang = (document.documentElement.getAttribute('lang') || '').split('-')[0].toLowerCase();
+    if (lang && GENERIC_ANCHOR_LISTS[lang]) return GENERIC_ANCHOR_LISTS[lang].indexOf(term) !== -1;
+    return Object.keys(GENERIC_ANCHOR_LISTS).some(function (k) { return GENERIC_ANCHOR_LISTS[k].indexOf(term) !== -1; });
+  }
+  function genericAnchorApplies(a, href) {
+    // Lighthouse skips nofollow links, javascript:/mailto: links and links to the same page (anchors).
+    if (/(^|\s)nofollow(\s|$)/i.test(a.getAttribute('rel') || '')) return false;
+    var h = String(href || '').trim().toLowerCase();
+    if (!h || /^(javascript|mailto):/.test(h)) return false;
+    try { var abs = new URL(href, LOC.href); if (abs.origin + abs.pathname + abs.search === LOC.origin + LOC.pathname + LOC.search) return false; } catch (e) {}
+    return true;
+  }
 
   function checkLinks() {
     var links =Array.prototype.slice.call(document.querySelectorAll('a'));
@@ -2479,7 +2574,7 @@
         addFinding({ category: 'Links', severity: 'warning', title: 'Link with no text (and no image/icon/aria-label)',
           description: href || '(no href)', why: 'An empty link carries zero context for the user and for the crawler.',
           fix: 'Add visible text or an aria-label.', element: a });
-      } else if (GENERIC_ANCHOR.test(linkText.trim())) {
+      } else if (isGenericAnchorText(linkText) && genericAnchorApplies(a, href)) {
         // Note: the title used to incorrectly say "Non-generic" (the opposite of the actual
         // meaning) — this branch fires exactly when the text IS generic (matches the
         // GENERIC_ANCHOR pattern).
@@ -3588,6 +3683,8 @@
     { id: 'url.canonical', w: 4, re: /^Canonical (points|tag is present)/ },
     { id: 'meta.canonicalValid', w: 4, re: /^(Canonical tag is (outside|valid)|More than one canonical tag|Canonical tag appears|Canonical uses a relative|Canonical URL contains a fragment)/ },
     { id: 'crawl.robots', w: 4, re: /^(Page is (not )?blocked in robots\.txt for Googlebot|robots\.txt answers HTTP)/ },
+    { id: 'crawl.robotsValid', w: 2, re: /^robots\.txt (has lines crawlers|is valid)/ },   // 12.11.2026, Lighthouse "robots-txt"
+    { id: 'crawl.status', w: 4, re: /^Page returns HTTP status/ },                       // 12.11.2026, Lighthouse "http-status-code"
     { id: 'aeo.robots', w: 4, re: /^Page is (not )?blocked in robots\.txt for AI search crawlers/ },
     { id: 'crawl.jsMismatch', w: 4, re: /^(noindex is in the original HTML|Canonical in the original HTML|Original HTML and the page after JavaScript)/ },
     { id: 'crawl.metaRefresh', w: 4, re: /^(Page redirects (instantly )?with a meta refresh|No meta refresh redirect)/ },
@@ -3655,7 +3752,7 @@
     'meta.noindex': 'noindex directive', 'meta.nosnippet': 'Robots directives (nosnippet etc.)', 'meta.xrobots': 'X-Robots-Tag header',
     'meta.sitemap': 'Page listed in sitemap.xml', 'meta.lang': 'lang attribute', 'meta.viewport': 'Viewport meta tag', 'meta.zoom': 'Viewport allows zoom',
     'fav.present': 'Favicon present', 'fav.quality': 'Favicon quality', 'fav.robots': 'Favicon not blocked by robots',
-    'url.canonical': 'Canonical points to this page', 'meta.canonicalValid': 'Canonical tag is valid', 'crawl.robots': 'Not blocked in robots.txt (Googlebot)', 'aeo.robots': 'Not blocked for AI search crawlers', 'crawl.jsMismatch': 'Original HTML matches the rendered page', 'crawl.metaRefresh': 'No meta refresh redirect', 'intl.hreflang': 'hreflang tags', 'cwv.inp': 'INP (interaction to next paint)', 'img.broken': 'Images load (no broken images)', 'links.js': 'Navigation uses crawlable links', 'links.nofollow': 'No nofollow on internal links', 'links.imgAlt': 'Image links have alt text', 'aeo.schemaRequired': 'Schema has Google-required properties', 'aeo.schemaVisible': 'Schema text is on the page', 'mobile.parity': 'Same content on mobile as on desktop', 'mobile.tapTargets': 'Tap targets on mobile (24x24 px)', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
+    'url.canonical': 'Canonical points to this page', 'meta.canonicalValid': 'Canonical tag is valid', 'crawl.robots': 'Not blocked in robots.txt (Googlebot)', 'crawl.robotsValid': 'robots.txt is valid', 'crawl.status': 'Page returns a successful HTTP status', 'aeo.robots': 'Not blocked for AI search crawlers', 'crawl.jsMismatch': 'Original HTML matches the rendered page', 'crawl.metaRefresh': 'No meta refresh redirect', 'intl.hreflang': 'hreflang tags', 'cwv.inp': 'INP (interaction to next paint)', 'img.broken': 'Images load (no broken images)', 'links.js': 'Navigation uses crawlable links', 'links.nofollow': 'No nofollow on internal links', 'links.imgAlt': 'Image links have alt text', 'aeo.schemaRequired': 'Schema has Google-required properties', 'aeo.schemaVisible': 'Schema text is on the page', 'mobile.parity': 'Same content on mobile as on desktop', 'mobile.tapTargets': 'Tap targets on mobile (24x24 px)', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
     'h.fake': 'Text styled as a heading', 'img.alt': 'Image alt text', 'img.height': 'Image height (layout shift)',
     'img.external': 'Images hosted on the same domain', 'img.oversize': 'Image size vs displayed size',
     'img.lazy': 'Below-the-fold images lazy-loaded', 'img.format': 'Modern image format', 'img.size': 'Image file size (up to 500KB)',
@@ -5512,7 +5609,7 @@
     }
 
     // Each check runs on its own: an unexpected error inside one (a page with unusual markup) must not take the others down.
-    [checkPreliminary, checkSlug, checkMetaHead, checkFavicon, checkIndexingSignals, checkRobotsForPage, checkCanonicalValid,
+    [checkPreliminary, checkHttpStatus, checkSlug, checkMetaHead, checkFavicon, checkIndexingSignals, checkRobotsForPage, checkCanonicalValid,
      checkOriginalVsRendered, checkMetaRefresh, checkHreflang, checkHeadings, checkImages, checkBrokenImages, checkVideos,
      checkForms, checkLinks, checkLinkCrawl, checkContent, checkTapTargets, checkFonts, checkTechnical, checkAEO].forEach(runCheckSafely);
     tagGlobalFindings();
@@ -5920,6 +6017,21 @@
     "Canonical: {0}": "Canonical: {0}",
     "URL slug ends with \"-copy\" ({0})": "URL slug se završava sa \"-copy\" ({0})",
     "Path: {0}": "Putanja: {0}",
+    "Page returns HTTP status {0}": "Stranica vraća HTTP status {0}",
+    "The page answered with an error status ({0}). Google does not index pages that return a 4xx status, and a 5xx status tells it the server has a problem, so this page can't appear in search results or be used as a source for AI answers.": "Stranica je odgovorila statusom greške ({0}). Google ne indeksira stranice koje vraćaju 4xx status, a 5xx status mu govori da server ima problem, pa ova stranica ne može da se pojavi u rezultatima pretrage niti da bude izvor za AI odgovore.",
+    "If the page should exist: check that it is published and that its URL is right (Pages panel > Page settings > slug; for a CMS item, that the item is published and not a draft or archived). If it is meant to be gone (Webflow's 404 page shows this status on purpose), redirect old URLs to a live page in Site settings > Publishing > 301 redirects.": "Ako stranica treba da postoji: proveri da je objavljena i da je URL tačan (Pages panel > Page settings > slug; za CMS item, da je objavljen, a ne draft ili arhiviran). Ako je namerno uklonjena (Webflow 404 stranica namerno vraća ovaj status), preusmeri stare URL-ove na živu stranicu u Site settings > Publishing > 301 redirects.",
+    "robots.txt has lines crawlers can't understand ({0})": "robots.txt ima redove koje crawleri ne razumeju ({0})",
+    "robots.txt is valid": "robots.txt je ispravan",
+    "Crawlers skip lines they can't parse, so the rule written on such a line has no effect (for example a misspelled \"Disalow:\" blocks nothing).": "Crawleri preskaču redove koje ne mogu da pročitaju, pa pravilo napisano u takvom redu nema efekta (npr. pogrešno napisano \"Disalow:\" ne blokira ništa).",
+    "Line {0}: {1} — {2}": "Red {0}: {1} — {2}",
+    "Syntax not understood": "Sintaksa nije razumljiva",
+    "Unknown directive": "Nepoznata direktiva",
+    "Invalid sitemap URL": "Neispravan URL sitemap-a",
+    "Invalid sitemap URL protocol": "Neispravan protokol URL-a sitemap-a",
+    "No user-agent specified": "Nije naveden user-agent",
+    "Pattern should either be empty, start with \"/\" or \"*\"": "Putanja treba da bude prazna ili da počinje sa \"/\" ili \"*\"",
+    "\"$\" should only be used at the end of the pattern": "\"$\" sme da stoji samo na kraju putanje",
+    "Page returns a successful HTTP status": "Stranica vraća uspešan HTTP status",
     "When a page is duplicated in Webflow it is named \"<name> Copy\" and gets the slug \"<slug>-copy\", so a published \"-copy\" URL is usually a duplicate whose slug was never renamed. Readable words in a URL are better.": "Kada se stranica duplira u Webflow-u, dobija ime \"<ime> Copy\" i slug \"<slug>-copy\", pa je objavljen \"-copy\" URL obično duplikat kome slug nije preimenovan. Čitljive reči u URL-u su bolje.",
     "URL slug does not end with Webflow's duplication suffix \"-copy\"": "URL slug se ne završava Webflow sufiksom dupliranja \"-copy\"",
     "Heading structure": "Struktura naslova",
