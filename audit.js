@@ -153,7 +153,10 @@
   }
 
   function isVisible(el) {
-    if (!el || !(el instanceof Element)) return false;
+    // 12.11.2026: nodeType, not "instanceof Element". In the per-device frames the page's nodes can come from another
+    // JS realm than this script's Element (verified on honeybook.com: H1 visible at 337x108 px, but instanceof false),
+    // which made every element look invisible -> e.g. "H1 is missing" only on mobile/tablet.
+    if (!el || el.nodeType !== 1) return false;
     var style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
     var rect = el.getBoundingClientRect();
