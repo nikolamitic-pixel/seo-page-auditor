@@ -426,14 +426,14 @@
     if (!desc || !desc.trim()) {
       addFinding({ category: 'Meta & head tags', severity: 'error', title: 'Meta description is missing',
         description: 'There is no meta description tag, or it is empty.', why: 'Google sometimes shows the meta description as the text under the result in search; without one, that text is taken from the page content only.',
-        fix: 'Add a meta description of 70–155 characters in Pages panel > Page settings > SEO settings > Meta description.', element: document.head });
+        fix: 'Add a meta description of 70–160 characters in Pages panel > Page settings > SEO settings > Meta description.', element: document.head });
     } else if (desc.length < 70) {
-      addFinding({ category: 'Meta & head tags', severity: 'info', title: 'Meta description is short (' + desc.length + ' characters)',
-        description: desc, why: 'A meta description under 70 characters usually doesn\'t describe the page well. Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.',
+      addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta description is short (' + desc.length + ' characters)',
+        description: desc, why: 'A meta description under 70 characters usually doesn\'t describe the page well enough to make the result in search clear.',
         fix: 'Expand it to at least 70 characters so it describes the page.', element: document.head });
-    } else if (desc.length > 155) {   // Screaming Frog: Meta Description Over 155 Characters (06.11.2026)
+    } else if (desc.length > 160) {   // 17.11.2026 (user): limit 160 — Ahrefs "160 characters max for desktop"; Screaming Frog 155 / Yoast 156 are within it. Up to 160 nothing is reported.
       addFinding({ category: 'Meta & head tags', severity: 'warning', title: 'Meta description is too long (' + desc.length + ' characters)',
-        description: desc, why: 'There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 155 characters the end is usually cut off.', fix: 'Shorten it to 155 characters or fewer.', element: document.head });
+        description: desc, why: 'There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 160 characters the end is usually cut off.', fix: 'Shorten it to 160 characters or fewer.', element: document.head });
     } else {
       addSuccess({ category: 'Meta & head tags', title: 'Meta description is present and of appropriate length (' + desc.length + ' characters)',
         description: desc, element: document.head });
@@ -1468,6 +1468,32 @@
       });
     });
     if (checkedTypes.length && !incomplete) addSuccess({ check: 'aeo.schemaRequired', group: 'aeo', category: CAT, title: 'Schema has the properties Google requires (' + checkedTypes.join(', ') + ')', description: '', element: null });
+    // 13.11.2026 — self-serving reviews. Google's review snippet guidelines: "If the entity that's being reviewed controls the
+    // reviews about itself, their pages that use LocalBusiness or any other type of Organization structured data are
+    // ineligible for star review feature" (e.g. reviews of entity A on entity A's own site, also through an embedded widget).
+    // Found on finsweet.com/agency (Organization with aggregateRating + review). An Organization is taken to be the site
+    // itself unless its url points to another domain (a site that reviews other businesses).
+    var ORG_TYPE_RE = /(Organization|Business|Corporation|Store|Restaurant|Agency|Agent|NGO|ProfessionalService|LegalService|FinancialService|FoodEstablishment|LodgingBusiness|MedicalClinic|Dentist|Physician)$/;
+    var siteHost = String(LOC.hostname || '').replace(/^www\./, '').toLowerCase();
+    var selfRated = [];
+    nodes.forEach(function (x) {
+      var types = schemaTypesOfNode(x.n);
+      var orgT = types.filter(function (t) { return ORG_TYPE_RE.test(t) && !/^(EmployerAggregateRating)$/.test(t); })[0];
+      if (!orgT) return;
+      var hasRating = schemaGet(x.n, 'aggregateRating').some(function (r) { return r && typeof r === 'object'; }) || schemaGet(x.n, 'review').some(function (r) { return r && typeof r === 'object'; });
+      if (!hasRating) return;
+      var ref = schemaGet(x.n, 'url').concat(schemaGet(x.n, '@id')).filter(function (v) { return typeof v === 'string' && /^https?:/i.test(v); })[0];
+      if (ref) { try { if (new URL(ref).hostname.replace(/^www\./, '').toLowerCase() !== siteHost) return; } catch (e) {} }
+      var nm = schemaGet(x.n, 'name').filter(function (v) { return typeof v === 'string'; })[0] || '';
+      if (selfRated.indexOf(orgT + (nm ? ' "' + nm.slice(0, 60) + '"' : '')) === -1) selfRated.push(orgT + (nm ? ' "' + nm.slice(0, 60) + '"' : ''));
+    });
+    if (selfRated.length) {
+      addFinding({ check: 'aeo.selfReview', group: 'aeo', category: CAT, severity: 'warning',
+        title: 'Reviews/rating marked up on the site\'s own Organization schema (no review stars)',
+        description: selfRated.join('\n'),
+        why: 'Google doesn\'t show review stars for a business or organization that publishes reviews about itself on its own website (in the schema or through an embedded reviews widget), so this rating/review markup can\'t produce stars in search results.',
+        fix: 'Remove aggregateRating/review from the Organization (or LocalBusiness) schema of the site itself. Reviews can stay on the page as visible text. If you sell a product or app, ratings of that Product or SoftwareApplication are eligible instead. ' + SCHEMA_FIX, element: null });
+    }
     // Marked-up names / headlines that don't appear in the page text
     var pageNorm = null, notFound = [], checked = 0;
     nodes.forEach(function (x) {
@@ -3695,6 +3721,7 @@
     { id: 'links.nofollow', w: 2, re: /^(Internal link has rel="nofollow"|No internal link has rel="nofollow")/, total: true },
     { id: 'links.imgAlt', w: 2, re: /^(Image link has no anchor text|All image links have alt text)/, total: true },
     { id: 'aeo.schemaRequired', w: 2, re: /^(\w+ schema is missing properties Google requires|Schema has the properties Google requires)/ },
+    { id: 'aeo.selfReview', w: 2, re: /^Reviews\/rating marked up on the site's own Organization schema/ },   // 13.11.2026, Google review snippet guidelines (self-serving reviews)
     { id: 'aeo.schemaVisible', w: 2, re: /^(Schema text not found on the page|Schema names\/headlines appear on the page)/ },
     { id: 'mobile.parity', w: 2, re: /^(Content visible on desktop is missing on mobile|Mobile shows the same content as desktop)/ },
     { id: 'mobile.tapTargets', w: 0, re: /^Tap target is too small/, total: true, always: true },
@@ -3752,7 +3779,7 @@
     'meta.noindex': 'noindex directive', 'meta.nosnippet': 'Robots directives (nosnippet etc.)', 'meta.xrobots': 'X-Robots-Tag header',
     'meta.sitemap': 'Page listed in sitemap.xml', 'meta.lang': 'lang attribute', 'meta.viewport': 'Viewport meta tag', 'meta.zoom': 'Viewport allows zoom',
     'fav.present': 'Favicon present', 'fav.quality': 'Favicon quality', 'fav.robots': 'Favicon not blocked by robots',
-    'url.canonical': 'Canonical points to this page', 'meta.canonicalValid': 'Canonical tag is valid', 'crawl.robots': 'Not blocked in robots.txt (Googlebot)', 'crawl.robotsValid': 'robots.txt is valid', 'crawl.status': 'Page returns a successful HTTP status', 'aeo.robots': 'Not blocked for AI search crawlers', 'crawl.jsMismatch': 'Original HTML matches the rendered page', 'crawl.metaRefresh': 'No meta refresh redirect', 'intl.hreflang': 'hreflang tags', 'cwv.inp': 'INP (interaction to next paint)', 'img.broken': 'Images load (no broken images)', 'links.js': 'Navigation uses crawlable links', 'links.nofollow': 'No nofollow on internal links', 'links.imgAlt': 'Image links have alt text', 'aeo.schemaRequired': 'Schema has Google-required properties', 'aeo.schemaVisible': 'Schema text is on the page', 'mobile.parity': 'Same content on mobile as on desktop', 'mobile.tapTargets': 'Tap targets on mobile (24x24 px)', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
+    'url.canonical': 'Canonical points to this page', 'meta.canonicalValid': 'Canonical tag is valid', 'crawl.robots': 'Not blocked in robots.txt (Googlebot)', 'crawl.robotsValid': 'robots.txt is valid', 'crawl.status': 'Page returns a successful HTTP status', 'aeo.robots': 'Not blocked for AI search crawlers', 'crawl.jsMismatch': 'Original HTML matches the rendered page', 'crawl.metaRefresh': 'No meta refresh redirect', 'intl.hreflang': 'hreflang tags', 'cwv.inp': 'INP (interaction to next paint)', 'img.broken': 'Images load (no broken images)', 'links.js': 'Navigation uses crawlable links', 'links.nofollow': 'No nofollow on internal links', 'links.imgAlt': 'Image links have alt text', 'aeo.schemaRequired': 'Schema has Google-required properties', 'aeo.selfReview': 'No self-serving review markup', 'aeo.schemaVisible': 'Schema text is on the page', 'mobile.parity': 'Same content on mobile as on desktop', 'mobile.tapTargets': 'Tap targets on mobile (24x24 px)', 'url.slug': 'URL slug', 'h.h1': 'Exactly one H1', 'h.skip': 'Heading hierarchy',
     'h.fake': 'Text styled as a heading', 'img.alt': 'Image alt text', 'img.height': 'Image height (layout shift)',
     'img.external': 'Images hosted on the same domain', 'img.oversize': 'Image size vs displayed size',
     'img.lazy': 'Below-the-fold images lazy-loaded', 'img.format': 'Modern image format', 'img.size': 'Image file size (up to 500KB)',
@@ -5669,7 +5696,7 @@
     "Add a JSON-LD Organization block (name, url, logo, sameAs with the official profiles) — in Webflow: Pages panel > Home > Page settings > Schema markup field (Webflow advises not to add the same schema there and in custom code as well).": "Dodaj JSON-LD Organization blok (name, url, logo, sameAs sa zvaničnim profilima) — u Webflow-u: Pages panel > Home > Page settings > polje Schema markup (Webflow savetuje da se ista schema ne dodaje i tamo i u custom code).",
     "Remove all but one <title> tag — set the title in Pages panel > Page settings > SEO settings > Title tag, not manually in custom code.": "Ukloni sve <title> tagove osim jednog — naslov podesi u Pages panel > Page settings > SEO settings > Title tag, ne ručno u custom code-u.",
     "Add a unique, descriptive title in Pages panel > Page settings > SEO settings > Title tag (Webflow recommends under 60 characters).": "Dodaj jedinstven, opisan naslov u Pages panel > Page settings > SEO settings > Title tag (Webflow preporučuje manje od 60 karaktera).",
-    "Add a meta description of 70–155 characters in Pages panel > Page settings > SEO settings > Meta description.": "Dodaj meta description od 70–155 karaktera u Pages panel > Page settings > SEO settings > Meta description.",
+    "Add a meta description of 70–160 characters in Pages panel > Page settings > SEO settings > Meta description.": "Dodaj meta description od 70–160 karaktera u Pages panel > Page settings > SEO settings > Meta description.",
     "Add it in Pages panel > Page settings > Open Graph settings > Open Graph title (or check the box under the field to copy the SEO title).": "Dodaj ga u Pages panel > Page settings > Open Graph settings > Open Graph title (ili čekiraj polje ispod da se kopira SEO naslov).",
     "Add it in Pages panel > Page settings > Open Graph settings > Open Graph description (or check the box under the field to copy the meta description).": "Dodaj ga u Pages panel > Page settings > Open Graph settings > Open Graph description (ili čekiraj polje ispod da se kopira meta description).",
     "Add it in Pages panel > Page settings > Open Graph settings > Open Graph image (an image link or an image from the Assets panel; use at least 1200×630 px, ratio 1.91:1). On a Collection page choose an Image field.": "Dodaj je u Pages panel > Page settings > Open Graph settings > Open Graph image (link slike ili slika iz Assets panel-a; koristi najmanje 1200×630 px, odnos 1.91:1). Na Collection stranici izaberi Image polje.",
@@ -5723,6 +5750,10 @@
     "All image links have alt text ({0} checked)": "Svi linkovi sa slikom imaju alt tekst (provereno: {0})",
     "Image links have alt text": "Linkovi sa slikom imaju alt tekst",
     "{0} schema is missing properties Google requires: {1}": "{0} schema nema svojstva koja Google zahteva: {1}",
+    "Reviews/rating marked up on the site's own Organization schema (no review stars)": "Recenzije/ocena označene u Organization schema-i samog sajta (bez zvezdica)",
+    "Google doesn't show review stars for a business or organization that publishes reviews about itself on its own website (in the schema or through an embedded reviews widget), so this rating/review markup can't produce stars in search results.": "Google ne prikazuje zvezdice za firmu ili organizaciju koja na svom sajtu objavljuje recenzije o sebi (u schema-i ili kroz ugrađeni widget sa recenzijama), pa ova ocena/recenzije ne mogu da donesu zvezdice u rezultatima pretrage.",
+    "Remove aggregateRating/review from the Organization (or LocalBusiness) schema of the site itself. Reviews can stay on the page as visible text. If you sell a product or app, ratings of that Product or SoftwareApplication are eligible instead. {0}": "Ukloni aggregateRating/review iz Organization (ili LocalBusiness) schema-e samog sajta. Recenzije mogu da ostanu na stranici kao vidljiv tekst. Ako prodaješ proizvod ili aplikaciju, ocene tog Product ili SoftwareApplication elementa mogu da dobiju zvezdice. {0}",
+    "No self-serving review markup": "Nema recenzija o sebi u schema-i",
     "These properties are required for the {0} rich result in Google: without them the item is not eligible for it (structured data makes a rich result possible, but doesn't guarantee it, and doesn't affect ranking).": "Ova svojstva su obavezna za {0} rich result u Google-u: bez njih stavka ne može da dobije taj prikaz (strukturirani podaci omogućavaju rich result, ali ga ne garantuju i ne utiču na rangiranje).",
     "In Webflow: Pages panel > the page's Settings > Schema markup field (or the custom code where the JSON-LD was added); on a Collection page bind the CMS fields so every item gets its own values. Publish.": "U Webflow-u: Pages panel > Settings stranice > polje Schema markup (ili custom code u koji je JSON-LD dodat); na Collection stranici poveži CMS polja da svaka stavka dobije svoje vrednosti. Objavi.",
     "Add the missing properties. {0}": "Dodaj svojstva koja nedostaju. {0}",
@@ -5907,11 +5938,11 @@
     "There is no meta description tag, or it is empty.": "Nema meta description taga, ili je prazan.",
     "Google sometimes shows the meta description as the text under the result in search; without one, that text is taken from the page content only.": "Google ponekad prikazuje meta description kao tekst ispod rezultata u pretrazi; bez njega se taj tekst uzima samo iz sadržaja stranice.",
     "Meta description is short ({0} characters)": "Meta description je kratak (karaktera: {0})",
-    "A meta description under 70 characters usually doesn't describe the page well. Google often builds the snippet from the page content anyway, so this is a suggestion, not an error.": "Meta description kraći od 70 karaktera obično ne opisuje stranicu dovoljno. Google ionako često pravi opis iz sadržaja stranice, pa je ovo predlog, ne greška.",
+    "A meta description under 70 characters usually doesn't describe the page well enough to make the result in search clear.": "Meta description kraći od 70 karaktera obično ne opisuje stranicu dovoljno da rezultat u pretrazi bude jasan.",
     "Expand it to at least 70 characters so it describes the page.": "Proširi ga na najmanje 70 karaktera tako da opisuje stranicu.",
     "Meta description is too long ({0} characters)": "Meta description je predugačak (karaktera: {0})",
-    "There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 155 characters the end is usually cut off.": "Dužina meta description-a nije strogo ograničena, ali Google skraćuje opis da stane u širinu ekrana; preko 155 karaktera kraj se obično odseče.",
-    "Shorten it to 155 characters or fewer.": "Skrati ga na 155 karaktera ili manje.",
+    "There is no hard limit on meta description length, but Google shortens the snippet to fit the screen width; over 160 characters the end is usually cut off.": "Dužina meta description-a nije strogo ograničena, ali Google skraćuje opis da stane u širinu ekrana; preko 160 karaktera kraj se obično odseče.",
+    "Shorten it to 160 characters or fewer.": "Skrati ga na 160 karaktera ili manje.",
     "Meta description is present and of appropriate length ({0} characters)": "Meta description postoji i odgovarajuće je dužine (karaktera: {0})",
     "og:title is missing": "og:title nedostaje",
     "There is no Open Graph title tag.": "Nema Open Graph title taga.",
